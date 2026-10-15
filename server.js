@@ -944,6 +944,9 @@ async function initSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    ALTER TABLE vehicle_checklist_media ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'vehicle_photo';
+    ALTER TABLE vehicle_checklist_media ADD COLUMN IF NOT EXISTS item_key TEXT;
+
     CREATE INDEX IF NOT EXISTS vehicle_checklist_signatures_checklist_idx ON vehicle_checklist_signatures (checklist_id);
     CREATE INDEX IF NOT EXISTS vehicle_checklist_media_checklist_idx ON vehicle_checklist_media (checklist_id, created_at);
 
@@ -1740,7 +1743,7 @@ async function storeEpiProcessMedia({ req, processId, kind, imageData, deviceInf
   return result.rows[0];
 }
 
-async function storeVehicleChecklistMedia({ req, checklistId, imageData, deviceInfo, latitude, longitude }) {
+async function storeVehicleChecklistMedia({ req, checklistId, imageData, kind = 'vehicle_photo', itemKey = null, deviceInfo, latitude, longitude }) {
   const captured = parseCapturedImage(imageData);
   const normalizedLatitude = capturedCoordinate(latitude, -90, 90);
   const normalizedLongitude = capturedCoordinate(longitude, -180, 180);
@@ -1748,17 +1751,18 @@ async function storeVehicleChecklistMedia({ req, checklistId, imageData, deviceI
   const userAgent = req.get('user-agent') || null;
   const directory = path.join(selfieStoragePath, 'vehicle-checklists');
   await fs.promises.mkdir(directory, { recursive: true });
-  const fileName = `vehicle-${checklistId}-${req.user.id}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${captured.extension}`;
+  const mediaKind = kind === 'selfie' ? 'selfie' : 'vehicle_photo';
+  const fileName = `vehicle-${mediaKind}-${checklistId}-${req.user.id}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${captured.extension}`;
   const absolutePath = path.join(directory, fileName);
   await fs.promises.writeFile(absolutePath, captured.imageBuffer, { flag: 'wx' });
   const sha256 = crypto.createHash('sha256').update(captured.imageBuffer).digest('hex');
   const result = await pool.query(
     `INSERT INTO vehicle_checklist_media
-      (checklist_id, uploaded_by, file_name, file_path, mime_type, byte_size, sha256, device_info,
+      (checklist_id, uploaded_by, kind, item_key, file_name, file_path, mime_type, byte_size, sha256, device_info,
        ip_address, user_agent, latitude, longitude, location_label)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-     RETURNING id, checklist_id, mime_type, byte_size, sha256, device_info, ip_address, user_agent, latitude, longitude, location_label, created_at`,
-    [checklistId, req.user.id, fileName, absolutePath, captured.mimeType, captured.imageBuffer.length, sha256, cleanText(deviceInfo, 240) || null, clientIp(req), userAgent, normalizedLatitude, normalizedLongitude, locationLabel],
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+     RETURNING id, checklist_id, kind, item_key, mime_type, byte_size, sha256, device_info, ip_address, user_agent, latitude, longitude, location_label, created_at`,
+    [checklistId, req.user.id, mediaKind, cleanText(itemKey, 120) || null, fileName, absolutePath, captured.mimeType, captured.imageBuffer.length, sha256, cleanText(deviceInfo, 240) || null, clientIp(req), userAgent, normalizedLatitude, normalizedLongitude, locationLabel],
   );
   return result.rows[0];
 }
@@ -2932,6 +2936,8 @@ function publicVehicleChecklist(row, includeSignatureData = false) {
     items: row.items || [],
     media: (row.media || []).map((item) => ({
       id: item.id,
+      kind: item.kind || 'vehicle_photo',
+      itemKey: item.itemKey || null,
       mimeType: item.mimeType,
       byteSize: item.byteSize,
       sha256: item.sha256,
@@ -3092,6 +3098,8 @@ const vehicleChecklistQuery = `
         SELECT JSON_AGG(
           JSON_BUILD_OBJECT(
             'id', m.id,
+            'kind', m.kind,
+            'itemKey', m.item_key,
             'mimeType', m.mime_type,
             'byteSize', m.byte_size,
             'sha256', m.sha256,
@@ -3127,6 +3135,16 @@ function vehicleChecklistScope(req, alias = 'c', includePending = false) {
 app.get('/api/vehicles/checklists/template', auth, (req, res) => {
   if (!['admin', 'tecnico', 'vistoriador'].includes(req.user.role)) return res.status(403).json({ error: 'Perfil sem acesso ao checklist de veículos.' });
   res.json({ items: VEHICLE_CHECKLIST_ITEMS.map(([key, name]) => ({ key, name })) });
+});
+
+app.get('/api/vehicles/catalog', auth, requireRole('admin', 'tecnico', 'vistoriador'), async (_req, res) => {
+  const result = await pool.query(
+    `SELECT id, plate, model, vehicle_year, color
+     FROM vehicles
+     WHERE status = 'ativo'
+     ORDER BY plate`,
+  );
+  res.json({ vehicles: result.rows.map((row) => ({ id: row.id, plate: row.plate, model: row.model, year: row.vehicle_year, color: row.color })) });
 });
 
 app.get('/api/vehicles/checklists', auth, async (req, res) => {
@@ -3207,6 +3225,7 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('tecnico
   const mileage = req.body.mileage === null || req.body.mileage === undefined || req.body.mileage === '' ? null : Number(req.body.mileage);
   const submittedItems = Array.isArray(req.body.items) ? req.body.items : [];
   const signatureRequest = parseRegisteredVehicleSignature(req.user, req.body);
+  const submittedSelfie = req.body.selfie && typeof req.body.selfie === 'object' ? req.body.selfie : null;
   const submittedPhotos = Array.isArray(req.body.photos) ? req.body.photos : [];
   const itemMap = new Map(submittedItems.map((item) => [String(item.itemKey || ''), item]));
   const normalizedItems = VEHICLE_CHECKLIST_ITEMS.map(([itemKey, itemName]) => {
@@ -3227,9 +3246,11 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('tecnico
   if (vehicleYear !== null && (!Number.isInteger(vehicleYear) || vehicleYear < 1900 || vehicleYear > 2200)) return res.status(400).json({ error: 'Ano do veículo inválido.' });
   if (mileage !== null && (!Number.isInteger(mileage) || mileage < 0)) return res.status(400).json({ error: 'Quilometragem inválida.' });
   if (signatureRequest.error) return res.status(400).json({ error: signatureRequest.error });
+  if (!submittedSelfie || submittedSelfie.captureMode !== 'camera' || !submittedSelfie.imageData) return res.status(400).json({ error: 'Capture uma selfie pela câmera antes de enviar o checklist.' });
   if (!submittedPhotos.length || submittedPhotos.length > 10) return res.status(400).json({ error: 'Envie de uma a dez fotos do veículo capturadas pela câmera.' });
   if (submittedPhotos.some((photo) => photo?.captureMode !== 'camera' || !photo?.imageData)) return res.status(400).json({ error: 'As fotos do veículo precisam ser capturadas pela câmera no momento do registro.' });
   try {
+    parseCapturedImage(submittedSelfie.imageData);
     submittedPhotos.forEach((photo) => parseCapturedImage(photo.imageData));
   } catch (error) {
     return res.status(400).json({ error: error.message });
@@ -3316,11 +3337,22 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('tecnico
     );
     await client.query('COMMIT');
     const media = [];
+    media.push(await storeVehicleChecklistMedia({
+      req,
+      checklistId,
+      imageData: submittedSelfie.imageData,
+      kind: 'selfie',
+      deviceInfo: req.body.deviceInfo,
+      latitude: submittedSelfie.latitude ?? req.body.latitude,
+      longitude: submittedSelfie.longitude ?? req.body.longitude,
+    }));
     for (const photo of submittedPhotos) {
       media.push(await storeVehicleChecklistMedia({
         req,
         checklistId,
         imageData: photo.imageData,
+        kind: 'vehicle_photo',
+        itemKey: photo.itemKey,
         deviceInfo: req.body.deviceInfo,
         latitude: photo.latitude ?? req.body.latitude,
         longitude: photo.longitude ?? req.body.longitude,
@@ -3328,7 +3360,7 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('tecnico
     }
     await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_checklist_created', entityType: 'vehicle_checklist', entityId: checklistId, metadata: { plate, itemCount: normalizedItems.length, problemCount: normalizedItems.filter((item) => item.beforeStatus !== 'ok' || item.afterStatus !== 'ok').length, signatureHash, documentHash, signatureVersion: 2 } });
     await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_signature_signed', entityType: 'vehicle_checklist', entityId: checklistId, metadata: { signerRole: signature.signerRole, signatureHash, documentHash, signatureVersion: 2, typedName: signature.typedName, latitude: signature.signerLatitude, longitude: signature.signerLongitude, device: signature.signerDevice } });
-    await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_checklist_photos_uploaded', entityType: 'vehicle_checklist', entityId: checklistId, metadata: { mediaIds: media.map((item) => item.id), photoCount: media.length, captureMode: 'camera', coordinates: media.map((item) => ({ mediaId: item.id, latitude: item.latitude, longitude: item.longitude, locationLabel: item.location_label })) } });
+    await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_checklist_photos_uploaded', entityType: 'vehicle_checklist', entityId: checklistId, metadata: { mediaIds: media.map((item) => item.id), selfieCount: 1, photoCount: submittedPhotos.length, captureMode: 'camera', coordinates: media.map((item) => ({ mediaId: item.id, kind: item.kind, itemKey: item.item_key, latitude: item.latitude, longitude: item.longitude, locationLabel: item.location_label })) } });
     await notifyRoles({
       roles: ['admin', 'vistoriador'],
       notificationType: 'checklist_created',

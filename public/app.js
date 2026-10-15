@@ -56,6 +56,11 @@ let currentLocation = { latitude: null, longitude: null };
 let vehicleSignatureCanvas = null;
 let vehicleSignatureLocation = { latitude: null, longitude: null };
 let notificationsTimer = null;
+let vehicleCatalog = [];
+let vehicleWizardIndex = 0;
+let vehicleWizardDraft = [];
+let vehicleSelfieDraft = null;
+let vehiclePhotoCaptureItemKey = null;
 let onboardingSignatureCanvas = null;
 let onboardingLocation = { latitude: null, longitude: null };
 let selectedEpiProcessType = null;
@@ -63,6 +68,8 @@ let currentEpiProcess = null;
 let epiCameraStream = null;
 let epiPhotoDrafts = [];
 let epiProcessLocation = { latitude: null, longitude: null };
+let epiWizardIndex = 0;
+let epiWizardItems = [];
 let vehiclePhotoDrafts = [];
 let epiCatalog = [];
 let stockPpeCatalog = [];
@@ -355,7 +362,7 @@ function setView(viewId) {
     loadEpiProcesses();
     if (['admin', 'tecnico'].includes(currentUser.role)) loadTerms();
   }
-  if (viewId === 'vehicles-view' && currentUser) loadVehicleChecklists();
+  if (viewId === 'vehicles-view' && currentUser) { loadVehicleCatalog(); loadVehicleChecklists(); }
   if (viewId === 'validation-view' && ['admin', 'vistoriador'].includes(currentUser?.role)) loadValidationQueue();
   if (viewId === 'settings-view') setSettingsTab(currentUser?.role === 'admin' ? selectedSettingsTab : 'security');
   if (viewId === 'stock-view' && currentUser?.role === 'admin') loadStock();
@@ -404,6 +411,7 @@ function showApp(user) {
   $('#main-app-layout').classList.remove('hidden');
   configureNavigation(user);
   if (['tecnico', 'vistoriador'].includes(user.role)) { renderVehicleEditor(); setupVehicleTechnicianSignature(); }
+  if (['tecnico', 'vistoriador'].includes(user.role)) loadVehicleCatalog();
   if (['tecnico', 'vistoriador'].includes(user.role)) loadOnboardingStatus();
   if (user.role === 'tecnico') { renderEpiProcessItems(); setEpiProcessType(selectedEpiProcessType, false); }
   loadNotifications();
@@ -519,25 +527,100 @@ function captureVideoFrame(videoSelector) {
   return canvas.toDataURL('image/jpeg', 0.78);
 }
 
+function normalizeEpiWizardItem(item) {
+  return {
+    ppeItemId: item.ppeItemId ?? item[0] ?? '',
+    quantity: item.quantity ?? item[1] ?? 1,
+    condition: item.condition ?? item[3] ?? 'novo',
+    observation: item.observation ?? item[4] ?? '',
+  };
+}
+
 function renderEpiProcessItems(items = null) {
   const selectedItems = items === null
-    ? (epiCatalog.length ? epiCatalog.map((item) => ({ ppeItemId: item.id, quantity: 1, condition: 'novo' })) : [{ ppeItemId: '', quantity: 1, condition: 'novo' }])
-    : (items.length ? items : [{ ppeItemId: '', quantity: 1, condition: 'novo' }]);
-  const options = (selectedId) => `<option value="">Selecione o EPI</option>${epiCatalog.map((item) => `<option value="${escapeHtml(item.id)}" ${String(item.id) === String(selectedId || '') ? 'selected' : ''}>${escapeHtml(item.name)} · CA ${escapeHtml(item.ca || '–')}</option>`).join('')}`;
-  $('#epi-process-items').innerHTML = selectedItems.map((item, index) => {
-    const selectedId = item.ppeItemId ?? item[0] ?? '';
-    const quantity = item.quantity ?? item[1] ?? 1;
-    const condition = item.condition ?? item[3] ?? 'novo';
-    return `<div class="epi-process-item" data-item-row="${index}"><select data-field="ppeItemId" required>${options(selectedId)}</select><input data-field="quantity" type="number" min="1" value="${escapeHtml(quantity)}" required /><select data-field="condition"><option value="novo" ${condition === 'novo' ? 'selected' : ''}>Novo</option><option value="usado" ${condition === 'usado' ? 'selected' : ''}>Usado</option><option value="danificado" ${condition === 'danificado' ? 'selected' : ''}>Danificado</option></select><button type="button" class="icon-button remove-item" title="Remover item">×</button></div>`;
-  }).join('');
-  $('#epi-process-items').querySelectorAll('.remove-item').forEach((button) => button.addEventListener('click', () => { button.closest('.epi-process-item').remove(); }));
+    ? (epiCatalog.length ? epiCatalog.map((item) => ({ ppeItemId: item.id, quantity: 1, condition: 'novo', observation: '' })) : [{ ppeItemId: '', quantity: 1, condition: 'novo', observation: '' }])
+    : (items.length ? items : [{ ppeItemId: '', quantity: 1, condition: 'novo', observation: '' }]);
+  epiWizardItems = selectedItems.map(normalizeEpiWizardItem);
+  epiWizardIndex = Math.min(epiWizardIndex, epiWizardItems.length - 1);
+  if (!Number.isInteger(epiWizardIndex) || epiWizardIndex < 0) epiWizardIndex = 0;
+  const container = $('#epi-process-items');
+  if (!container) return;
+  if (!$('#epi-wizard-navigation')) container.insertAdjacentHTML('afterend', '<div id="epi-wizard-navigation" class="wizard-navigation"><button id="epi-wizard-back" type="button" class="secondary small-button">Anterior</button><span id="epi-wizard-counter" class="muted"></span><button id="epi-wizard-next" type="button" class="small-button">Próximo EPI</button><p id="epi-wizard-message" class="error"></p></div>');
+  const signatureStep = $('#epi-process-form')?.querySelector('.epi-step-card');
+  signatureStep?.setAttribute('id', 'epi-signature-step');
+  if (!signatureStep?.classList.contains('hidden') && !window.epiWizardSignatureVisible) signatureStep?.classList.add('hidden');
+  if (!$('#epi-wizard-navigation')?.dataset.bound) {
+    $('#epi-wizard-navigation').dataset.bound = 'true';
+    $('#epi-wizard-back').addEventListener('click', () => {
+      if (window.epiWizardSignatureVisible) {
+        window.epiWizardSignatureVisible = false;
+        $('#epi-signature-step')?.classList.add('hidden');
+        $('#epi-process-items')?.classList.remove('hidden');
+        $('#epi-add-process-item')?.classList.remove('hidden');
+        renderEpiWizardItem();
+        return;
+      }
+      saveEpiWizardItem();
+      if (epiWizardIndex > 0) { epiWizardIndex -= 1; renderEpiWizardItem(); }
+    });
+    $('#epi-wizard-next').addEventListener('click', () => {
+      const current = epiWizardItems[epiWizardIndex];
+      saveEpiWizardItem();
+      const message = $('#epi-wizard-message');
+      if (!current?.ppeItemId || !Number.isInteger(Number(current.quantity)) || Number(current.quantity) < 1) { message.textContent = 'Selecione o EPI e informe uma quantidade válida antes de continuar.'; return; }
+      message.textContent = '';
+      if (epiWizardIndex < epiWizardItems.length - 1) { epiWizardIndex += 1; renderEpiWizardItem(); return; }
+      window.epiWizardSignatureVisible = true;
+      $('#epi-process-items')?.classList.add('hidden');
+      $('#epi-add-process-item')?.classList.add('hidden');
+      $('#epi-signature-step')?.classList.remove('hidden');
+      renderEpiWizardItem();
+      $('#epi-signature-step')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+  renderEpiWizardItem();
+}
+
+function saveEpiWizardItem() {
+  const row = $('#epi-process-items .epi-process-item');
+  if (!row || !epiWizardItems[epiWizardIndex]) return;
+  epiWizardItems[epiWizardIndex] = {
+    ppeItemId: row.querySelector('[data-field="ppeItemId"]').value,
+    quantity: row.querySelector('[data-field="quantity"]').value,
+    condition: row.querySelector('[data-field="condition"]').value,
+    observation: row.querySelector('[data-field="observation"]').value,
+  };
+}
+
+function renderEpiWizardItem() {
+  const container = $('#epi-process-items');
+  const item = epiWizardItems[epiWizardIndex];
+  if (!container || !item) return;
+  const options = `<option value="">Selecione o EPI</option>${epiCatalog.map((catalogItem) => `<option value="${escapeHtml(catalogItem.id)}" ${String(catalogItem.id) === String(item.ppeItemId || '') ? 'selected' : ''}>${escapeHtml(catalogItem.name)} · CA ${escapeHtml(catalogItem.ca || '–')}</option>`).join('')}`;
+  container.innerHTML = `<div class="epi-process-item epi-wizard-item" data-item-row="${epiWizardIndex}"><div class="wizard-item-heading"><strong>EPI ${epiWizardIndex + 1} de ${epiWizardItems.length}</strong><span class="muted">Um item por vez</span></div><label>Equipamento<select data-field="ppeItemId" required>${options}</select></label><label>Quantidade<input data-field="quantity" type="number" min="1" value="${escapeHtml(item.quantity)}" required /></label><label>Condição<select data-field="condition"><option value="novo" ${item.condition === 'novo' ? 'selected' : ''}>Novo</option><option value="usado" ${item.condition === 'usado' ? 'selected' : ''}>Usado</option><option value="danificado" ${item.condition === 'danificado' ? 'selected' : ''}>Danificado</option></select></label><label>Observação (opcional)<textarea data-field="observation" maxlength="180" placeholder="Observação rápida">${escapeHtml(item.observation)}</textarea></label><button type="button" class="danger-button remove-item">Remover este item</button></div>`;
+  const signatureStep = $('#epi-signature-step');
+  signatureStep?.classList.toggle('hidden', !window.epiWizardSignatureVisible);
+  const back = $('#epi-wizard-back');
+  const next = $('#epi-wizard-next');
+  const counter = $('#epi-wizard-counter');
+  if (counter) counter.textContent = `EPI ${epiWizardIndex + 1} de ${epiWizardItems.length}`;
+  if (back) { back.disabled = epiWizardIndex === 0 && !window.epiWizardSignatureVisible; back.textContent = window.epiWizardSignatureVisible ? 'Voltar aos itens' : 'Anterior'; }
+  if (next) { next.classList.toggle('hidden', Boolean(window.epiWizardSignatureVisible)); next.textContent = epiWizardIndex === epiWizardItems.length - 1 ? 'Ir para assinatura' : 'Próximo EPI'; }
+  container.querySelectorAll('[data-field]').forEach((field) => field.addEventListener('change', saveEpiWizardItem));
+  container.querySelectorAll('[data-field="quantity"], [data-field="observation"]').forEach((field) => field.addEventListener('input', saveEpiWizardItem));
+  container.querySelector('.remove-item')?.addEventListener('click', () => {
+    if (epiWizardItems.length <= 1) return;
+    epiWizardItems.splice(epiWizardIndex, 1);
+    epiWizardIndex = Math.min(epiWizardIndex, epiWizardItems.length - 1);
+    renderEpiWizardItem();
+  });
 }
 
 function readEpiProcessItems() {
-  return [...document.querySelectorAll('#epi-process-items .epi-process-item')].map((row) => {
-    const ppeItemId = row.querySelector('[data-field="ppeItemId"]').value;
-    const catalog = epiCatalog.find((item) => String(item.id) === String(ppeItemId));
-    return { ppeItemId: ppeItemId ? Number(ppeItemId) : null, equipmentName: catalog?.name || '', quantity: Number(row.querySelector('[data-field="quantity"]').value), ca: catalog?.ca || '', condition: row.querySelector('[data-field="condition"]').value, observation: '' };
+  saveEpiWizardItem();
+  return epiWizardItems.map((item) => {
+    const catalog = epiCatalog.find((catalogItem) => String(catalogItem.id) === String(item.ppeItemId));
+    return { ppeItemId: item.ppeItemId ? Number(item.ppeItemId) : null, equipmentName: catalog?.name || '', quantity: Number(item.quantity), ca: catalog?.ca || '', condition: item.condition, observation: item.observation || '' };
   });
 }
 
@@ -564,8 +647,12 @@ function setEpiWorkflowOpen(open) {
   workflow?.classList.toggle('workflow-open', open);
   hint?.classList.toggle('hidden', open);
   if (!open) {
+    window.epiWizardSignatureVisible = false;
     $('#epi-selfie-step')?.classList.add('hidden');
     $('#epi-photos-step')?.classList.add('hidden');
+    $('#epi-signature-step')?.classList.add('hidden');
+    $('#epi-process-items')?.classList.remove('hidden');
+    $('#epi-add-process-item')?.classList.remove('hidden');
   }
 }
 
@@ -580,7 +667,11 @@ function setEpiProcessType(processType, reveal = true) {
   $('#epi-target-field').classList.toggle('hidden', !isTransfer);
   $('#epi-validator-user').required = isDevolution;
   $('#epi-target-user').required = isTransfer;
-  if (reveal) setEpiWorkflowOpen(true);
+  if (reveal) {
+    window.epiWizardSignatureVisible = false;
+    renderEpiProcessItems();
+    setEpiWorkflowOpen(true);
+  }
 }
 
 function epiProcessStatusLabel(status) {
@@ -812,23 +903,154 @@ function updateVehicleDescriptionCell(row, side) {
   if (!hasProblem) description.value = '';
 }
 
+function initializeVehicleWizardDom() {
+  const form = $('#vehicle-checklist-form');
+  if (!form || $('#vehicle-start-step')) return;
+  const meta = form.querySelector('.vehicle-meta-grid');
+  const legend = form.querySelector('.checklist-legend');
+  const table = form.querySelector('.vehicle-checklist-table');
+  const signature = form.querySelector('.vehicle-signature-entry');
+  const photo = form.querySelector('.vehicle-photo-entry');
+  const submitActions = [...form.children].find((child) => child.classList.contains('form-actions'));
+  form.insertAdjacentHTML('afterbegin', '<div id="vehicle-start-step" class="vehicle-step"><div class="subheading"><h3>Escolha o veículo</h3></div><label>Veículo<select id="vehicle-select"><option value="">Carregando veículos...</option></select></label><div class="form-actions"><button id="vehicle-start-checklist" type="button">Iniciar checklist</button><span id="vehicle-start-message" class="muted"></span></div></div><div id="vehicle-checklist-step" class="vehicle-step hidden"><div class="vehicle-selected-card"><strong id="vehicle-selected-title">Veículo selecionado</strong><span id="vehicle-selected-details" class="muted"></span></div><label>Quilometragem (opcional)<input id="vehicle-wizard-mileage" type="number" min="0" placeholder="Quilometragem atual" /></label><div class="vehicle-wizard-progress"><strong id="vehicle-wizard-counter">Item 1</strong><span>Faça a conferência antes e depois e avance.</span><div class="wizard-progress-track"><span id="vehicle-wizard-progress-bar"></span></div></div><div id="vehicle-item-wizard"></div><div class="wizard-navigation"><button id="vehicle-item-back" type="button" class="secondary small-button">Anterior</button><span id="vehicle-item-message" class="muted"></span><button id="vehicle-item-next" type="button" class="small-button">Próximo item</button></div></div>');
+  meta?.classList.add('hidden');
+  legend?.classList.add('hidden');
+  table?.classList.add('hidden');
+  const finalStep = document.createElement('div');
+  finalStep.id = 'vehicle-final-step';
+  finalStep.className = 'vehicle-step hidden';
+  finalStep.innerHTML = '<div class="vehicle-final-heading"><div><h3>Finalizar checklist</h3><p class="muted">Confira a assinatura, tire a selfie e envie as fotos.</p></div><button id="vehicle-return-to-items" type="button" class="secondary small-button">Voltar aos itens</button></div><div class="vehicle-selfie-entry"><div class="subheading"><h3>Selfie do momento</h3></div><p class="muted">Tire a selfie agora pela câmera. Não é permitido escolher uma imagem da galeria.</p><button id="vehicle-open-selfie-camera" type="button">Abrir câmera</button><div id="vehicle-selfie-camera" class="hidden"><video id="vehicle-selfie-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-take-selfie" type="button">Tirar selfie</button><button id="vehicle-cancel-selfie" type="button" class="secondary">Cancelar</button></div></div><div id="vehicle-selfie-preview" class="epi-photo-previews"></div><p id="vehicle-selfie-message" class="muted" aria-live="polite">Nenhuma selfie capturada.</p></div>';
+  const selfieEntry = finalStep.querySelector('.vehicle-selfie-entry');
+  if (signature) finalStep.insertBefore(signature, selfieEntry);
+  if (selfieEntry && photo) finalStep.append(photo);
+  if (submitActions) finalStep.append(submitActions);
+  form.append(finalStep);
+  const submitButton = submitActions?.querySelector('button[type="submit"]');
+  if (submitButton) submitButton.textContent = 'Enviar checklist';
+  $('#vehicle-start-checklist').addEventListener('click', startVehicleChecklist);
+  $('#vehicle-item-back').addEventListener('click', () => {
+    saveVehicleWizardItem();
+    if (vehicleWizardIndex > 0) { vehicleWizardIndex -= 1; renderVehicleWizardItem(); }
+  });
+  $('#vehicle-item-next').addEventListener('click', () => {
+    saveVehicleWizardItem();
+    if (vehicleWizardIndex < vehicleWizardDraft.length - 1) { vehicleWizardIndex += 1; renderVehicleWizardItem(); return; }
+    $('#vehicle-checklist-step').classList.add('hidden');
+    $('#vehicle-final-step').classList.remove('hidden');
+    $('#vehicle-item-message').textContent = '';
+    $('#vehicle-final-step').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  $('#vehicle-return-to-items').addEventListener('click', () => {
+    $('#vehicle-final-step').classList.add('hidden');
+    $('#vehicle-checklist-step').classList.remove('hidden');
+    renderVehicleWizardItem();
+    $('#vehicle-checklist-step').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  $('#vehicle-open-selfie-camera').addEventListener('click', () => { $('#vehicle-selfie-camera').classList.remove('hidden'); openEpiCamera('#vehicle-selfie-video', '#vehicle-selfie-message', 'user'); });
+  $('#vehicle-cancel-selfie').addEventListener('click', () => { stopEpiCamera('#vehicle-selfie-video'); $('#vehicle-selfie-camera').classList.add('hidden'); });
+  $('#vehicle-take-selfie').addEventListener('click', async () => {
+    const imageData = captureVideoFrame('#vehicle-selfie-video');
+    if (!imageData) { $('#vehicle-selfie-message').textContent = 'A câmera ainda não está pronta.'; return; }
+    stopEpiCamera('#vehicle-selfie-video');
+    $('#vehicle-selfie-camera').classList.add('hidden');
+    await ensureVehicleLocation();
+    vehicleSelfieDraft = { imageData, captureMode: 'camera', latitude: vehicleSignatureLocation.latitude, longitude: vehicleSignatureLocation.longitude };
+    $('#vehicle-selfie-preview').innerHTML = `<div><img src="${imageData}" alt="Selfie do checklist" /></div>`;
+    $('#vehicle-selfie-message').textContent = 'Selfie preparada para envio.';
+  });
+}
+
+function startVehicleChecklist() {
+  const selectedId = $('#vehicle-select')?.value;
+  const vehicle = vehicleCatalog.find((item) => String(item.id) === String(selectedId));
+  const message = $('#vehicle-start-message');
+  if (!vehicle) {
+    if (message) message.textContent = 'Selecione um veículo antes de iniciar.';
+    return;
+  }
+  vehicleWizardIndex = 0;
+  vehicleWizardDraft = vehicleItems.map(([itemKey, itemName]) => ({ itemKey, itemName, beforeStatus: 'ok', beforeDescription: '', afterStatus: 'ok', afterDescription: '' }));
+  vehiclePhotoDrafts = [];
+  vehicleSelfieDraft = null;
+  vehiclePhotoCaptureItemKey = null;
+  $('#vehicle-plate').value = vehicle.plate || '';
+  $('#vehicle-model').value = vehicle.model || '';
+  $('#vehicle-year').value = vehicle.year || '';
+  $('#vehicle-selected-title').textContent = `${vehicle.plate} · ${vehicle.model || 'Modelo não informado'}`;
+  $('#vehicle-selected-details').textContent = [vehicle.year, vehicle.color].filter(Boolean).join(' · ') || 'Veículo selecionado';
+  $('#vehicle-start-step').classList.add('hidden');
+  $('#vehicle-final-step').classList.add('hidden');
+  $('#vehicle-checklist-step').classList.remove('hidden');
+  $('#vehicle-start-message').textContent = '';
+  renderVehicleWizardItem();
+  renderVehiclePhotoDrafts();
+  $('#vehicle-checklist-step').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function populateVehicleCatalog() {
+  const select = $('#vehicle-select');
+  if (!select) return;
+  const selected = select.value;
+  select.innerHTML = vehicleCatalog.length ? `<option value="">Selecione o veículo</option>${vehicleCatalog.map((vehicle) => `<option value="${escapeHtml(vehicle.id)}">${escapeHtml(vehicle.plate)} · ${escapeHtml(vehicle.model || 'Modelo não informado')}${vehicle.year ? ` · ${escapeHtml(vehicle.year)}` : ''}</option>`).join('')}` : '<option value="">Nenhum veículo ativo cadastrado</option>';
+  if (vehicleCatalog.some((vehicle) => String(vehicle.id) === String(selected))) select.value = selected;
+}
+
+async function loadVehicleCatalog() {
+  if (!['tecnico', 'vistoriador'].includes(currentUser?.role)) return;
+  try { const data = await api('/api/vehicles/catalog'); vehicleCatalog = data.vehicles || []; populateVehicleCatalog(); } catch (error) { const message = $('#vehicle-start-message'); if (message) message.textContent = error.message; }
+}
+
+function resetVehicleWizard() {
+  vehicleWizardIndex = 0;
+  vehicleWizardDraft = vehicleItems.map(([itemKey, itemName]) => ({ itemKey, itemName, beforeStatus: 'ok', beforeDescription: '', afterStatus: 'ok', afterDescription: '' }));
+  vehiclePhotoDrafts = [];
+  vehicleSelfieDraft = null;
+  vehiclePhotoCaptureItemKey = null;
+  $('#vehicle-start-step')?.classList.remove('hidden');
+  $('#vehicle-checklist-step')?.classList.add('hidden');
+  $('#vehicle-final-step')?.classList.add('hidden');
+  $('#vehicle-wizard-mileage').value = '';
+  renderVehicleWizardItem();
+  renderVehiclePhotoDrafts();
+  if ($('#vehicle-selfie-preview')) $('#vehicle-selfie-preview').innerHTML = '';
+  if ($('#vehicle-selfie-message')) $('#vehicle-selfie-message').textContent = 'Nenhuma selfie capturada.';
+}
+
 function renderVehicleEditor() {
-  $('#vehicle-items-editor').innerHTML = vehicleItems.map(([key, name]) => `<tr data-item-key="${key}"><td><strong>${escapeHtml(name)}</strong></td>${['before', 'after'].map((side) => `<td><select data-side="${side}-status"><option value="ok">OK</option><option value="defeito">Defeito</option><option value="quebrado">Quebrado</option></select><label class="description-toggle"><input type="checkbox" data-side="${side}-description-toggle" disabled /> Descrição</label><textarea data-side="${side}-description" class="hidden" disabled maxlength="500" placeholder="Descreva rapidamente o problema"></textarea></td>`).join('')}</tr>`).join('');
-  document.querySelectorAll('#vehicle-items-editor tr').forEach((row) => ['before', 'after'].forEach((side) => {
-    row.querySelector(`[data-side="${side}-status"]`).addEventListener('change', () => updateVehicleDescriptionCell(row, side));
-    row.querySelector(`[data-side="${side}-description-toggle"]`).addEventListener('change', () => updateVehicleDescriptionCell(row, side));
-    updateVehicleDescriptionCell(row, side);
-  }));
+  initializeVehicleWizardDom();
+  resetVehicleWizard();
+  populateVehicleCatalog();
+}
+
+function saveVehicleWizardItem() {
+  const card = $('#vehicle-item-wizard .vehicle-wizard-item');
+  const item = vehicleWizardDraft[vehicleWizardIndex];
+  if (!card || !item) return;
+  const beforeStatus = card.querySelector('[data-side="before-status"]').value;
+  const afterStatus = card.querySelector('[data-side="after-status"]').value;
+  vehicleWizardDraft[vehicleWizardIndex] = { ...item, beforeStatus, beforeDescription: beforeStatus === 'ok' ? '' : card.querySelector('[data-side="before-description"]').value, afterStatus, afterDescription: afterStatus === 'ok' ? '' : card.querySelector('[data-side="after-description"]').value };
+}
+
+function renderVehicleWizardItem() {
+  const container = $('#vehicle-item-wizard');
+  const item = vehicleWizardDraft[vehicleWizardIndex];
+  if (!container || !item) return;
+  const photoCount = vehiclePhotoDrafts.filter((photo) => photo.itemKey === item.itemKey).length;
+  container.innerHTML = `<div class="vehicle-wizard-item"><div class="wizard-item-heading"><strong>${escapeHtml(item.itemName)}</strong><span class="muted">Item ${vehicleWizardIndex + 1} de ${vehicleWizardDraft.length}</span></div><div class="vehicle-wizard-fields"><label>Antes<select data-side="before-status"><option value="ok" ${item.beforeStatus === 'ok' ? 'selected' : ''}>OK</option><option value="defeito" ${item.beforeStatus === 'defeito' ? 'selected' : ''}>Com defeito</option><option value="quebrado" ${item.beforeStatus === 'quebrado' ? 'selected' : ''}>Quebrado</option></select></label><label>Depois<select data-side="after-status"><option value="ok" ${item.afterStatus === 'ok' ? 'selected' : ''}>OK</option><option value="defeito" ${item.afterStatus === 'defeito' ? 'selected' : ''}>Com defeito</option><option value="quebrado" ${item.afterStatus === 'quebrado' ? 'selected' : ''}>Quebrado</option></select></label><label data-description-wrap="before" class="hidden">Descrição antes<textarea data-side="before-description" maxlength="500">${escapeHtml(item.beforeDescription)}</textarea></label><label data-description-wrap="after" class="hidden">Descrição depois<textarea data-side="after-description" maxlength="500">${escapeHtml(item.afterDescription)}</textarea></label></div><button id="vehicle-item-photo-button" type="button" class="secondary">${photoCount ? `Capturar outra foto (${photoCount})` : 'Capturar foto deste item'}</button><div id="vehicle-item-camera" class="hidden"><video id="vehicle-item-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-item-take-photo" type="button">Capturar foto</button><button id="vehicle-item-cancel-photo" type="button" class="secondary">Cancelar</button></div></div><p id="vehicle-item-photo-message" class="muted" aria-live="polite">${photoCount ? `${photoCount} foto(s) deste item preparada(s).` : 'Foto opcional.'}</p></div>`;
+  const updateDescription = (side) => { const status = container.querySelector(`[data-side="${side}-status"]`); container.querySelector(`[data-description-wrap="${side}"]`).classList.toggle('hidden', status.value === 'ok'); };
+  ['before', 'after'].forEach((side) => { container.querySelector(`[data-side="${side}-status"]`).addEventListener('change', () => { updateDescription(side); saveVehicleWizardItem(); }); updateDescription(side); });
+  container.querySelector('#vehicle-item-photo-button').addEventListener('click', () => { vehiclePhotoCaptureItemKey = item.itemKey; container.querySelector('#vehicle-item-camera').classList.remove('hidden'); openEpiCamera('#vehicle-item-video', '#vehicle-item-photo-message', 'environment'); });
+  container.querySelector('#vehicle-item-cancel-photo').addEventListener('click', () => { stopEpiCamera('#vehicle-item-video'); container.querySelector('#vehicle-item-camera').classList.add('hidden'); });
+  container.querySelector('#vehicle-item-take-photo').addEventListener('click', () => { const imageData = captureVideoFrame('#vehicle-item-video'); if (!imageData) { container.querySelector('#vehicle-item-photo-message').textContent = 'A câmera ainda não está pronta.'; return; } if (vehiclePhotoDrafts.length >= 10) { container.querySelector('#vehicle-item-photo-message').textContent = 'O limite de dez fotos foi atingido.'; return; } vehiclePhotoDrafts.push({ imageData, itemKey: vehiclePhotoCaptureItemKey }); stopEpiCamera('#vehicle-item-video'); renderVehicleWizardItem(); });
+  $('#vehicle-wizard-counter').textContent = `Item ${vehicleWizardIndex + 1} de ${vehicleWizardDraft.length}`;
+  $('#vehicle-wizard-progress-bar').style.width = `${((vehicleWizardIndex + 1) / vehicleWizardDraft.length) * 100}%`;
+  $('#vehicle-item-back').disabled = vehicleWizardIndex === 0;
+  $('#vehicle-item-next').textContent = vehicleWizardIndex === vehicleWizardDraft.length - 1 ? 'Ir para assinatura' : 'Próximo item';
 }
 
 function readVehicleEditor() {
-  return [...document.querySelectorAll('#vehicle-items-editor tr')].map((row) => ({
-    itemKey: row.dataset.itemKey,
-    beforeStatus: row.querySelector('[data-side="before-status"]').value,
-    beforeDescription: row.querySelector('[data-side="before-description"]').value,
-    afterStatus: row.querySelector('[data-side="after-status"]').value,
-    afterDescription: row.querySelector('[data-side="after-description"]').value,
-  }));
+  saveVehicleWizardItem();
+  return vehicleWizardDraft.map((item) => ({ itemKey: item.itemKey, beforeStatus: item.beforeStatus, beforeDescription: item.beforeDescription, afterStatus: item.afterStatus, afterDescription: item.afterDescription }));
 }
 
 function renderVehicleSummary(checklist, includeAction = false) {
@@ -865,7 +1087,7 @@ function renderVehicleDetail(checklist, containerSelector, canValidate) {
   container.classList.remove('hidden');
   const requiresValidationSignature = currentUser?.role !== 'admin';
   const validationControls = canValidate && checklist.status === 'pendente_validacao' ? `<div class="validation-controls">${requiresValidationSignature ? `<div class="epi-signature-preview"><img src="${escapeHtml(currentUser?.signatureData || '')}" alt="Assinatura padrão do responsável pela validação" /></div><label class="consent-check"><input id="vehicle-validation-signature-confirm" type="checkbox" /> Confirmo o uso da minha assinatura padrão nesta validação.</label>` : '<p class="muted">A validação administrativa registra a decisão e a auditoria sem assinatura do administrador.</p>'}<div class="signature-actions"><button id="vehicle-validation-capture-location" type="button" class="secondary">Capturar localização</button></div><textarea id="validation-notes" maxlength="700" placeholder="Observação da validação (opcional)"></textarea><div class="signature-actions"><button id="approve-vehicle" type="button">Validar vistoria</button><button id="reject-vehicle" type="button" class="danger-button">Reprovar vistoria</button></div><p id="validation-message" class="muted">${requiresValidationSignature ? 'A assinatura padrão e a localização serão registradas na validação.' : 'A decisão, data, IP, dispositivo e localização disponível serão registrados.'}</p></div>` : '';
-  const media = (checklist.media || []).map((item) => `<figure class="epi-process-media-item"><img src="/api/vehicles/checklists/${checklist.id}/media/${item.id}" alt="Foto do veículo" loading="lazy" /><figcaption><strong>Foto do veículo</strong><span>Data/hora: ${escapeHtml(formatDate(item.createdAt))}</span><span>IP: ${escapeHtml(item.ipAddress || 'Não informado')}</span><span>Navegador: ${escapeHtml(browserLabel(item.userAgent || item.deviceInfo))}</span><span>Dispositivo: ${escapeHtml(deviceLabel(item.userAgent || item.deviceInfo))}</span><span>Cidade: ${escapeHtml(formatMediaLocation(item))}</span><span>Coordenadas: ${escapeHtml(formatMediaCoordinates(item))}</span></figcaption></figure>`).join('');
+  const media = (checklist.media || []).map((item) => { const isSelfie = item.kind === 'selfie'; const itemName = vehicleItems.find(([key]) => key === item.itemKey)?.[1]; const label = isSelfie ? 'Selfie do checklist' : itemName ? `Foto · ${itemName}` : 'Foto geral do veículo'; return `<figure class="epi-process-media-item"><img src="/api/vehicles/checklists/${checklist.id}/media/${item.id}" alt="${escapeHtml(label)}" loading="lazy" /><figcaption><strong>${escapeHtml(label)}</strong><span>Data/hora: ${escapeHtml(formatDate(item.createdAt))}</span><span>IP: ${escapeHtml(item.ipAddress || 'Não informado')}</span><span>Navegador: ${escapeHtml(browserLabel(item.userAgent || item.deviceInfo))}</span><span>Dispositivo: ${escapeHtml(deviceLabel(item.userAgent || item.deviceInfo))}</span><span>Cidade: ${escapeHtml(formatMediaLocation(item))}</span><span>Coordenadas: ${escapeHtml(formatMediaCoordinates(item))}</span></figcaption></figure>`; }).join('');
   container.innerHTML = `<div class="vehicle-detail-card"><div class="section-heading"><div><div class="eyebrow">CHECKLIST #${checklist.id}</div><h3>${escapeHtml(checklist.plate)} · ${escapeHtml(checklist.model || '')}</h3><p class="muted">Técnico: ${escapeHtml(checklist.driverName || '–')} · ${escapeHtml(formatDate(checklist.createdAt))}</p></div><span class="status status-${escapeHtml(checklist.status)}">${escapeHtml({ pendente_validacao: 'Aguardando validação', validado: 'Validado', reprovado: 'Reprovado' }[checklist.status] || checklist.status)}</span></div><div class="table-wrap"><table class="vehicle-detail-table"><thead><tr><th>Item</th><th>Antes</th><th>Descrição</th><th>Depois</th><th>Descrição</th></tr></thead><tbody>${checklist.items.map((item) => `<tr><td>${escapeHtml(item.itemName)}</td><td>${escapeHtml(vehicleStatusLabel(item.beforeStatus))}</td><td>${escapeHtml(item.beforeDescription || '–')}</td><td>${escapeHtml(vehicleStatusLabel(item.afterStatus))}</td><td>${escapeHtml(item.afterDescription || '–')}</td></tr>`).join('')}</tbody></table></div>${checklist.validationNotes ? `<p class="validation-note"><b>Observação do vistoriador:</b> ${escapeHtml(checklist.validationNotes)}</p>` : ''}${media ? `<section class="vehicle-checklist-media"><h4>Fotos registradas</h4><div class="epi-process-media">${media}</div></section>` : ''}${renderVehicleSignatures(checklist)}${validationControls}</div>`;
   container.querySelector('.vehicle-detail-card')?.insertAdjacentHTML('afterbegin', '<div class="detail-actions"><button id="download-vehicle-checklist-pdf" type="button" class="secondary small-button">Baixar PDF</button></div>');
   container.querySelector('#download-vehicle-checklist-pdf')?.addEventListener('click', () => {
@@ -991,7 +1213,10 @@ function setupVehicleTechnicianSignature() {
   if (preview) preview.innerHTML = currentUser.signatureData ? `<img src="${escapeHtml(currentUser.signatureData)}" alt="Assinatura padrão cadastrada" />` : '<p class="muted">Assinatura padrão não cadastrada.</p>';
   vehicleSignatureLocation = { latitude: null, longitude: null };
   vehiclePhotoDrafts = [];
+  vehicleSelfieDraft = null;
   renderVehiclePhotoDrafts();
+  if ($('#vehicle-selfie-preview')) $('#vehicle-selfie-preview').innerHTML = '';
+  if ($('#vehicle-selfie-message')) $('#vehicle-selfie-message').textContent = 'Nenhuma selfie capturada.';
   $('#vehicle-typed-name').value = currentUser.name || '';
   $('#vehicle-signature-confirm').checked = false;
   $('#vehicle-capture-location').onclick = () => {
@@ -1006,7 +1231,7 @@ function setupVehicleTechnicianSignature() {
 
 function renderVehiclePhotoDrafts() {
   const previews = $('#vehicle-photo-previews');
-  if (previews) previews.innerHTML = vehiclePhotoDrafts.map((photo, index) => `<div><img src="${photo}" alt="Foto do veículo ${index + 1}" /></div>`).join('');
+  if (previews) previews.innerHTML = vehiclePhotoDrafts.map((photo, index) => `<div><img src="${photo.imageData}" alt="Foto do veículo ${index + 1}" /><small>${photo.itemKey ? escapeHtml(vehicleItems.find(([key]) => key === photo.itemKey)?.[1] || 'Item') : 'Foto geral do veículo'}</small></div>`).join('');
   const openButton = $('#vehicle-open-photo-camera');
   if (openButton) openButton.disabled = vehiclePhotoDrafts.length >= 10;
   const message = $('#vehicle-photo-message');
@@ -1170,7 +1395,7 @@ $('#admin-notification-form').addEventListener('submit', async (event) => {
   } catch (error) { status.textContent = error.message; }
 });
 
-$('#epi-add-process-item').addEventListener('click', () => { const items = readEpiProcessItems(); items.push({ ppeItemId: '', quantity: 1, condition: 'novo', observation: '' }); renderEpiProcessItems(items); });
+$('#epi-add-process-item').addEventListener('click', () => { if (window.epiWizardSignatureVisible) return; const items = readEpiProcessItems(); items.push({ ppeItemId: '', quantity: 1, condition: 'novo', observation: '' }); epiWizardIndex = items.length - 1; renderEpiProcessItems(items); });
 document.querySelectorAll('.epi-process-option').forEach((button) => button.addEventListener('click', () => setEpiProcessType(button.dataset.processType)));
 $('#refresh-epi-processes').addEventListener('click', () => loadEpiProcesses());
 $('#refresh-epi-terms').addEventListener('click', () => loadTerms().catch((error) => { $('#terms-list').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`; }));
@@ -1253,7 +1478,8 @@ $('#vehicle-cancel-photo').addEventListener('click', () => { stopEpiCamera('#veh
 $('#vehicle-take-photo').addEventListener('click', () => {
   const imageData = captureVideoFrame('#vehicle-photo-video');
   if (!imageData) { $('#vehicle-photo-message').textContent = 'A câmera ainda não está pronta.'; return; }
-  vehiclePhotoDrafts.push(imageData);
+  if (vehiclePhotoDrafts.length >= 10) { $('#vehicle-photo-message').textContent = 'O limite de dez fotos foi atingido.'; return; }
+  vehiclePhotoDrafts.push({ imageData, itemKey: null });
   stopEpiCamera('#vehicle-photo-video');
   $('#vehicle-photo-camera').classList.add('hidden');
   renderVehiclePhotoDrafts();
@@ -1264,10 +1490,11 @@ $('#vehicle-checklist-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const message = $('#vehicle-form-message');
   if (!currentUser?.signatureData || !$('#vehicle-signature-confirm').checked) { message.textContent = 'Confirme a assinatura padrão cadastrada antes de enviar o checklist.'; return; }
+  if (!vehicleSelfieDraft) { message.textContent = 'Capture a selfie pela câmera antes de enviar o checklist.'; return; }
   if (!vehiclePhotoDrafts.length) { message.textContent = 'Capture pelo menos uma foto do veículo antes de enviar o checklist.'; return; }
   try {
     await ensureVehicleLocation();
-    await api('/api/vehicles/checklists', { method: 'POST', body: JSON.stringify({ plate: $('#vehicle-plate').value, model: $('#vehicle-model').value, vehicleYear: $('#vehicle-year').value, mileage: $('#vehicle-mileage').value, items: readVehicleEditor(), signatureConfirmed: true, latitude: vehicleSignatureLocation.latitude, longitude: vehicleSignatureLocation.longitude, deviceInfo: navigator.userAgent, photos: vehiclePhotoDrafts.map((imageData) => ({ imageData, captureMode: 'camera', latitude: vehicleSignatureLocation.latitude, longitude: vehicleSignatureLocation.longitude })) }) });
+    await api('/api/vehicles/checklists', { method: 'POST', body: JSON.stringify({ plate: $('#vehicle-plate').value, model: $('#vehicle-model').value, vehicleYear: $('#vehicle-year').value, mileage: $('#vehicle-wizard-mileage').value, items: readVehicleEditor(), signatureConfirmed: true, latitude: vehicleSignatureLocation.latitude, longitude: vehicleSignatureLocation.longitude, deviceInfo: navigator.userAgent, selfie: vehicleSelfieDraft, photos: vehiclePhotoDrafts.map((photo) => ({ imageData: photo.imageData, itemKey: photo.itemKey || null, captureMode: 'camera', latitude: vehicleSignatureLocation.latitude, longitude: vehicleSignatureLocation.longitude })) }) });
     event.target.reset(); renderVehicleEditor(); setupVehicleTechnicianSignature(); message.textContent = 'Checklist e fotos enviados para validação do vistoriador.'; await loadVehicleChecklists(); await loadOverview();
   } catch (error) { message.textContent = error.message; }
 });
