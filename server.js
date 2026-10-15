@@ -3614,32 +3614,55 @@ app.get('/api/stock', auth, requireRole('admin'), async (_req, res) => {
 });
 
 app.post('/api/stock/vehicles', auth, requireRole('admin'), async (req, res) => {
+  const id = req.body.id === null || req.body.id === undefined || req.body.id === '' ? null : Number(req.body.id);
   const plate = cleanText(req.body.plate, 12).toUpperCase();
   const model = cleanText(req.body.model, 120);
   const color = cleanText(req.body.color, 60);
   const year = req.body.year === null || req.body.year === undefined || req.body.year === '' ? null : Number(req.body.year);
   const status = String(req.body.status || 'ativo') === 'inativo' ? 'inativo' : 'ativo';
   if (!plate || !model) return res.status(400).json({ error: 'Informe a placa e o modelo do veículo.' });
+  if (id !== null && (!Number.isInteger(id) || id < 1)) return res.status(400).json({ error: 'Veículo inválido.' });
   if (year !== null && (!Number.isInteger(year) || year < 1900 || year > 2200)) return res.status(400).json({ error: 'Ano do veículo inválido.' });
   try {
-    const result = await pool.query(
-      `INSERT INTO vehicles (plate, description, model, vehicle_year, color, status)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (plate) DO UPDATE SET
-         description = EXCLUDED.description,
-         model = EXCLUDED.model,
-         vehicle_year = EXCLUDED.vehicle_year,
-         color = EXCLUDED.color,
-         status = EXCLUDED.status
-       RETURNING *`,
-      [plate, [model, color].filter(Boolean).join(' · '), model, year, color || null, status],
-    );
-    await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_registered', entityType: 'vehicle', entityId: result.rows[0].id, metadata: { plate, model, year, color, status } });
+    let result;
+    if (id === null) {
+      result = await pool.query(
+        `INSERT INTO vehicles (plate, description, model, vehicle_year, color, status)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (plate) DO UPDATE SET
+           description = EXCLUDED.description,
+           model = EXCLUDED.model,
+           vehicle_year = EXCLUDED.vehicle_year,
+           color = EXCLUDED.color,
+           status = EXCLUDED.status
+         RETURNING *`,
+        [plate, [model, color].filter(Boolean).join(' · '), model, year, color || null, status],
+      );
+    } else {
+      result = await pool.query(
+        `UPDATE vehicles
+         SET plate = $1, description = $2, model = $3, vehicle_year = $4, color = $5
+         WHERE id = $6
+         RETURNING *`,
+        [plate, [model, color].filter(Boolean).join(' · '), model, year, color || null, id],
+      );
+      if (!result.rows[0]) return res.status(404).json({ error: 'Veículo não encontrado.' });
+    }
+    await audit({ req, actorUserId: req.user.id, eventType: id === null ? 'vehicle_registered' : 'vehicle_updated', entityType: 'vehicle', entityId: result.rows[0].id, metadata: { plate, model, year, color, status: result.rows[0].status } });
     res.status(201).json({ vehicle: publicStockVehicle(result.rows[0]) });
   } catch (error) {
     if (error.code === '23505') return res.status(409).json({ error: 'Já existe um veículo com essa placa.' });
     throw error;
   }
+});
+
+app.delete('/api/stock/vehicles/:id', auth, requireRole('admin'), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Veículo inválido.' });
+  const result = await pool.query('DELETE FROM vehicles WHERE id = $1 RETURNING *', [id]);
+  if (!result.rows[0]) return res.status(404).json({ error: 'Veículo não encontrado.' });
+  await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_deleted', entityType: 'vehicle', entityId: id, metadata: { plate: result.rows[0].plate, model: result.rows[0].model, year: result.rows[0].vehicle_year, color: result.rows[0].color } });
+  res.json({ ok: true });
 });
 
 app.post('/api/stock/ppes', auth, requireRole('admin'), async (req, res) => {

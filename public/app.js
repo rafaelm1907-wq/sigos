@@ -31,6 +31,9 @@ const eventLabels = {
   epi_signature_validated: 'Assinatura EPI validada',
   vehicle_checklist_created: 'Checklist de veículo enviado',
   vehicle_checklist_validated: 'Checklist de veículo validado',
+  vehicle_registered: 'Veículo cadastrado',
+  vehicle_updated: 'Veículo atualizado',
+  vehicle_deleted: 'Veículo excluído',
   vehicle_signature_signed: 'Assinatura de checklist registrada',
   vehicle_signature_validated: 'Assinatura de checklist validada',
   vehicle_checklist_photos_uploaded: 'Fotos do veículo registradas',
@@ -727,13 +730,30 @@ function stockProcessLabel(movement) {
 async function loadStock() {
   const data = await api('/api/stock');
   stockPpeCatalog = data.ppes || [];
-  $('#stock-vehicles-table').innerHTML = data.vehicles.length ? data.vehicles.map((vehicle) => `<tr><td><strong>${escapeHtml(vehicle.plate)}</strong></td><td>${escapeHtml(vehicle.model || '–')}</td><td>${escapeHtml(vehicle.year || '–')}</td><td>${escapeHtml(vehicle.color || '–')}</td><td>${escapeHtml(vehicle.lastDriver || 'Sem checklist')}${vehicle.lastChecklistAt ? `<small class="table-subtext">${escapeHtml(formatDate(vehicle.lastChecklistAt))}</small>` : ''}</td><td>${escapeHtml(vehicle.status === 'ativo' ? 'Ativo' : 'Inativo')}</td></tr>`).join('') : '<tr><td colspan="6" class="muted">Nenhum veículo cadastrado.</td></tr>';
+  $('#stock-vehicles-table').innerHTML = data.vehicles.length ? data.vehicles.map((vehicle) => `<tr><td><strong>${escapeHtml(vehicle.plate)}</strong></td><td>${escapeHtml(vehicle.model || '–')}</td><td>${escapeHtml(vehicle.year || '–')}</td><td>${escapeHtml(vehicle.color || '–')}</td><td>${escapeHtml(vehicle.lastDriver || 'Sem checklist')}${vehicle.lastChecklistAt ? `<small class="table-subtext">${escapeHtml(formatDate(vehicle.lastChecklistAt))}</small>` : ''}</td><td>${escapeHtml(vehicle.status === 'ativo' ? 'Ativo' : 'Inativo')}</td><td><div class="table-actions"><button type="button" class="secondary small-button" data-vehicle-edit="${escapeHtml(vehicle.id)}">Editar</button><button type="button" class="secondary small-button" data-vehicle-delete="${escapeHtml(vehicle.id)}">Excluir</button></div></td></tr>`).join('') : '<tr><td colspan="7" class="muted">Nenhum veículo cadastrado.</td></tr>';
   $('#stock-ppes-table').innerHTML = stockPpeCatalog.length ? stockPpeCatalog.map((ppe) => {
     const holders = (ppe.assignedUsers || []).map((holder) => `${holder.name || 'Usuário'} · ${holder.quantity} un.`).join(', ');
     return `<tr><td><strong>${escapeHtml(ppe.name)}</strong><small class="table-subtext">${escapeHtml(ppe.category || 'Sem categoria')}</small></td><td>${escapeHtml(ppe.ca)}</td><td>${escapeHtml(ppe.stockQuantity)}</td><td><strong>${escapeHtml(ppe.availableQuantity)}</strong></td><td>${escapeHtml(holders || 'Ninguém')}${ppe.assignedQuantity ? `<small class="table-subtext">Total em posse: ${escapeHtml(ppe.assignedQuantity)}</small>` : ''}</td><td><span class="stock-state stock-state-${escapeHtml(ppe.stockStatus || 'normal')}">${escapeHtml(stockStatusLabel(ppe.stockStatus))}</span><small class="table-subtext">${escapeHtml(ppe.active ? 'Ativo' : 'Inativo')}</small></td><td><div class="table-actions"><button type="button" class="secondary small-button" data-ppe-edit="${escapeHtml(ppe.id)}">Editar</button><button type="button" class="secondary small-button" data-ppe-toggle="${escapeHtml(ppe.id)}" data-ppe-next-active="${ppe.active ? 'false' : 'true'}">${ppe.active ? 'Desativar' : 'Ativar'}</button></div></td></tr>`;
   }).join('') : '<tr><td colspan="7" class="muted">Nenhum EPI cadastrado.</td></tr>';
   const movements = data.movements || [];
   $('#stock-movements-table').innerHTML = movements.length ? movements.map((movement) => `<tr><td>${escapeHtml(formatDate(movement.createdAt))}</td><td>${escapeHtml(stockMovementLabel(movement.movementType))}</td><td><strong>${escapeHtml(movement.ppeName)}</strong><small class="table-subtext">CA ${escapeHtml(movement.ca || '–')}</small></td><td>${escapeHtml(movement.quantity)}</td><td>${escapeHtml(movement.fromUser || 'Estoque')}</td><td>${escapeHtml(movement.toUser || 'Estoque')}</td><td>${escapeHtml(stockProcessLabel(movement))}</td><td>${escapeHtml(movement.createdBy || 'Sistema')}</td></tr>`).join('') : '<tr><td colspan="8" class="muted">Nenhuma movimentação registrada.</td></tr>';
+  document.querySelectorAll('[data-vehicle-edit]').forEach((button) => button.addEventListener('click', () => {
+    const vehicle = data.vehicles.find((item) => String(item.id) === String(button.dataset.vehicleEdit));
+    if (!vehicle) return;
+    $('#stock-vehicle-id').value = vehicle.id;
+    $('#stock-vehicle-plate').value = vehicle.plate || '';
+    $('#stock-vehicle-model').value = vehicle.model || '';
+    $('#stock-vehicle-year').value = vehicle.year ?? '';
+    $('#stock-vehicle-color').value = vehicle.color || '';
+    $('#stock-vehicle-cancel').classList.remove('hidden');
+    $('#stock-vehicle-message').textContent = 'Editando veículo do estoque.';
+    $('#stock-vehicle-plate').focus();
+  }));
+  document.querySelectorAll('[data-vehicle-delete]').forEach((button) => button.addEventListener('click', async () => {
+    const vehicle = data.vehicles.find((item) => String(item.id) === String(button.dataset.vehicleDelete));
+    if (!vehicle || !window.confirm(`Excluir o veículo ${vehicle.plate}? O histórico de checklists será preservado.`)) return;
+    try { await api(`/api/stock/vehicles/${button.dataset.vehicleDelete}`, { method: 'DELETE' }); resetStockVehicleForm(); await loadStock(); } catch (error) { $('#stock-vehicle-message').textContent = error.message; }
+  }));
   document.querySelectorAll('[data-ppe-edit]').forEach((button) => button.addEventListener('click', () => {
     const ppe = stockPpeCatalog.find((item) => String(item.id) === String(button.dataset.ppeEdit));
     if (!ppe) return;
@@ -750,6 +770,12 @@ async function loadStock() {
   document.querySelectorAll('[data-ppe-toggle]').forEach((button) => button.addEventListener('click', async () => {
     try { await api(`/api/stock/ppes/${button.dataset.ppeToggle}/status`, { method: 'PATCH', body: JSON.stringify({ active: button.dataset.ppeNextActive === 'true' }) }); await loadStock(); } catch (error) { $('#stock-ppe-message').textContent = error.message; }
   }));
+}
+
+function resetStockVehicleForm() {
+  $('#stock-vehicle-form').reset();
+  $('#stock-vehicle-id').value = '';
+  $('#stock-vehicle-cancel').classList.add('hidden');
 }
 
 function resetStockPpeForm() {
@@ -1240,10 +1266,12 @@ $('#stock-vehicle-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const message = $('#stock-vehicle-message');
   try {
-    await api('/api/stock/vehicles', { method: 'POST', body: JSON.stringify({ plate: $('#stock-vehicle-plate').value, model: $('#stock-vehicle-model').value, year: $('#stock-vehicle-year').value, color: $('#stock-vehicle-color').value }) });
-    event.target.reset(); message.textContent = 'Veículo salvo no estoque.'; await loadStock();
+    await api('/api/stock/vehicles', { method: 'POST', body: JSON.stringify({ id: $('#stock-vehicle-id').value || null, plate: $('#stock-vehicle-plate').value, model: $('#stock-vehicle-model').value, year: $('#stock-vehicle-year').value, color: $('#stock-vehicle-color').value }) });
+    resetStockVehicleForm(); message.textContent = 'Veículo salvo no estoque.'; await loadStock();
   } catch (error) { message.textContent = error.message; }
 });
+
+$('#stock-vehicle-cancel').addEventListener('click', () => { resetStockVehicleForm(); $('#stock-vehicle-message').textContent = ''; });
 
 $('#stock-ppe-form').addEventListener('submit', async (event) => {
   event.preventDefault();
