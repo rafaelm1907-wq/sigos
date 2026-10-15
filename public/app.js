@@ -1135,10 +1135,7 @@ function vehicleSignatureRoleLabel(role) { return ({ tecnico: 'Técnico', vistor
 
 function renderVehicleSignatures(checklist) {
   if (!checklist.signatures?.length) return '<section class="vehicle-signatures"><h4>Assinaturas</h4><p class="muted">Nenhuma assinatura registrada.</p></section>';
-  return `<section class="vehicle-signatures"><h4>Assinaturas</h4><div class="vehicle-signature-list">${checklist.signatures.map((signature) => {
-    const canValidate = currentUser?.role === 'admin' || currentUser?.role === signature.signerRole;
-    return `<div class="vehicle-signature-row"><div><strong>${escapeHtml(vehicleSignatureRoleLabel(signature.signerRole))}</strong><small>${escapeHtml(signature.typedName || 'Nome não informado')} · ${escapeHtml(formatDate(signature.signedAt))}</small></div><div class="vehicle-signature-actions"><span id="vehicle-signature-status-${signature.id}" class="signature-validation-status ${signature.validatedAt ? 'valid' : ''}">${signature.validatedAt ? 'Validada' : 'Não validada'}</span>${canValidate ? `<button type="button" class="secondary small-button vehicle-signature-validate" data-signature-id="${signature.id}" data-signature-role="${escapeHtml(signature.signerRole)}">Validar assinatura</button>` : ''}</div></div>`;
-  }).join('')}</div></section>`;
+  return `<section class="vehicle-signatures"><h4>Assinaturas registradas</h4><div class="vehicle-signature-list">${checklist.signatures.map((signature) => `<div class="vehicle-signature-row"><div><strong>${escapeHtml(vehicleSignatureRoleLabel(signature.signerRole))}</strong><small>${escapeHtml(signature.typedName || 'Nome não informado')} · ${escapeHtml(formatDate(signature.signedAt))}</small></div></div>`).join('')}</div></section>`;
 }
 
 function renderVehicleDetail(checklist, containerSelector, canValidate) {
@@ -1162,22 +1159,6 @@ function renderVehicleDetail(checklist, containerSelector, canValidate) {
     link.click();
     link.remove();
   });
-
-  container.querySelectorAll('.vehicle-signature-validate').forEach((button) => button.addEventListener('click', async () => {
-    const status = container.querySelector(`#vehicle-signature-status-${button.dataset.signatureId}`);
-    button.disabled = true;
-    status.className = 'signature-validation-status';
-    status.textContent = 'Validando...';
-    try {
-      const validation = await api(`/api/vehicles/checklists/${checklist.id}/validate-signature`, { method: 'POST', body: JSON.stringify({ signerRole: button.dataset.signatureRole, signatureId: button.dataset.signatureId }) });
-      status.className = `signature-validation-status ${validation.valid ? 'valid' : 'invalid'}`;
-      status.textContent = validation.valid ? 'Assinatura válida' : 'Assinatura inconsistente';
-      status.title = validation.message;
-    } catch (error) {
-      status.className = 'signature-validation-status invalid';
-      status.textContent = error.message;
-    } finally { button.disabled = false; }
-  }));
 
   if (canValidate && checklist.status === 'pendente_validacao') {
     let validationLocation = { latitude: null, longitude: null };
