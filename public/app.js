@@ -71,6 +71,7 @@ let vehicleSelfieDraft = null;
 let vehiclePhotoCaptureItemKey = null;
 let selectedVehicleChecklistType = null;
 let onboardingSignatureCanvas = null;
+let securitySignatureCanvas = null;
 let onboardingLocation = { latitude: null, longitude: null };
 let selectedEpiProcessType = null;
 let currentEpiProcess = null;
@@ -410,7 +411,7 @@ function showApp(user) {
     loadCompanySettings();
     return;
   }
-  if (['tecnico', 'vistoriador'].includes(user.role) && !user.onboardingComplete) {
+  if (!user.onboardingComplete) {
     $('#main-app-layout').classList.add('hidden');
     $('#onboarding-gate').classList.remove('hidden');
     loadOnboardingStatus();
@@ -421,7 +422,7 @@ function showApp(user) {
   configureNavigation(user);
   if (['tecnico', 'vistoriador'].includes(user.role)) { renderVehicleEditor(); setupVehicleTechnicianSignature(); }
   if (['tecnico', 'vistoriador'].includes(user.role)) loadVehicleCatalog();
-  if (['tecnico', 'vistoriador'].includes(user.role)) loadOnboardingStatus();
+  loadOnboardingStatus();
   if (user.role === 'tecnico') { renderEpiProcessItems(); setEpiProcessType(selectedEpiProcessType, false); }
   loadNotifications();
   if (notificationsTimer) clearInterval(notificationsTimer);
@@ -444,13 +445,26 @@ async function loadOverview() {
 }
 
 async function loadOnboardingStatus() {
-  if (!['tecnico', 'vistoriador'].includes(currentUser?.role)) return;
+  if (!['admin', 'tecnico', 'vistoriador'].includes(currentUser?.role)) return;
   try {
     const data = await api('/api/onboarding/status');
     currentUser.onboarding = data.onboarding;
     currentUser.signatureData = data.signatureData;
-    const complete = !data.onboarding.mustChangePassword && data.onboarding.signatureRegistered && data.onboarding.consentRegistered;
+    const complete = !data.onboarding.mustChangePassword && data.onboarding.signatureRegistered
+      && (!data.onboarding.consentRequired || data.onboarding.consentRegistered);
     currentUser.onboardingComplete = complete;
+    const isAdmin = currentUser.role === 'admin';
+    const onboardingCard = $('#onboarding-gate .onboarding-card');
+    const onboardingTitle = onboardingCard?.querySelector('h2');
+    const onboardingIntro = onboardingCard?.querySelector(':scope > .muted');
+    if (onboardingTitle) onboardingTitle.textContent = isAdmin ? 'Cadastre sua assinatura no SIGOS' : 'Configure seu acesso ao SIGOS';
+    if (onboardingIntro) onboardingIntro.textContent = isAdmin ? 'Antes de validar checklists, cadastre sua assinatura padrão.' : 'Antes de usar os checklists, conclua as três etapas de segurança.';
+    $('#onboarding-consent-step')?.classList.toggle('hidden', isAdmin);
+    const signatureStepNumber = $('#onboarding-signature-step .step-number');
+    if (signatureStepNumber) signatureStepNumber.textContent = isAdmin ? '1' : '2';
+    const signatureStepTitle = $('#onboarding-signature-step h3');
+    if (signatureStepTitle) signatureStepTitle.textContent = isAdmin ? 'Cadastre sua assinatura padrão' : 'Cadastre sua assinatura padrão';
+    renderSecuritySignatureEditor(data.signatureData);
     if (complete) {
       $('#onboarding-gate').classList.add('hidden');
       $('#main-app-layout').classList.remove('hidden');
@@ -489,6 +503,18 @@ function setupOnboardingSignature(signatureData) {
   }
   onboardingSignatureCanvas = makeSignatureCanvas();
   mount.appendChild(onboardingSignatureCanvas);
+}
+
+function renderSecuritySignatureEditor(signatureData) {
+  const preview = $('#security-signature-preview');
+  const mount = $('#security-signature-mount');
+  if (!preview || !mount) return;
+  preview.innerHTML = signatureData
+    ? `<p class="muted">Assinatura atual:</p><img class="saved-signature" src="${escapeHtml(signatureData)}" alt="Assinatura padrão atual" />`
+    : '<p class="muted">Nenhuma assinatura padrão cadastrada.</p>';
+  mount.innerHTML = '';
+  securitySignatureCanvas = makeSignatureCanvas();
+  mount.appendChild(securitySignatureCanvas);
 }
 
 function renderEpiSignaturePreview(signatureData) {
@@ -1143,8 +1169,7 @@ function renderVehicleDetail(checklist, containerSelector, canValidate) {
   if (!container) return;
   container.classList.remove('hidden');
   const isDaily = checklist.checklistType === 'diario';
-  const requiresValidationSignature = currentUser?.role !== 'admin';
-  const validationControls = canValidate && checklist.status === 'pendente_validacao' ? `<div class="validation-controls">${requiresValidationSignature ? `<div class="epi-signature-preview"><img src="${escapeHtml(currentUser?.signatureData || '')}" alt="Assinatura padrão do responsável pela validação" /></div><label class="consent-check"><input id="vehicle-validation-signature-confirm" type="checkbox" /> Confirmo o uso da minha assinatura padrão nesta validação.</label>` : '<p class="muted">A validação administrativa registra a decisão e a auditoria sem assinatura do administrador.</p>'}<div class="signature-actions"><button id="vehicle-validation-capture-location" type="button" class="secondary">Capturar localização</button></div><textarea id="validation-notes" maxlength="700" placeholder="Observação da validação (opcional)"></textarea><div class="signature-actions"><button id="approve-vehicle" type="button">Validar vistoria</button><button id="reject-vehicle" type="button" class="danger-button">Reprovar vistoria</button></div><p id="validation-message" class="muted">${requiresValidationSignature ? 'A assinatura padrão e a localização serão registradas na validação.' : 'A decisão, data, IP, dispositivo e localização disponível serão registrados.'}</p></div>` : '';
+  const validationControls = canValidate && checklist.status === 'pendente_validacao' ? `<div class="validation-controls"><div class="epi-signature-preview"><img src="${escapeHtml(currentUser?.signatureData || '')}" alt="Assinatura padrão do responsável pela validação" /></div><label class="consent-check"><input id="vehicle-validation-signature-confirm" type="checkbox" /> Confirmo o uso da minha assinatura padrão nesta validação.</label><div class="signature-actions"><button id="vehicle-validation-capture-location" type="button" class="secondary">Capturar localização</button></div><textarea id="validation-notes" maxlength="700" placeholder="Observação da validação (opcional)"></textarea><div class="signature-actions"><button id="approve-vehicle" type="button">Validar vistoria</button><button id="reject-vehicle" type="button" class="danger-button">Reprovar vistoria</button></div><p id="validation-message" class="muted">A assinatura padrão e a localização serão registradas na validação.</p></div>` : '';
   const media = (checklist.media || []).map((item) => { const isSelfie = item.kind === 'selfie'; const itemName = [...vehicleItems, ...vehicleDailyItems].find(([key]) => key === item.itemKey)?.[1]; const label = isSelfie ? 'Selfie do checklist' : itemName ? `Foto · ${itemName}` : 'Foto extra do veículo'; return `<figure class="epi-process-media-item"><img src="/api/vehicles/checklists/${checklist.id}/media/${item.id}" alt="${escapeHtml(label)}" loading="lazy" /><figcaption><strong>${escapeHtml(label)}</strong><span>Data/hora: ${escapeHtml(formatDate(item.createdAt))}</span><span>IP: ${escapeHtml(item.ipAddress || 'Não informado')}</span><span>Navegador: ${escapeHtml(browserLabel(item.userAgent || item.deviceInfo))}</span><span>Dispositivo: ${escapeHtml(deviceLabel(item.userAgent || item.deviceInfo))}</span><span>Cidade: ${escapeHtml(formatMediaLocation(item))}</span><span>Coordenadas: ${escapeHtml(formatMediaCoordinates(item))}</span></figcaption></figure>`; }).join('');
   const table = isDaily
     ? `<table class="vehicle-detail-table"><thead><tr><th>Ponto</th><th>Status</th><th>Observação</th></tr></thead><tbody>${checklist.items.map((item) => `<tr><td>${escapeHtml(item.itemName)}</td><td>${escapeHtml(vehicleStatusLabel(item.beforeStatus))}</td><td>${escapeHtml(item.beforeDescription || '–')}</td></tr>`).join('')}</tbody></table>`
@@ -1172,12 +1197,12 @@ function renderVehicleDetail(checklist, containerSelector, canValidate) {
     });
     const validate = async (decision) => {
       const message = $('#validation-message');
-      if (currentUser?.role !== 'admin' && !$('#vehicle-validation-signature-confirm')?.checked) { message.textContent = 'Confirme o uso da sua assinatura padrão antes de validar.'; return; }
+      if (!$('#vehicle-validation-signature-confirm')?.checked) { message.textContent = 'Confirme o uso da sua assinatura padrão antes de validar.'; return; }
       try {
         if (validationLocation.latitude === null || validationLocation.longitude === null) {
           await new Promise((resolve) => navigator.geolocation?.getCurrentPosition((position) => { validationLocation = { latitude: position.coords.latitude, longitude: position.coords.longitude }; resolve(); }, () => resolve(), { enableHighAccuracy: false, timeout: 5000, maximumAge: 120000 }) || resolve());
         }
-        const updated = await api(`/api/vehicles/checklists/${checklist.id}/validate`, { method: 'POST', body: JSON.stringify({ decision, notes: $('#validation-notes').value, signatureConfirmed: currentUser?.role !== 'admin', latitude: validationLocation.latitude, longitude: validationLocation.longitude, deviceInfo: navigator.userAgent }) });
+        const updated = await api(`/api/vehicles/checklists/${checklist.id}/validate`, { method: 'POST', body: JSON.stringify({ decision, notes: $('#validation-notes').value, signatureConfirmed: true, latitude: validationLocation.latitude, longitude: validationLocation.longitude, deviceInfo: navigator.userAgent }) });
         renderVehicleDetail(updated.checklist, containerSelector, true);
         await loadValidationQueue();
         await loadOverview();
@@ -1380,6 +1405,18 @@ $('#onboarding-save-signature').addEventListener('click', async () => {
   const message = $('#onboarding-signature-message');
   if (!onboardingSignatureCanvas || !$('#onboarding-signature-confirm').checked) { message.textContent = 'Desenhe sua assinatura e confirme que ela será usada para validar seus registros.'; return; }
   try { await api('/api/onboarding/signature', { method: 'POST', body: JSON.stringify({ signatureData: onboardingSignatureCanvas.toDataURL('image/png'), confirmed: true }) }); message.textContent = ''; await loadOnboardingStatus(); } catch (error) { message.textContent = error.message; }
+});
+
+$('#security-clear-signature').addEventListener('click', () => { if (securitySignatureCanvas) clearSignatureCanvas(securitySignatureCanvas); });
+$('#security-save-signature').addEventListener('click', async () => {
+  const message = $('#security-signature-message');
+  if (!securitySignatureCanvas || !$('#security-signature-confirm').checked) { message.textContent = 'Desenhe a nova assinatura e confirme o uso dela no SIGOS.'; return; }
+  try {
+    await api('/api/onboarding/signature', { method: 'POST', body: JSON.stringify({ signatureData: securitySignatureCanvas.toDataURL('image/png'), confirmed: true }) });
+    $('#security-signature-confirm').checked = false;
+    message.textContent = 'Assinatura padrão atualizada.';
+    await loadOnboardingStatus();
+  } catch (error) { message.textContent = error.message; }
 });
 
 $('#onboarding-capture-location').addEventListener('click', () => {

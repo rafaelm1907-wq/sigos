@@ -265,9 +265,11 @@ const uploadRateLimit = createRateLimiter({
 
 function publicUser(row, { companyProfileComplete = null } = {}) {
   if (!row) return null;
-  const signatureUserOnboardingComplete = !['tecnico', 'vistoriador'].includes(row.role)
-    || (!row.must_change_password && Boolean(row.signature_data) && Boolean(row.consent_at)
-      && row.consent_location === true && row.consent_ip === true && row.consent_image === true);
+  const requiresDataConsent = ['tecnico', 'vistoriador'].includes(row.role);
+  const signatureUserOnboardingComplete = !row.must_change_password
+    && Boolean(row.signature_data)
+    && (!requiresDataConsent || (Boolean(row.consent_at)
+      && row.consent_location === true && row.consent_ip === true && row.consent_image === true));
   return {
     id: row.id,
     name: row.name,
@@ -315,9 +317,11 @@ async function getCompanySettings() {
 }
 
 function isTechnicianOnboardingComplete(user) {
-  return !['tecnico', 'vistoriador'].includes(user.role)
-    || (!user.must_change_password && Boolean(user.signature_data) && Boolean(user.consent_at)
-      && user.consent_location === true && user.consent_ip === true && user.consent_image === true);
+  const requiresDataConsent = ['tecnico', 'vistoriador'].includes(user.role);
+  return !user.must_change_password
+    && Boolean(user.signature_data)
+    && (!requiresDataConsent || (Boolean(user.consent_at)
+      && user.consent_location === true && user.consent_ip === true && user.consent_image === true));
 }
 
 async function audit({ req, actorUserId = null, eventType, entityType = null, entityId = null, metadata = {} }) {
@@ -511,7 +515,7 @@ async function auth(req, res, next) {
     req.companySettings = user.role === 'admin' ? await getCompanySettings() : null;
     req.companyProfileComplete = user.role !== 'admin' || isCompanyProfileComplete(req.companySettings);
     const onboardingPath = req.path === '/api/me' || req.path.startsWith('/api/onboarding') || req.path.startsWith('/api/company') || req.path === '/api/auth/logout' || req.path === '/api/auth/change-password';
-    if (['tecnico', 'vistoriador'].includes(user.role) && !isTechnicianOnboardingComplete(user) && !onboardingPath) {
+    if (!isTechnicianOnboardingComplete(user) && !onboardingPath) {
       return res.status(428).json({ code: 'ONBOARDING_REQUIRED', error: 'Conclua o primeiro acesso antes de utilizar o SIGOS.' });
     }
     if (user.role === 'admin' && !req.companyProfileComplete && !onboardingPath) {
@@ -1419,19 +1423,21 @@ app.put('/api/company', auth, uploadRateLimit, requireRole('admin'), async (req,
   res.json({ company: publicCompanySettings(result.rows[0]) });
 });
 
-app.get('/api/onboarding/status', auth, requireRole('tecnico', 'vistoriador'), (req, res) => {
+app.get('/api/onboarding/status', auth, requireRole('admin', 'tecnico', 'vistoriador'), (req, res) => {
   res.json({
     onboarding: {
       mustChangePassword: Boolean(req.user.must_change_password),
       signatureRegistered: Boolean(req.user.signature_data),
-      consentRegistered: Boolean(req.user.consent_at) && req.user.consent_location === true && req.user.consent_ip === true && req.user.consent_image === true,
+      consentRequired: ['tecnico', 'vistoriador'].includes(req.user.role),
+      consentRegistered: !['tecnico', 'vistoriador'].includes(req.user.role)
+        || (Boolean(req.user.consent_at) && req.user.consent_location === true && req.user.consent_ip === true && req.user.consent_image === true),
       consentAt: req.user.consent_at || null,
     },
     signatureData: req.user.signature_data || null,
   });
 });
 
-app.post('/api/onboarding/signature', auth, requireRole('tecnico', 'vistoriador'), async (req, res) => {
+app.post('/api/onboarding/signature', auth, requireRole('admin', 'tecnico', 'vistoriador'), async (req, res) => {
   const signatureData = String(req.body.signatureData || '');
   const confirmed = req.body.confirmed === true;
   if (!confirmed) return res.status(400).json({ error: 'Confirme que esta assinatura será usada para validar seus registros.' });
@@ -2625,7 +2631,6 @@ function renderVehicleChecklistPdf(doc, checklist, company) {
     doc.y += 28;
     doc.fontSize(8).fillColor('#4b5563').text(`IP: ${signature.signerIp || 'não informado'} · Dispositivo: ${signature.signerDevice || signature.signerUserAgent || 'não informado'}`);
     doc.text(`Coordenadas: ${signature.signerLatitude ?? '–'}, ${signature.signerLongitude ?? '–'} · Hash: ${signature.signatureHash || '–'}`);
-    doc.text(`Assinatura validada em: ${signature.validatedAt ? new Date(signature.validatedAt).toLocaleString('pt-BR') : 'Não validada'}`);
   });
 }
 
@@ -3424,16 +3429,14 @@ app.post('/api/vehicles/checklists/:id/validate', auth, requireRole('admin', 'vi
   const decision = String(req.body.decision || '');
   const validationNotes = cleanText(req.body.notes, 700);
   if (!['validado', 'reprovado'].includes(decision)) return res.status(400).json({ error: 'Informe se a vistoria foi validada ou reprovada.' });
-  const signatureRequest = req.user.role === 'admin'
-    ? parseVehicleLocation(req.body)
-    : parseRegisteredVehicleSignature(req.user, req.body);
+  const signatureRequest = parseRegisteredVehicleSignature(req.user, req.body);
   if (signatureRequest.error) return res.status(400).json({ error: signatureRequest.error });
   const pending = await pool.query(`${vehicleChecklistQuery} WHERE c.id = $1 AND c.status = 'pendente_validacao' GROUP BY c.id, driver.name, inspector.name`, [req.params.id]);
   const checklist = pending.rows[0];
   if (!checklist) return res.status(404).json({ error: 'Checklist pendente não encontrado.' });
 
   const signedAt = new Date().toISOString();
-  const signature = req.user.role === 'admin' ? null : {
+  const signature = {
     signerRole: req.user.role,
     typedName: signatureRequest.typedName,
     signedAt,
@@ -3447,7 +3450,7 @@ app.post('/api/vehicles/checklists/:id/validate', auth, requireRole('admin', 'vi
     signatureData: signatureRequest.signatureData,
     signatureContext: { decision, notes: validationNotes || null },
   };
-  const { documentHash, signatureHash } = signature ? vehicleSignatureHashes(checklist, checklist.items, signature) : { documentHash: null, signatureHash: null };
+  const { documentHash, signatureHash } = vehicleSignatureHashes(checklist, checklist.items, signature);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -3462,35 +3465,33 @@ app.post('/api/vehicles/checklists/:id/validate', auth, requireRole('admin', 'vi
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Checklist pendente não encontrado.' });
     }
-    if (signature) {
-      await client.query(
-        `INSERT INTO vehicle_checklist_signatures
-          (checklist_id, signer_user_id, signer_role, typed_name, signed_at, signer_ip, signer_user_agent,
-           signer_device, signer_latitude, signer_longitude, signature_method, signature_hash, document_hash,
-           signature_version, signature_data, signature_context)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 2, $14, $15::jsonb)`,
-        [
-          req.params.id,
-          req.user.id,
-          signature.signerRole,
-          signature.typedName,
-          signature.signedAt,
-          signature.signerIp,
-          signature.signerUserAgent,
-          signature.signerDevice,
-          signature.signerLatitude,
-          signature.signerLongitude,
-          signature.signatureMethod,
-          signatureHash,
-          documentHash,
-          signature.signatureData,
-          JSON.stringify(signature.signatureContext),
-        ],
-      );
-    }
+    await client.query(
+      `INSERT INTO vehicle_checklist_signatures
+        (checklist_id, signer_user_id, signer_role, typed_name, signed_at, signer_ip, signer_user_agent,
+         signer_device, signer_latitude, signer_longitude, signature_method, signature_hash, document_hash,
+         signature_version, signature_data, signature_context)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 2, $14, $15::jsonb)`,
+      [
+        req.params.id,
+        req.user.id,
+        signature.signerRole,
+        signature.typedName,
+        signature.signedAt,
+        signature.signerIp,
+        signature.signerUserAgent,
+        signature.signerDevice,
+        signature.signerLatitude,
+        signature.signerLongitude,
+        signature.signatureMethod,
+        signatureHash,
+        documentHash,
+        signature.signatureData,
+        JSON.stringify(signature.signatureContext),
+      ],
+    );
     await client.query('COMMIT');
     await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_checklist_validated', entityType: 'vehicle_checklist', entityId: result.rows[0].id, metadata: { decision, plate: result.rows[0].plate, notes: validationNotes || null, signatureHash, documentHash, signatureVersion: 2 } });
-    if (signature) await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_signature_signed', entityType: 'vehicle_checklist', entityId: result.rows[0].id, metadata: { signerRole: signature.signerRole, decision, signatureHash, documentHash, signatureVersion: 2, typedName: signature.typedName, latitude: signature.signerLatitude, longitude: signature.signerLongitude, device: signature.signerDevice, signatureMethod: signature.signatureMethod } });
+    await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_signature_signed', entityType: 'vehicle_checklist', entityId: result.rows[0].id, metadata: { signerRole: signature.signerRole, decision, signatureHash, documentHash, signatureVersion: 2, typedName: signature.typedName, latitude: signature.signerLatitude, longitude: signature.signerLongitude, device: signature.signerDevice, signatureMethod: signature.signatureMethod } });
     await notifyRoles({
       roles: ['admin'],
       notificationType: 'checklist_validated',
