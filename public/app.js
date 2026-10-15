@@ -294,8 +294,23 @@ function closeMobileMenu() {
 async function api(url, options = {}) {
   const response = await fetch(url, { credentials: 'same-origin', ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
   const body = await response.json().catch(() => ({}));
+  if (response.status === 401 && !url.includes('/api/auth/login') && !url.includes('/api/mobile/auth/login')) {
+    handleSessionExpired(body.error);
+  }
   if (!response.ok) throw new Error(body.error || 'Não foi possível concluir a operação.');
   return body;
+}
+
+function handleSessionExpired(message = 'Sua sessão foi encerrada porque este usuário entrou em outro aparelho.') {
+  currentUser = null;
+  if (notificationsTimer) {
+    clearInterval(notificationsTimer);
+    notificationsTimer = null;
+  }
+  $('#app-view').classList.add('hidden');
+  $('#login-view').classList.remove('hidden');
+  $('#login-error').textContent = message;
+  $('#notifications-panel')?.classList.add('hidden');
 }
 
 const companyFormFields = ['tradeName', 'legalName', 'cnpj', 'phone', 'email', 'responsibleName', 'website', 'address', 'city', 'state', 'zipCode'];

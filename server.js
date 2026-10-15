@@ -672,7 +672,23 @@ function publicComplianceAlert(row) {
 }
 
 function signSession(user) {
-  return jwt.sign({ sub: String(user.id), role: user.role, name: user.name }, jwtSecret, { expiresIn: '8h' });
+  return jwt.sign({
+    sub: String(user.id),
+    role: user.role,
+    name: user.name,
+    sessionVersion: Number(user.session_version),
+  }, jwtSecret, { expiresIn: '8h' });
+}
+
+async function advanceSession(userId) {
+  const result = await pool.query(
+    `UPDATE users
+     SET session_version = session_version + 1, updated_at = NOW()
+     WHERE id = $1 AND active = TRUE
+     RETURNING *`,
+    [userId],
+  );
+  return result.rows[0] || null;
 }
 
 async function auth(req, res, next) {
@@ -686,6 +702,7 @@ async function auth(req, res, next) {
     const payload = jwt.verify(token, jwtSecret);
     const result = await pool.query(
       `SELECT id, name, email, role, active, created_at,
+              session_version,
               must_change_password, signature_data, signature_hash, signature_mode,
               consent_location, consent_ip, consent_image, consent_at,
               consent_ip_address, consent_user_agent, consent_latitude, consent_longitude
@@ -694,6 +711,9 @@ async function auth(req, res, next) {
     );
     const user = result.rows[0];
     if (!user || !user.active) return res.status(401).json({ error: 'Usuário inativo ou inexistente.' });
+    if (Number(payload.sessionVersion) !== Number(user.session_version)) {
+      return res.status(401).json({ error: 'Sua sessão foi encerrada porque este usuário entrou em outro aparelho.' });
+    }
     req.user = user;
     req.companySettings = user.role === 'admin' ? await getCompanySettings() : null;
     req.companyProfileComplete = user.role !== 'admin' || isCompanyProfileComplete(req.companySettings);
@@ -737,6 +757,7 @@ async function initSchema() {
     );
 
     ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version BIGINT NOT NULL DEFAULT 1;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS signature_data TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS signature_hash TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS signature_mode TEXT NOT NULL DEFAULT 'desenhada';
@@ -1492,15 +1513,18 @@ app.post('/api/auth/login', loginRateLimit, async (req, res) => {
     return res.status(401).json({ error: 'E-mail ou senha inválidos.' });
   }
 
-  res.cookie('session', signSession(user), {
+  const sessionUser = await advanceSession(user.id);
+  if (!sessionUser) return res.status(401).json({ error: 'Não foi possível iniciar a sessão.' });
+
+  res.cookie('session', signSession(sessionUser), {
     httpOnly: true,
     sameSite: 'lax',
     secure: cookieSecure,
     maxAge: 8 * 60 * 60 * 1000,
   });
-  await audit({ req, actorUserId: user.id, eventType: 'login_success', entityType: 'user', entityId: user.id });
-  const companySettings = user.role === 'admin' ? await getCompanySettings() : null;
-  res.json({ user: publicUser(user, { companyProfileComplete: user.role !== 'admin' || isCompanyProfileComplete(companySettings) }) });
+  await audit({ req, actorUserId: sessionUser.id, eventType: 'login_success', entityType: 'user', entityId: sessionUser.id, metadata: { sessionVersion: Number(sessionUser.session_version) } });
+  const companySettings = sessionUser.role === 'admin' ? await getCompanySettings() : null;
+  res.json({ user: publicUser(sessionUser, { companyProfileComplete: sessionUser.role !== 'admin' || isCompanyProfileComplete(companySettings) }) });
 });
 
 app.post('/api/mobile/auth/login', loginRateLimit, async (req, res) => {
@@ -1514,10 +1538,13 @@ app.post('/api/mobile/auth/login', loginRateLimit, async (req, res) => {
     return res.status(401).json({ error: 'E-mail ou senha inválidos.' });
   }
 
-  const token = signSession(user);
-  await audit({ req, actorUserId: user.id, eventType: 'mobile_login_success', entityType: 'user', entityId: user.id });
-  const companySettings = user.role === 'admin' ? await getCompanySettings() : null;
-  res.json({ user: publicUser(user, { companyProfileComplete: user.role !== 'admin' || isCompanyProfileComplete(companySettings) }), token, expiresIn: 8 * 60 * 60 });
+  const sessionUser = await advanceSession(user.id);
+  if (!sessionUser) return res.status(401).json({ error: 'Não foi possível iniciar a sessão.' });
+
+  const token = signSession(sessionUser);
+  await audit({ req, actorUserId: sessionUser.id, eventType: 'mobile_login_success', entityType: 'user', entityId: sessionUser.id, metadata: { sessionVersion: Number(sessionUser.session_version) } });
+  const companySettings = sessionUser.role === 'admin' ? await getCompanySettings() : null;
+  res.json({ user: publicUser(sessionUser, { companyProfileComplete: sessionUser.role !== 'admin' || isCompanyProfileComplete(companySettings) }), token, expiresIn: 8 * 60 * 60 });
 });
 
 app.post('/api/mobile/selfies', auth, uploadRateLimit, requireRole('admin', 'tecnico', 'vistoriador'), async (req, res) => {
