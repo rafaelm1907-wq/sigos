@@ -834,6 +834,35 @@ async function initSchema() {
     CREATE INDEX IF NOT EXISTS epi_process_items_process_idx ON epi_process_items (process_id);
     CREATE INDEX IF NOT EXISTS epi_process_media_process_idx ON epi_process_media (process_id, kind, created_at);
 
+    CREATE TABLE IF NOT EXISTS ppe_stock_movements (
+      id BIGSERIAL PRIMARY KEY,
+      ppe_item_id BIGINT NOT NULL REFERENCES ppe_items(id) ON DELETE RESTRICT,
+      movement_type TEXT NOT NULL CHECK (movement_type IN ('entrada', 'saida', 'transferencia', 'devolucao', 'ajuste_saida')),
+      quantity INTEGER NOT NULL CHECK (quantity > 0),
+      from_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      to_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      process_id BIGINT REFERENCES epi_processes(id) ON DELETE SET NULL,
+      term_id BIGINT REFERENCES epi_terms(id) ON DELETE SET NULL,
+      created_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      reference_key TEXT NOT NULL UNIQUE,
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK (movement_type <> 'transferencia' OR (from_user_id IS NOT NULL AND to_user_id IS NOT NULL AND from_user_id <> to_user_id)),
+      CHECK (movement_type <> 'devolucao' OR (from_user_id IS NOT NULL AND to_user_id IS NULL)),
+      CHECK (movement_type <> 'saida' OR (from_user_id IS NULL AND to_user_id IS NOT NULL)),
+      CHECK (movement_type NOT IN ('entrada', 'ajuste_saida') OR (from_user_id IS NULL AND to_user_id IS NULL))
+    );
+
+    CREATE INDEX IF NOT EXISTS ppe_stock_movements_ppe_idx ON ppe_stock_movements (ppe_item_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS ppe_stock_movements_users_idx ON ppe_stock_movements (from_user_id, to_user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS ppe_stock_movements_process_idx ON ppe_stock_movements (process_id);
+    CREATE INDEX IF NOT EXISTS ppe_stock_movements_term_idx ON ppe_stock_movements (term_id);
+
+    CREATE TABLE IF NOT EXISTS app_migrations (
+      migration_key TEXT PRIMARY KEY,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS vehicle_checklists (
       id BIGSERIAL PRIMARY KEY,
       vehicle_id BIGINT REFERENCES vehicles(id) ON DELETE SET NULL,
@@ -923,6 +952,274 @@ async function initSchema() {
     CREATE INDEX IF NOT EXISTS vehicle_checklists_driver_idx ON vehicle_checklists (driver_user_id);
     CREATE INDEX IF NOT EXISTS vehicle_checklist_items_checklist_idx ON vehicle_checklist_items (checklist_id);
   `);
+}
+
+class StockConflictError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'StockConflictError';
+    this.statusCode = 409;
+  }
+}
+
+async function lockPpeItem(client, ppeItemId) {
+  const result = await client.query(
+    'SELECT id, name, stock_quantity FROM ppe_items WHERE id = $1 FOR UPDATE',
+    [ppeItemId],
+  );
+  if (!result.rows[0]) throw new StockConflictError('O EPI informado não existe mais no estoque.');
+  return result.rows[0];
+}
+
+async function getUserPpeHoldings(client, userId) {
+  const result = await client.query(
+    `SELECT ppe_item_id, SUM(delta)::int AS quantity
+     FROM (
+       SELECT ppe_item_id, quantity AS delta
+       FROM ppe_stock_movements
+       WHERE to_user_id = $1
+       UNION ALL
+       SELECT ppe_item_id, -quantity AS delta
+       FROM ppe_stock_movements
+       WHERE from_user_id = $1
+     ) movements
+     GROUP BY ppe_item_id
+     HAVING SUM(delta) > 0`,
+    [userId],
+  );
+  return new Map(result.rows.map((row) => [Number(row.ppe_item_id), Number(row.quantity)]));
+}
+
+async function getAssignedQuantity(client, ppeItemId) {
+  const result = await client.query(
+    `SELECT COALESCE(SUM(delta), 0)::int AS quantity
+     FROM (
+       SELECT quantity AS delta
+       FROM ppe_stock_movements
+       WHERE ppe_item_id = $1 AND to_user_id IS NOT NULL
+       UNION ALL
+       SELECT -quantity AS delta
+       FROM ppe_stock_movements
+       WHERE ppe_item_id = $1 AND from_user_id IS NOT NULL
+     ) movements`,
+    [ppeItemId],
+  );
+  return Number(result.rows[0]?.quantity || 0);
+}
+
+async function getAvailableQuantity(client, ppeItemId) {
+  const item = await lockPpeItem(client, ppeItemId);
+  const assigned = await getAssignedQuantity(client, ppeItemId);
+  return { total: Number(item.stock_quantity || 0), assigned, available: Number(item.stock_quantity || 0) - assigned };
+}
+
+async function ensureAvailableQuantity(client, ppeItemId, quantity) {
+  const balance = await getAvailableQuantity(client, ppeItemId);
+  if (quantity > balance.available) {
+    throw new StockConflictError(`Estoque insuficiente para ${balance.available < 0 ? 'regularizar ' : ''}o EPI #${ppeItemId}. Disponível: ${balance.available}.`);
+  }
+  return balance;
+}
+
+async function insertPpeStockMovement(client, {
+  ppeItemId,
+  movementType,
+  quantity,
+  fromUserId = null,
+  toUserId = null,
+  processId = null,
+  termId = null,
+  createdBy = null,
+  referenceKey,
+  notes = null,
+}) {
+  if (!Number.isInteger(Number(quantity)) || Number(quantity) < 1) return null;
+  const result = await client.query(
+    `INSERT INTO ppe_stock_movements
+      (ppe_item_id, movement_type, quantity, from_user_id, to_user_id, process_id, term_id, created_by, reference_key, notes)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     ON CONFLICT (reference_key) DO NOTHING
+     RETURNING id`,
+    [ppeItemId, movementType, Number(quantity), fromUserId, toUserId, processId, termId, createdBy, referenceKey, notes],
+  );
+  return result.rows[0] || null;
+}
+
+function requestedStockItems(row) {
+  const items = new Map();
+  for (const item of row.items || []) {
+    const ppeItemId = Number(item.ppeItemId);
+    const quantity = Number(item.quantity);
+    if (!Number.isInteger(ppeItemId) || ppeItemId < 1 || !Number.isInteger(quantity) || quantity < 1) continue;
+    items.set(ppeItemId, (items.get(ppeItemId) || 0) + quantity);
+  }
+  return items;
+}
+
+async function applyEpiProcessStockMovements(client, row, actorUserId) {
+  const requested = requestedStockItems(row);
+  let current = await getUserPpeHoldings(client, row.created_by);
+  const allPpeIds = new Set([...requested.keys(), ...current.keys()]);
+  for (const ppeItemId of allPpeIds) await lockPpeItem(client, ppeItemId);
+  current = await getUserPpeHoldings(client, row.created_by);
+
+  if (row.process_type === 'checklist_diario') {
+    for (const ppeItemId of allPpeIds) {
+      const desired = requested.get(ppeItemId) || 0;
+      const held = current.get(ppeItemId) || 0;
+      const delta = desired - held;
+      if (delta > 0) {
+        await ensureAvailableQuantity(client, ppeItemId, delta);
+        await insertPpeStockMovement(client, {
+          ppeItemId,
+          movementType: 'saida',
+          quantity: delta,
+          toUserId: row.created_by,
+          processId: row.id,
+          createdBy: actorUserId,
+          referenceKey: `process:${row.id}:ppe:${ppeItemId}:saida`,
+          notes: 'Ajuste de posse pelo checklist diário.',
+        });
+      } else if (delta < 0) {
+        await insertPpeStockMovement(client, {
+          ppeItemId,
+          movementType: 'devolucao',
+          quantity: Math.abs(delta),
+          fromUserId: row.created_by,
+          processId: row.id,
+          createdBy: actorUserId,
+          referenceKey: `process:${row.id}:ppe:${ppeItemId}:devolucao`,
+          notes: 'EPI removido da posse no checklist diário.',
+        });
+      }
+    }
+    return;
+  }
+
+  for (const [ppeItemId, quantity] of requested.entries()) {
+    const held = current.get(ppeItemId) || 0;
+    if (quantity > held) {
+      throw new StockConflictError(`O usuário não possui quantidade suficiente do EPI #${ppeItemId}. Posse atual: ${held}.`);
+    }
+    if (row.process_type === 'devolucao') {
+      await insertPpeStockMovement(client, {
+        ppeItemId,
+        movementType: 'devolucao',
+        quantity,
+        fromUserId: row.created_by,
+        processId: row.id,
+        createdBy: actorUserId,
+        referenceKey: `process:${row.id}:ppe:${ppeItemId}:devolucao`,
+        notes: 'Devolução de EPI validada.',
+      });
+    } else if (row.process_type === 'transferencia') {
+      if (!row.target_user_id) throw new StockConflictError('A transferência não possui um destinatário válido.');
+      await insertPpeStockMovement(client, {
+        ppeItemId,
+        movementType: 'transferencia',
+        quantity,
+        fromUserId: row.created_by,
+        toUserId: row.target_user_id,
+        processId: row.id,
+        createdBy: actorUserId,
+        referenceKey: `process:${row.id}:ppe:${ppeItemId}:transferencia`,
+        notes: 'Transferência de EPI validada.',
+      });
+    }
+  }
+}
+
+async function backfillPpeStockMovements() {
+  const migrationKey = 'ppe-stock-ledger-v1';
+  const existing = await pool.query('SELECT 1 FROM app_migrations WHERE migration_key = $1', [migrationKey]);
+  if (existing.rowCount) return;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const marker = await client.query(
+      `INSERT INTO app_migrations (migration_key) VALUES ($1)
+       ON CONFLICT (migration_key) DO NOTHING
+       RETURNING migration_key`,
+      [migrationKey],
+    );
+    if (!marker.rowCount) {
+      await client.query('COMMIT');
+      return;
+    }
+
+    await client.query(
+      `INSERT INTO ppe_stock_movements
+        (ppe_item_id, movement_type, quantity, to_user_id, term_id, created_by, reference_key, notes)
+       SELECT COALESCE(ti.ppe_item_id, catalog.id), 'saida', ti.quantity, t.signer_user_id, t.id, t.created_by,
+              'backfill:term:' || t.id || ':item:' || ti.id,
+              'Movimentação histórica importada do termo EPI assinado.'
+       FROM epi_term_items ti
+       JOIN epi_terms t ON t.id = ti.term_id
+       LEFT JOIN ppe_items catalog ON (UPPER(COALESCE(ti.ca, '')) = UPPER(COALESCE(catalog.ca, '')) OR LOWER(ti.equipment_name) = LOWER(catalog.name))
+       WHERE t.status = 'assinado' AND t.signer_user_id IS NOT NULL AND COALESCE(ti.ppe_item_id, catalog.id) IS NOT NULL
+       ON CONFLICT (reference_key) DO NOTHING`,
+    );
+
+    await client.query(
+      `INSERT INTO ppe_stock_movements
+        (ppe_item_id, movement_type, quantity, from_user_id, to_user_id, process_id, created_by, reference_key, notes)
+       SELECT COALESCE(pi.ppe_item_id, catalog.id), 'transferencia', pi.quantity, p.created_by, p.target_user_id, p.id, p.validated_by,
+              'backfill:process:' || p.id || ':item:' || pi.id,
+              'Movimentação histórica importada da transferência de EPI validada.'
+       FROM epi_process_items pi
+       JOIN epi_processes p ON p.id = pi.process_id
+       LEFT JOIN ppe_items catalog ON (UPPER(COALESCE(pi.ca, '')) = UPPER(COALESCE(catalog.ca, '')) OR LOWER(pi.equipment_name) = LOWER(catalog.name))
+       WHERE p.status = 'validado' AND p.process_type = 'transferencia'
+         AND p.target_user_id IS NOT NULL AND COALESCE(pi.ppe_item_id, catalog.id) IS NOT NULL
+       ON CONFLICT (reference_key) DO NOTHING`,
+    );
+
+    await client.query(
+      `INSERT INTO ppe_stock_movements
+        (ppe_item_id, movement_type, quantity, from_user_id, process_id, created_by, reference_key, notes)
+       SELECT COALESCE(pi.ppe_item_id, catalog.id), 'devolucao', pi.quantity, p.created_by, p.id, p.validated_by,
+              'backfill:process:' || p.id || ':item:' || pi.id,
+              'Movimentação histórica importada da devolução de EPI validada.'
+       FROM epi_process_items pi
+       JOIN epi_processes p ON p.id = pi.process_id
+       LEFT JOIN ppe_items catalog ON (UPPER(COALESCE(pi.ca, '')) = UPPER(COALESCE(catalog.ca, '')) OR LOWER(pi.equipment_name) = LOWER(catalog.name))
+       WHERE p.status = 'validado' AND p.process_type = 'devolucao' AND COALESCE(pi.ppe_item_id, catalog.id) IS NOT NULL
+       ON CONFLICT (reference_key) DO NOTHING`,
+    );
+
+    const daily = await client.query(
+      `SELECT DISTINCT ON (p.created_by, COALESCE(pi.ppe_item_id, catalog.id))
+         p.id AS process_id, p.created_by, pi.id AS item_id, COALESCE(pi.ppe_item_id, catalog.id) AS ppe_item_id, pi.quantity
+       FROM epi_process_items pi
+       JOIN epi_processes p ON p.id = pi.process_id
+       LEFT JOIN ppe_items catalog ON (UPPER(COALESCE(pi.ca, '')) = UPPER(COALESCE(catalog.ca, '')) OR LOWER(pi.equipment_name) = LOWER(catalog.name))
+       WHERE p.status = 'validado' AND p.process_type = 'checklist_diario' AND COALESCE(pi.ppe_item_id, catalog.id) IS NOT NULL
+       ORDER BY p.created_by, COALESCE(pi.ppe_item_id, catalog.id), p.validated_at DESC NULLS LAST, p.id DESC, pi.id DESC`,
+    );
+    for (const item of daily.rows) {
+      const holdings = await getUserPpeHoldings(client, item.created_by);
+      if ((holdings.get(Number(item.ppe_item_id)) || 0) > 0) continue;
+      await insertPpeStockMovement(client, {
+        ppeItemId: Number(item.ppe_item_id),
+        movementType: 'saida',
+        quantity: Number(item.quantity),
+        toUserId: item.created_by,
+        processId: item.process_id,
+        createdBy: item.created_by,
+        referenceKey: `backfill:daily:${item.process_id}:item:${item.item_id}`,
+        notes: 'Posse histórica importada do último checklist diário validado.',
+      });
+    }
+
+    await client.query('COMMIT');
+    console.log('Livro de movimentações de EPI inicializado.');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function bootstrapAdmin() {
@@ -1853,14 +2150,30 @@ app.post('/api/epi/processes/:id/validate', auth, async (req, res) => {
   if (!equalHash(row.signature_document_hash, expectedDocumentHash) || !equalHash(row.signature_hash, expectedSignatureHash)) {
     return res.status(409).json({ error: 'A assinatura padrão ou o conteúdo do termo não conferem com o registro original.' });
   }
-  const updated = await pool.query(
-    `UPDATE epi_processes
-     SET status = $1, validated_by = $2, validated_at = NOW(), validation_notes = $3
-     WHERE id = $4 AND status = 'pendente_validacao'
-     RETURNING id, status, validated_at`,
-    [decision, req.user.id, validationNotes, row.id],
-  );
-  if (!updated.rows[0]) return res.status(409).json({ error: 'Este processo já foi validado por outra pessoa.' });
+  const client = await pool.connect();
+  let updated;
+  try {
+    await client.query('BEGIN');
+    updated = await client.query(
+      `UPDATE epi_processes
+       SET status = $1, validated_by = $2, validated_at = NOW(), validation_notes = $3
+       WHERE id = $4 AND status = 'pendente_validacao'
+       RETURNING id, status, validated_at`,
+      [decision, req.user.id, validationNotes, row.id],
+    );
+    if (!updated.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Este processo já foi validado por outra pessoa.' });
+    }
+    if (decision === 'validado') await applyEpiProcessStockMovements(client, row, req.user.id);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    if (error.statusCode) return res.status(error.statusCode).json({ error: error.message });
+    throw error;
+  } finally {
+    client.release();
+  }
   await audit({ req, actorUserId: req.user.id, eventType: 'epi_process_validated', entityType: 'epi_process', entityId: row.id, metadata: { decision, notes: validationNotes, signatureHash: row.signature_hash, documentHash: row.signature_document_hash } });
   await notifyRoles({ roles: ['admin'], notificationType: 'epi_process_validated', title: 'Processo de EPI validado', message: `${epiProcessTitle(row.process_type)} foi ${decision === 'validado' ? 'validado' : 'reprovado'} por ${req.user.name}.`, entityType: 'epi_process', entityId: row.id, metadata: { processType: row.process_type, decision, validatedBy: req.user.id } });
   await notifyUsers({ userIds: [row.created_by, row.target_user_id].filter((id) => id && String(id) !== String(req.user.id)), notificationType: 'epi_process_validated', title: 'Processo de EPI atualizado', message: `${epiProcessTitle(row.process_type)} foi ${decision === 'validado' ? 'validado' : 'reprovado'}.`, entityType: 'epi_process', entityId: row.id, metadata: { processType: row.process_type, decision } });
@@ -1971,7 +2284,7 @@ function signatureDocumentPayload(term, items) {
 
 async function signatureItems(termId) {
   const result = await pool.query(
-    `SELECT id, equipment_name, quantity, ca, condition, observation
+    `SELECT id, ppe_item_id, equipment_name, quantity, ca, condition, observation
      FROM epi_term_items
      WHERE term_id = $1
      ORDER BY id`,
@@ -2456,18 +2769,56 @@ app.post('/api/epi/terms/:id/sign', auth, requireRole('tecnico'), async (req, re
     signerUserId: String(req.user.id),
   });
 
-  await pool.query(
-    `UPDATE epi_terms
-     SET status = 'assinado', signed_at = $1, signer_user_id = $2,
-         signer_ip = $3, signer_user_agent = $4, signer_device = $5,
-         signer_latitude = $6, signer_longitude = $7,
-         signature_method = 'assinatura_eletronica_interna_canvas',
-         signature_hash = $8, signature_data = $9,
-         signer_typed_name = $10, signature_version = 2, document_hash = $11,
-         signature_validated_at = NULL
-     WHERE id = $12`,
-    [signedAt, req.user.id, clientIp(req), req.get('user-agent') || null, signerDevice || null, latitude, longitude, signatureHash, signatureData, typedName, documentHash, term.id],
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const lockedTerm = await client.query('SELECT status FROM epi_terms WHERE id = $1 FOR UPDATE', [term.id]);
+    if (!lockedTerm.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Termo não encontrado.' });
+    }
+    if (lockedTerm.rows[0].status === 'assinado') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Este termo já está assinado.' });
+    }
+    const termItems = await client.query(
+      'SELECT id, ppe_item_id, quantity FROM epi_term_items WHERE term_id = $1 ORDER BY id',
+      [term.id],
+    );
+    for (const item of termItems.rows) {
+      if (!item.ppe_item_id) continue;
+      await ensureAvailableQuantity(client, Number(item.ppe_item_id), Number(item.quantity));
+      await insertPpeStockMovement(client, {
+        ppeItemId: Number(item.ppe_item_id),
+        movementType: 'saida',
+        quantity: Number(item.quantity),
+        toUserId: req.user.id,
+        termId: term.id,
+        createdBy: req.user.id,
+        referenceKey: `term:${term.id}:item:${item.id}:saida`,
+        notes: 'Saída de EPI por assinatura de termo.',
+      });
+    }
+    await client.query(
+      `UPDATE epi_terms
+       SET status = 'assinado', signed_at = $1, signer_user_id = $2,
+           signer_ip = $3, signer_user_agent = $4, signer_device = $5,
+           signer_latitude = $6, signer_longitude = $7,
+           signature_method = 'assinatura_eletronica_interna_canvas',
+           signature_hash = $8, signature_data = $9,
+           signer_typed_name = $10, signature_version = 2, document_hash = $11,
+           signature_validated_at = NULL
+       WHERE id = $12`,
+      [signedAt, req.user.id, clientIp(req), req.get('user-agent') || null, signerDevice || null, latitude, longitude, signatureHash, signatureData, typedName, documentHash, term.id],
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    if (error.statusCode) return res.status(error.statusCode).json({ error: error.message });
+    throw error;
+  } finally {
+    client.release();
+  }
   await audit({
     req,
     actorUserId: req.user.id,
@@ -3157,13 +3508,34 @@ function publicStockPpe(row) {
     ca: row.ca,
     category: row.category,
     stockQuantity: row.stock_quantity,
+    availableQuantity: row.available_quantity === undefined ? row.stock_quantity : Number(row.available_quantity),
     minimumStock: row.minimum_stock,
     active: row.active,
     assignedTo: row.assigned_to || null,
-    assignedQuantity: row.assigned_quantity || null,
-    assignedCondition: row.assigned_condition || null,
-    assignedAt: row.assigned_at || null,
-    assignedTermId: row.assigned_term_id || null,
+    assignedQuantity: Number(row.assigned_quantity || 0),
+    assignedUsers: row.assigned_users || [],
+    stockStatus: row.stock_status || null,
+  };
+}
+
+function publicStockMovement(row) {
+  return {
+    id: row.id,
+    movementType: row.movement_type,
+    quantity: Number(row.quantity),
+    ppeItemId: row.ppe_item_id,
+    ppeName: row.ppe_name,
+    ca: row.ca,
+    fromUserId: row.from_user_id,
+    fromUser: row.from_user || null,
+    toUserId: row.to_user_id,
+    toUser: row.to_user || null,
+    processId: row.process_id,
+    processType: row.process_type || null,
+    termId: row.term_id,
+    createdBy: row.created_by_name || null,
+    notes: row.notes || null,
+    createdAt: row.created_at,
   };
 }
 
@@ -3185,49 +3557,60 @@ app.get('/api/stock', auth, requireRole('admin'), async (_req, res) => {
       ORDER BY v.plate`,
     ),
     pool.query(`
-      SELECT p.*, assignment.recipient_name AS assigned_to,
-             assignment.quantity AS assigned_quantity,
-             assignment.condition AS assigned_condition,
-             assignment.signed_at AS assigned_at,
-             assignment.term_id AS assigned_term_id
-      FROM ppe_items p
-      LEFT JOIN LATERAL (
-        SELECT t.id AS term_id, t.recipient_name, t.signed_at,
-               ti.quantity, ti.condition
-        FROM epi_term_items ti
-        JOIN epi_terms t ON t.id = ti.term_id
-        WHERE t.status = 'assinado'
-          AND (
-            ti.ppe_item_id = p.id
-            OR (
-              ti.ppe_item_id IS NULL
-              AND ((p.ca IS NOT NULL AND UPPER(COALESCE(ti.ca, '')) = UPPER(p.ca))
-                   OR LOWER(ti.equipment_name) = LOWER(p.name))
-            )
-          )
+      WITH holding_deltas AS (
+        SELECT ppe_item_id, to_user_id AS user_id, quantity::bigint AS delta
+        FROM ppe_stock_movements
+        WHERE to_user_id IS NOT NULL
         UNION ALL
-        SELECT ep.id AS term_id,
-               COALESCE(target.name, creator.name) AS recipient_name,
-               ep.validated_at AS signed_at,
-               pi.quantity, pi.condition
-        FROM epi_process_items pi
-        JOIN epi_processes ep ON ep.id = pi.process_id
-        JOIN users creator ON creator.id = ep.created_by
-        LEFT JOIN users target ON target.id = ep.target_user_id
-        WHERE ep.status = 'validado'
-          AND ep.process_type IN ('transferencia', 'checklist_diario')
-          AND (
-            pi.ppe_item_id = p.id
-            OR (pi.ca IS NOT NULL AND UPPER(COALESCE(pi.ca, '')) = UPPER(p.ca))
-            OR LOWER(pi.equipment_name) = LOWER(p.name)
-          )
-        ORDER BY signed_at DESC NULLS LAST, term_id DESC
-        LIMIT 1
-      ) assignment ON TRUE
+        SELECT ppe_item_id, from_user_id AS user_id, (-quantity)::bigint AS delta
+        FROM ppe_stock_movements
+        WHERE from_user_id IS NOT NULL
+      ), holding_by_user AS (
+        SELECT h.ppe_item_id, h.user_id, u.name AS user_name, SUM(h.delta)::int AS quantity
+        FROM holding_deltas h
+        LEFT JOIN users u ON u.id = h.user_id
+        GROUP BY h.ppe_item_id, h.user_id, u.name
+        HAVING SUM(h.delta) > 0
+      ), holding_totals AS (
+        SELECT ppe_item_id,
+               SUM(quantity)::int AS assigned_quantity,
+               json_agg(json_build_object('id', user_id, 'name', user_name, 'quantity', quantity) ORDER BY user_name) AS assigned_users
+        FROM holding_by_user
+        GROUP BY ppe_item_id
+      )
+      SELECT p.*,
+             COALESCE(h.assigned_quantity, 0)::int AS assigned_quantity,
+             (p.stock_quantity - COALESCE(h.assigned_quantity, 0))::int AS available_quantity,
+             h.assigned_users,
+             CASE
+               WHEN p.stock_quantity - COALESCE(h.assigned_quantity, 0) < 0 THEN 'inconsistente'
+               WHEN p.stock_quantity - COALESCE(h.assigned_quantity, 0) = 0 THEN 'indisponivel'
+               WHEN p.stock_quantity - COALESCE(h.assigned_quantity, 0) <= p.minimum_stock THEN 'baixo'
+               ELSE 'normal'
+             END AS stock_status,
+             COALESCE((h.assigned_users->0->>'name'), NULL) AS assigned_to
+      FROM ppe_items p
+      LEFT JOIN holding_totals h ON h.ppe_item_id = p.id
       ORDER BY p.name`,
     ),
   ]);
-  res.json({ vehicles: vehicles.rows.map(publicStockVehicle), ppes: ppes.rows.map(publicStockPpe) });
+  const movements = await pool.query(
+    `SELECT m.id, m.ppe_item_id, m.movement_type, m.quantity,
+            m.from_user_id, from_user.name AS from_user,
+            m.to_user_id, to_user.name AS to_user,
+            m.process_id, process.process_type,
+            m.term_id, creator.name AS created_by_name,
+            m.notes, m.created_at, p.name AS ppe_name, p.ca
+     FROM ppe_stock_movements m
+     JOIN ppe_items p ON p.id = m.ppe_item_id
+     LEFT JOIN users from_user ON from_user.id = m.from_user_id
+     LEFT JOIN users to_user ON to_user.id = m.to_user_id
+     LEFT JOIN users creator ON creator.id = m.created_by
+     LEFT JOIN epi_processes process ON process.id = m.process_id
+     ORDER BY m.created_at DESC, m.id DESC
+     LIMIT 100`,
+  );
+  res.json({ vehicles: vehicles.rows.map(publicStockVehicle), ppes: ppes.rows.map(publicStockPpe), movements: movements.rows.map(publicStockMovement) });
 });
 
 app.post('/api/stock/vehicles', auth, requireRole('admin'), async (req, res) => {
@@ -3270,34 +3653,72 @@ app.post('/api/stock/ppes', auth, requireRole('admin'), async (req, res) => {
   if (!name || !ca) return res.status(400).json({ error: 'Informe o nome do EPI e o CA.' });
   if (id !== null && (!Number.isInteger(id) || id < 1)) return res.status(400).json({ error: 'EPI inválido.' });
   if (!Number.isInteger(stockQuantity) || stockQuantity < 0 || !Number.isInteger(minimumStock) || minimumStock < 0) return res.status(400).json({ error: 'As quantidades de estoque precisam ser números inteiros não negativos.' });
+  const client = await pool.connect();
+  let result;
+  let previousQuantity = 0;
+  let itemId = id;
   try {
-    const result = id === null
-      ? await pool.query(
-        `INSERT INTO ppe_items (code, name, ca, category, stock_quantity, minimum_stock, active)
-         VALUES ($1, $2, $3, $4, $5, $6, TRUE)
-         ON CONFLICT (code) DO UPDATE SET
-           name = EXCLUDED.name,
-           ca = EXCLUDED.ca,
-           category = EXCLUDED.category,
-           stock_quantity = EXCLUDED.stock_quantity,
-           minimum_stock = EXCLUDED.minimum_stock,
-           active = TRUE
-         RETURNING *`,
-        [code, name, ca, category || null, stockQuantity, minimumStock],
-      )
-      : await pool.query(
+    await client.query('BEGIN');
+    const existing = id === null
+      ? await client.query('SELECT * FROM ppe_items WHERE code = $1 FOR UPDATE', [code])
+      : await client.query('SELECT * FROM ppe_items WHERE id = $1 FOR UPDATE', [id]);
+    if (id !== null && !existing.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'EPI não encontrado.' });
+    }
+    if (existing.rows[0]) {
+      itemId = Number(existing.rows[0].id);
+      previousQuantity = Number(existing.rows[0].stock_quantity || 0);
+      const assigned = await getAssignedQuantity(client, itemId);
+      if (stockQuantity < assigned) {
+        throw new StockConflictError(`A quantidade total não pode ficar abaixo dos ${assigned} EPI(s) atualmente em posse de usuários.`);
+      }
+      result = await client.query(
         `UPDATE ppe_items
          SET code = $1, name = $2, ca = $3, category = $4, stock_quantity = $5, minimum_stock = $6, active = TRUE
          WHERE id = $7
          RETURNING *`,
-        [code, name, ca, category || null, stockQuantity, minimumStock, id],
+        [code, name, ca, category || null, stockQuantity, minimumStock, itemId],
       );
-    if (!result.rows[0]) return res.status(404).json({ error: 'EPI não encontrado.' });
-    await audit({ req, actorUserId: req.user.id, eventType: id === null ? 'ppe_registered' : 'ppe_updated', entityType: 'ppe_item', entityId: result.rows[0].id, metadata: { code, name, ca, stockQuantity, minimumStock } });
+    } else {
+      result = await client.query(
+        `INSERT INTO ppe_items (code, name, ca, category, stock_quantity, minimum_stock, active)
+         VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+         RETURNING *`,
+        [code, name, ca, category || null, stockQuantity, minimumStock],
+      );
+      itemId = Number(result.rows[0].id);
+    }
+    const difference = stockQuantity - previousQuantity;
+    if (difference > 0) {
+      await insertPpeStockMovement(client, {
+        ppeItemId: itemId,
+        movementType: 'entrada',
+        quantity: difference,
+        createdBy: req.user.id,
+        referenceKey: `manual:${itemId}:entrada:${crypto.randomUUID()}`,
+        notes: existing.rows[0] ? 'Aumento manual do estoque total.' : 'Estoque inicial cadastrado pelo administrador.',
+      });
+    } else if (difference < 0) {
+      await insertPpeStockMovement(client, {
+        ppeItemId: itemId,
+        movementType: 'ajuste_saida',
+        quantity: Math.abs(difference),
+        createdBy: req.user.id,
+        referenceKey: `manual:${itemId}:ajuste-saida:${crypto.randomUUID()}`,
+        notes: 'Redução manual do estoque total.',
+      });
+    }
+    await client.query('COMMIT');
+    await audit({ req, actorUserId: req.user.id, eventType: id === null ? 'ppe_registered' : 'ppe_updated', entityType: 'ppe_item', entityId: result.rows[0].id, metadata: { code, name, ca, stockQuantity, minimumStock, previousQuantity } });
     res.status(201).json({ ppe: publicStockPpe(result.rows[0]) });
   } catch (error) {
+    await client.query('ROLLBACK');
+    if (error.statusCode) return res.status(error.statusCode).json({ error: error.message });
     if (error.code === '23505') return res.status(409).json({ error: 'Já existe um EPI com esse código.' });
     throw error;
+  } finally {
+    client.release();
   }
 });
 
@@ -3495,6 +3916,7 @@ app.use((error, _req, res, _next) => {
 
 async function main() {
   await initSchema();
+  await backfillPpeStockMovements();
   await bootstrapAdmin();
   await checkDailyChecklistReminders();
   const reminderTimer = setInterval(() => {

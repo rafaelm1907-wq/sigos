@@ -215,6 +215,13 @@ textarea { width: 100%; min-height: 68px; resize: vertical; border: 1px solid #3
 .table-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .audit-open-process { display: inline-block; margin: 4px 0 0 8px; }
 .table-subtext { display: block; margin-top: 3px; color: #9aa8c2; font-size: .7rem; }
+.stock-movements-panel { margin-top: 18px; }
+.stock-movements-panel .table-wrap { max-height: 430px; overflow: auto; }
+.stock-movements-panel table { min-width: 960px; }
+.stock-state { display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 999px; font-size: .72rem; font-weight: 800; white-space: nowrap; }
+.stock-state-normal { color: #bbf7d0; background: rgba(16, 185, 129, .2); }
+.stock-state-baixo { color: #fde68a; background: rgba(245, 158, 11, .2); }
+.stock-state-indisponivel, .stock-state-inconsistente { color: #fecaca; background: rgba(239, 68, 68, .2); }
 .user-detail-button { padding: 0; background: transparent; color: #a7f3d0; font-weight: 800; text-align: left; }
 .user-detail-button:hover { color: #fff; text-decoration: underline; }
 .technician-detail { margin-top: 22px; padding-top: 22px; border-top: 1px solid rgba(148, 163, 184, .16); }

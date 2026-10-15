@@ -707,11 +707,33 @@ async function loadAuditLogs() {
   }));
 }
 
+function stockMovementLabel(type) {
+  return ({ entrada: 'Entrada', saida: 'Saída', transferencia: 'Transferência', devolucao: 'Devolução', ajuste_saida: 'Ajuste de saída' }[type] || type || 'Movimento');
+}
+
+function stockStatusLabel(status) {
+  return ({ normal: 'Normal', baixo: 'Estoque baixo', indisponivel: 'Indisponível', inconsistente: 'Inconsistente' }[status] || status || '–');
+}
+
+function stockProcessLabel(movement) {
+  if (movement.processId) {
+    const type = ({ checklist_diario: 'Checklist diário', transferencia: 'Transferência', devolucao: 'Devolução' }[movement.processType] || 'Processo EPI');
+    return `${type} #${movement.processId}`;
+  }
+  if (movement.termId) return `Termo EPI #${movement.termId}`;
+  return 'Ajuste manual';
+}
+
 async function loadStock() {
   const data = await api('/api/stock');
   stockPpeCatalog = data.ppes || [];
   $('#stock-vehicles-table').innerHTML = data.vehicles.length ? data.vehicles.map((vehicle) => `<tr><td><strong>${escapeHtml(vehicle.plate)}</strong></td><td>${escapeHtml(vehicle.model || '–')}</td><td>${escapeHtml(vehicle.year || '–')}</td><td>${escapeHtml(vehicle.color || '–')}</td><td>${escapeHtml(vehicle.lastDriver || 'Sem checklist')}${vehicle.lastChecklistAt ? `<small class="table-subtext">${escapeHtml(formatDate(vehicle.lastChecklistAt))}</small>` : ''}</td><td>${escapeHtml(vehicle.status === 'ativo' ? 'Ativo' : 'Inativo')}</td></tr>`).join('') : '<tr><td colspan="6" class="muted">Nenhum veículo cadastrado.</td></tr>';
-  $('#stock-ppes-table').innerHTML = stockPpeCatalog.length ? stockPpeCatalog.map((ppe) => `<tr><td><strong>${escapeHtml(ppe.name)}</strong><small class="table-subtext">${escapeHtml(ppe.category || 'Sem categoria')}</small></td><td>${escapeHtml(ppe.ca)}</td><td>${escapeHtml(ppe.stockQuantity)}</td><td>${escapeHtml(ppe.assignedTo || 'Sem termo assinado')}${ppe.assignedQuantity ? ` · ${escapeHtml(ppe.assignedQuantity)} un.` : ''}</td><td>${escapeHtml(ppe.active ? 'Ativo' : 'Inativo')}</td><td><div class="table-actions"><button type="button" class="secondary small-button" data-ppe-edit="${escapeHtml(ppe.id)}">Editar</button><button type="button" class="secondary small-button" data-ppe-toggle="${escapeHtml(ppe.id)}" data-ppe-next-active="${ppe.active ? 'false' : 'true'}">${ppe.active ? 'Desativar' : 'Ativar'}</button></div>${ppe.assignedAt ? `<small class="table-subtext">${escapeHtml(formatDate(ppe.assignedAt))}</small>` : ''}</td></tr>`).join('') : '<tr><td colspan="6" class="muted">Nenhum EPI cadastrado.</td></tr>';
+  $('#stock-ppes-table').innerHTML = stockPpeCatalog.length ? stockPpeCatalog.map((ppe) => {
+    const holders = (ppe.assignedUsers || []).map((holder) => `${holder.name || 'Usuário'} · ${holder.quantity} un.`).join(', ');
+    return `<tr><td><strong>${escapeHtml(ppe.name)}</strong><small class="table-subtext">${escapeHtml(ppe.category || 'Sem categoria')}</small></td><td>${escapeHtml(ppe.ca)}</td><td>${escapeHtml(ppe.stockQuantity)}</td><td><strong>${escapeHtml(ppe.availableQuantity)}</strong></td><td>${escapeHtml(holders || 'Ninguém')}${ppe.assignedQuantity ? `<small class="table-subtext">Total em posse: ${escapeHtml(ppe.assignedQuantity)}</small>` : ''}</td><td><span class="stock-state stock-state-${escapeHtml(ppe.stockStatus || 'normal')}">${escapeHtml(stockStatusLabel(ppe.stockStatus))}</span><small class="table-subtext">${escapeHtml(ppe.active ? 'Ativo' : 'Inativo')}</small></td><td><div class="table-actions"><button type="button" class="secondary small-button" data-ppe-edit="${escapeHtml(ppe.id)}">Editar</button><button type="button" class="secondary small-button" data-ppe-toggle="${escapeHtml(ppe.id)}" data-ppe-next-active="${ppe.active ? 'false' : 'true'}">${ppe.active ? 'Desativar' : 'Ativar'}</button></div></td></tr>`;
+  }).join('') : '<tr><td colspan="7" class="muted">Nenhum EPI cadastrado.</td></tr>';
+  const movements = data.movements || [];
+  $('#stock-movements-table').innerHTML = movements.length ? movements.map((movement) => `<tr><td>${escapeHtml(formatDate(movement.createdAt))}</td><td>${escapeHtml(stockMovementLabel(movement.movementType))}</td><td><strong>${escapeHtml(movement.ppeName)}</strong><small class="table-subtext">CA ${escapeHtml(movement.ca || '–')}</small></td><td>${escapeHtml(movement.quantity)}</td><td>${escapeHtml(movement.fromUser || 'Estoque')}</td><td>${escapeHtml(movement.toUser || 'Estoque')}</td><td>${escapeHtml(stockProcessLabel(movement))}</td><td>${escapeHtml(movement.createdBy || 'Sistema')}</td></tr>`).join('') : '<tr><td colspan="8" class="muted">Nenhuma movimentação registrada.</td></tr>';
   document.querySelectorAll('[data-ppe-edit]').forEach((button) => button.addEventListener('click', () => {
     const ppe = stockPpeCatalog.find((item) => String(item.id) === String(button.dataset.ppeEdit));
     if (!ppe) return;
@@ -721,6 +743,7 @@ async function loadStock() {
     $('#stock-ppe-ca').value = ppe.ca || '';
     $('#stock-ppe-category').value = ppe.category || '';
     $('#stock-ppe-quantity').value = ppe.stockQuantity ?? 0;
+    $('#stock-ppe-minimum').value = ppe.minimumStock ?? 0;
     $('#stock-ppe-cancel').classList.remove('hidden');
     $('#stock-ppe-message').textContent = 'Editando EPI do catálogo.';
     $('#stock-ppe-name').focus();
@@ -734,6 +757,7 @@ function resetStockPpeForm() {
   $('#stock-ppe-form').reset();
   $('#stock-ppe-id').value = '';
   $('#stock-ppe-code').value = '';
+  $('#stock-ppe-minimum').value = 0;
   $('#stock-ppe-cancel').classList.add('hidden');
 }
 
@@ -1227,7 +1251,7 @@ $('#stock-ppe-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const message = $('#stock-ppe-message');
   try {
-    await api('/api/stock/ppes', { method: 'POST', body: JSON.stringify({ id: $('#stock-ppe-id').value || null, code: $('#stock-ppe-code').value || null, name: $('#stock-ppe-name').value, ca: $('#stock-ppe-ca').value, category: $('#stock-ppe-category').value, stockQuantity: $('#stock-ppe-quantity').value }) });
+    await api('/api/stock/ppes', { method: 'POST', body: JSON.stringify({ id: $('#stock-ppe-id').value || null, code: $('#stock-ppe-code').value || null, name: $('#stock-ppe-name').value, ca: $('#stock-ppe-ca').value, category: $('#stock-ppe-category').value, stockQuantity: $('#stock-ppe-quantity').value, minimumStock: $('#stock-ppe-minimum').value }) });
     resetStockPpeForm(); message.textContent = 'EPI salvo no catálogo.'; await loadStock();
   } catch (error) { message.textContent = error.message; }
 });
