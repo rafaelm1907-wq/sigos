@@ -563,3 +563,26 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .notification-item-heading { align-items: flex-start; flex-direction: column; gap: 2px; }
   .sidebar { background: #0c1527; }
 }
+
+/* Layout hardening: prevent long content and flexible children from escaping the viewport. */
+img, video, canvas { max-width: 100%; }
+button, input, select, textarea { max-width: 100%; min-width: 0; }
+.card, .app-content, .app-section, .module-card, .profile-card, .admin-panel, .stock-panel { min-width: 0; }
+.topbar > *, .topbar-actions > *, .page-intro > *, .section-heading > *, .subheading > *, .compliance-alert-heading > *, .term-list-item > *, .vehicle-list-item > *, .epi-process-row > *, .vehicle-signature-row > * { min-width: 0; }
+h1, h2, h3, h4, p, small, strong, span, td, th, label { overflow-wrap: anywhere; }
+table { max-width: 100%; }
+.vehicle-integrity-details, .vehicle-integrity-content { min-width: 0; max-width: 100%; }
+.vehicle-integrity-content { overflow-wrap: anywhere; }
+.vehicle-integrity-item { min-width: 0; }
+
+@media (max-width: 760px) {
+  .topbar, .topbar-actions, .page-intro, .section-heading, .subheading { min-width: 0; }
+  .topbar-actions { flex-wrap: wrap; }
+  .page-intro > div, .section-heading > div, .subheading > div { width: 100%; }
+  .term-list-item, .vehicle-list-item, .epi-process-row, .vehicle-signature-row { align-items: flex-start; }
+  .term-list-item, .vehicle-list-item, .epi-process-row { flex-wrap: wrap; }
+  .term-list-item > div:first-child, .vehicle-list-item > div:first-child, .epi-process-row > div:first-child { flex: 1 1 100%; }
+  .vehicle-list-actions, .epi-process-actions, .vehicle-signature-actions { width: 100%; justify-content: flex-start; }
+  .vehicle-list-actions button, .epi-process-actions button, .vehicle-signature-actions button { max-width: 100%; }
+  .compliance-alert-heading { min-width: 0; }
+}
