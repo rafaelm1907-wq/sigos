@@ -3607,6 +3607,7 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('tecnico
       afterDescription: afterStatus === 'ok' ? null : cleanText(item.afterDescription, 500) || null,
     };
   });
+  const problemItems = normalizedItems.filter((item) => item.beforeStatus !== 'ok' || item.afterStatus !== 'ok');
 
   if (!plate || !model) return res.status(400).json({ error: 'Informe a placa e o modelo do veículo.' });
   if (vehicleYear !== null && (!Number.isInteger(vehicleYear) || vehicleYear < 1900 || vehicleYear > 2200)) return res.status(400).json({ error: 'Ano do veículo inválido.' });
@@ -3733,7 +3734,7 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('tecnico
         longitude: photo.longitude ?? req.body.longitude,
       }));
     }
-    await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_checklist_created', entityType: 'vehicle_checklist', entityId: checklistId, metadata: { plate, itemCount: normalizedItems.length, problemCount: normalizedItems.filter((item) => item.beforeStatus !== 'ok' || item.afterStatus !== 'ok').length, signatureHash, documentHash, signatureVersion: 2 } });
+    await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_checklist_created', entityType: 'vehicle_checklist', entityId: checklistId, metadata: { plate, itemCount: normalizedItems.length, problemCount: problemItems.length, signatureHash, documentHash, signatureVersion: 2 } });
     await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_signature_signed', entityType: 'vehicle_checklist', entityId: checklistId, metadata: { signerRole: signature.signerRole, signatureHash, documentHash, signatureVersion: 2, typedName: signature.typedName, latitude: signature.signerLatitude, longitude: signature.signerLongitude, device: signature.signerDevice } });
     await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_checklist_photos_uploaded', entityType: 'vehicle_checklist', entityId: checklistId, metadata: { mediaIds: media.map((item) => item.id), selfieCount: 1, photoCount: submittedPhotos.length, captureMode: 'camera', coordinates: media.map((item) => ({ mediaId: item.id, kind: item.kind, itemKey: item.item_key, latitude: item.latitude, longitude: item.longitude, locationLabel: item.location_label })) } });
     await notifyRoles({
@@ -3745,6 +3746,23 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('tecnico
       entityId: checklistId,
       metadata: { plate, checklistType, createdBy: req.user.id, creatorRole: req.user.role },
     });
+    if (problemItems.length) {
+      await notifyRoles({
+        roles: ['admin'],
+        notificationType: 'vehicle_checklist_issue',
+        title: 'Avaria identificada em veículo',
+        message: `O ${checklistType === 'diario' ? 'checklist diário' : 'checklist quinzenal'} do veículo ${plate} registrou ${problemItems.length} item(ns) com avaria ou irregularidade.`,
+        entityType: 'vehicle_checklist',
+        entityId: checklistId,
+        metadata: {
+          plate,
+          checklistType,
+          createdBy: req.user.id,
+          problemCount: problemItems.length,
+          problemItems: problemItems.map((item) => ({ itemKey: item.itemKey, itemName: item.itemName, beforeStatus: item.beforeStatus, afterStatus: item.afterStatus })),
+        },
+      });
+    }
     const created = await pool.query(`${vehicleChecklistQuery} WHERE c.id = $1 GROUP BY c.id, driver.name, inspector.name`, [checklistId]);
     res.status(201).json({ checklist: publicVehicleChecklist(created.rows[0], true) });
   } catch (error) {
