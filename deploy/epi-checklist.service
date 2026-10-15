@@ -1,0 +1,23 @@
+[Unit]
+Description=SIGOS application
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=epiapp
+Group=epiapp
+WorkingDirectory=/opt/epi-checklist
+EnvironmentFile=/etc/epi-checklist/runtime.env
+ExecStart=/opt/node-v22.20.0/bin/node /opt/epi-checklist/server.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/epi-checklist
+
+[Install]
+WantedBy=multi-user.target

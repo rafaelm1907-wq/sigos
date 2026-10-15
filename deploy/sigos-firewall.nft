@@ -1,0 +1,14 @@
+#!/usr/sbin/nft -f
+
+table inet sigos_firewall {
+  chain input {
+    type filter hook input priority -100;
+    policy drop;
+
+    iifname "lo" accept
+    ct state established,related accept
+    ip protocol icmp accept
+    ip6 nexthdr ipv6-icmp accept
+    tcp dport { 22, 80 } accept
+  }
+}
