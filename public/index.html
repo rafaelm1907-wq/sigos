@@ -9,7 +9,7 @@
     <link rel="apple-touch-icon" href="/assets/sigos-symbol.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>SIGOS · Gestão operacional</title>
-    <link rel="stylesheet" href="/styles.css?v=epi-daily-20261015-1" />
+    <link rel="stylesheet" href="/styles.css?v=compliance-alerts-20261015-1" />
   </head>
   <body>
     <main class="shell">
@@ -88,6 +88,7 @@
                 <article class="stat card"><span>Termos pendentes</span><strong id="overview-pending-terms">–</strong></article>
                 <article class="stat card"><span>Validações pendentes</span><strong id="overview-validations">–</strong></article>
               </section>
+              <section id="compliance-alerts-card" class="card compliance-alerts-card hidden"><div class="section-heading"><div><div class="eyebrow">AUTOMAÇÃO · CONFORMIDADE</div><h2>Alertas pendentes</h2><p class="muted">Pendências geradas automaticamente pelos prazos de checklist.</p></div><button id="refresh-compliance-alerts" type="button" class="secondary">Atualizar</button></div><div id="compliance-alerts-list"><p class="muted">Nenhum alerta pendente.</p></div></section>
               <section class="card activity-card"><div class="section-heading"><div><div class="eyebrow">LOG RECENTE · HOJE</div><h2>Últimos 15 eventos</h2></div></div><div class="table-wrap"><table><thead><tr><th>Quando</th><th>Evento</th><th>Responsável</th><th>Registro</th></tr></thead><tbody id="activity-table"></tbody></table></div></section>
             </section>
 
@@ -155,6 +156,6 @@
         </div>
       </section>
     </main>
-    <script src="/app.js?v=epi-daily-20261015-1"></script>
+    <script src="/app.js?v=compliance-alerts-20261015-1"></script>
   </body>
 </html>

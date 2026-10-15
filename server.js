@@ -403,78 +403,210 @@ async function notifyUsers({ userIds, notificationType, title, message, entityTy
   });
 }
 
-async function checkDailyChecklistReminders() {
-  const client = await pool.connect();
-  const pushRecipients = new Set();
-  try {
-    await client.query('BEGIN');
-    const due = await client.query(
-      `WITH local_clock AS (
-         SELECT timezone('America/Fortaleza', NOW()) AS local_now,
-                timezone('America/Fortaleza', NOW())::date AS local_date
-       ), missing AS (
-         INSERT INTO daily_checklist_reminders (user_id, reminder_date)
-         SELECT u.id, clock.local_date
-         FROM users u
-         CROSS JOIN local_clock clock
-         WHERE u.active = TRUE
-           AND u.role = 'tecnico'
-           AND clock.local_now >= clock.local_date + TIME '12:00'
-           AND timezone('America/Fortaleza', u.created_at) < clock.local_date + TIME '12:00'
-           AND NOT EXISTS (
-             SELECT 1
-             FROM epi_processes p
-             WHERE p.created_by = u.id
-               AND p.process_type = 'checklist_diario'
-               AND p.submitted_at IS NOT NULL
-               AND timezone('America/Fortaleza', p.submitted_at)::date = clock.local_date
-           )
-         ON CONFLICT (user_id, reminder_date) DO NOTHING
-         RETURNING user_id, reminder_date
-       )
-       SELECT missing.user_id, missing.reminder_date, u.name
-       FROM missing
-       JOIN users u ON u.id = missing.user_id`,
-    );
-
-    for (const reminder of due.rows) {
-      const reminderDate = String(reminder.reminder_date).slice(0, 10);
-      const metadata = { technicianId: String(reminder.user_id), reminderDate };
-      await client.query(
-        `INSERT INTO notifications
-          (user_id, notification_type, title, message, metadata)
-         VALUES ($1, 'daily_checklist_reminder', 'Lembrete: checklist diário pendente', $2, $3)`,
-        [reminder.user_id, 'Você ainda não enviou seu checklist diário de EPI de hoje.', metadata],
-      );
-      pushRecipients.add(String(reminder.user_id));
-
-      const adminNotifications = await client.query(
-        `INSERT INTO notifications
-          (user_id, notification_type, title, message, metadata)
-         SELECT id, 'daily_checklist_reminder', 'Checklist diário pendente', $1, $2
-         FROM users
-         WHERE active = TRUE AND role = 'admin'
-         RETURNING user_id`,
-        [`O técnico ${reminder.name} ainda não enviou o checklist diário de EPI de hoje.`, metadata],
-      );
-      adminNotifications.rows.forEach((row) => pushRecipients.add(String(row.user_id)));
-    }
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
-
-  if (pushRecipients.size) {
-    await sendNativePush({
-      userIds: [...pushRecipients],
+async function ensureComplianceAlert({ alertKey, alertType, periodKey, subjectType, subjectId, subjectLabel, title, message, metadata = {}, notifyUserId = null }) {
+  const result = await pool.query(
+    `INSERT INTO compliance_alerts
+      (alert_key, alert_type, period_key, subject_type, subject_id, subject_label, title, message)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (alert_key) DO NOTHING
+     RETURNING alert_key`,
+    [alertKey, alertType, periodKey, subjectType, subjectId, subjectLabel, title, message],
+  );
+  if (!result.rowCount) return false;
+  const notificationMetadata = { ...metadata, alertKey, alertType, periodKey, subjectType, subjectId: String(subjectId), subjectLabel };
+  await notifyRoles({ roles: ['admin'], notificationType: alertType, title, message, entityType: 'compliance_alert', entityId: alertKey, metadata: notificationMetadata });
+  if (notifyUserId) {
+    await notifyUsers({
+      userIds: [notifyUserId],
+      notificationType: alertType,
       title: 'Checklist diário pendente',
-      message: 'Há uma notificação de checklist diário pendente no SIGOS.',
-      data: { notificationType: 'daily_checklist_reminder' },
+      message: 'Você ainda não enviou o checklist diário de EPI de hoje.',
+      entityType: 'compliance_alert',
+      entityId: alertKey,
+      metadata: notificationMetadata,
     });
   }
+  return true;
+}
+
+async function seedLegacyDailyComplianceAlert() {
+  await pool.query(
+    `INSERT INTO compliance_alerts
+      (alert_key, alert_type, period_key, subject_type, subject_id, subject_label, title, message)
+     SELECT
+       'epi-daily:' || to_char(r.reminder_date, 'YYYY-MM-DD') || ':technician:' || r.user_id,
+       'epi_daily_missing',
+       to_char(r.reminder_date, 'YYYY-MM-DD'),
+       'tecnico', r.user_id, u.name,
+       'Checklist diário pendente',
+       'O técnico ' || u.name || ' ainda não enviou o checklist diário de EPI de hoje.'
+     FROM daily_checklist_reminders r
+     JOIN users u ON u.id = r.user_id
+     WHERE r.reminder_date = timezone('America/Fortaleza', NOW())::date
+       AND NOT EXISTS (
+         SELECT 1 FROM compliance_alerts a
+         WHERE a.alert_key = 'epi-daily:' || to_char(r.reminder_date, 'YYYY-MM-DD') || ':technician:' || r.user_id
+       )
+     ON CONFLICT (alert_key) DO NOTHING`,
+  );
+}
+
+async function resolveCompletedComplianceAlerts() {
+  await pool.query(
+    `UPDATE compliance_alerts a
+     SET status = 'resolvido', updated_at = NOW()
+     WHERE a.status = 'aberto'
+       AND a.alert_type = 'epi_daily_missing'
+       AND EXISTS (
+         SELECT 1
+         FROM epi_processes p
+         WHERE p.created_by = a.subject_id
+           AND p.process_type = 'checklist_diario'
+           AND p.submitted_at IS NOT NULL
+           AND timezone('America/Fortaleza', p.submitted_at)::date = a.period_key::date
+       )`,
+  );
+  await pool.query(
+    `WITH local_clock AS (
+       SELECT timezone('America/Fortaleza', NOW())::date AS local_date
+     ), counts AS (
+       SELECT v.id AS vehicle_id, COUNT(vc.id)::int AS quinzenal_count
+       FROM vehicles v
+       CROSS JOIN local_clock clock
+       LEFT JOIN vehicle_checklists vc
+         ON (vc.vehicle_id = v.id OR (vc.vehicle_id IS NULL AND vc.plate = v.plate))
+        AND vc.checklist_type = 'quinzenal'
+        AND vc.submitted_at IS NOT NULL
+        AND timezone('America/Fortaleza', vc.submitted_at)::date >= date_trunc('month', clock.local_date)::date
+        AND timezone('America/Fortaleza', vc.submitted_at)::date < (date_trunc('month', clock.local_date) + INTERVAL '1 month')::date
+       WHERE v.status = 'ativo'
+       GROUP BY v.id
+     )
+     UPDATE compliance_alerts a
+     SET status = 'resolvido', updated_at = NOW()
+     FROM counts
+     WHERE a.status = 'aberto'
+       AND a.subject_type = 'veiculo'
+       AND a.subject_id = counts.vehicle_id
+       AND a.period_key = to_char(timezone('America/Fortaleza', NOW())::date, 'YYYY-MM')
+       AND ((a.alert_type = 'vehicle_fortnightly_first' AND counts.quinzenal_count >= 1)
+         OR (a.alert_type = 'vehicle_fortnightly_month_end' AND counts.quinzenal_count >= 2))`,
+  );
+}
+
+async function checkDailyChecklistReminders() {
+  await seedLegacyDailyComplianceAlert();
+  const daily = await pool.query(
+    `WITH local_clock AS (
+       SELECT timezone('America/Fortaleza', NOW()) AS local_now,
+              timezone('America/Fortaleza', NOW())::date AS local_date
+     )
+     SELECT u.id AS technician_id, u.name,
+            to_char(clock.local_date, 'YYYY-MM-DD') AS period_key
+     FROM users u
+     CROSS JOIN local_clock clock
+     WHERE u.active = TRUE
+       AND u.role = 'tecnico'
+       AND clock.local_now >= clock.local_date + TIME '12:00'
+       AND timezone('America/Fortaleza', u.created_at) < clock.local_date + TIME '12:00'
+       AND NOT EXISTS (
+         SELECT 1 FROM epi_processes p
+         WHERE p.created_by = u.id
+           AND p.process_type = 'checklist_diario'
+           AND p.submitted_at IS NOT NULL
+           AND timezone('America/Fortaleza', p.submitted_at)::date = clock.local_date
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM compliance_alerts a
+         WHERE a.alert_key = 'epi-daily:' || to_char(clock.local_date, 'YYYY-MM-DD') || ':technician:' || u.id
+       )`,
+  );
+
+  for (const row of daily.rows) {
+    const alertKey = `epi-daily:${row.period_key}:technician:${row.technician_id}`;
+    const message = `O técnico ${row.name} ainda não enviou o checklist diário de EPI de hoje.`;
+    const created = await ensureComplianceAlert({
+      alertKey,
+      alertType: 'epi_daily_missing',
+      periodKey: row.period_key,
+      subjectType: 'tecnico',
+      subjectId: row.technician_id,
+      subjectLabel: row.name,
+      title: 'Checklist diário pendente',
+      message,
+      metadata: { technicianId: String(row.technician_id), reminderDate: row.period_key },
+      notifyUserId: row.technician_id,
+    });
+    if (created) await pool.query('INSERT INTO daily_checklist_reminders (user_id, reminder_date) VALUES ($1, $2::date) ON CONFLICT (user_id, reminder_date) DO NOTHING', [row.technician_id, row.period_key]);
+  }
+
+  const vehicles = await pool.query(
+    `WITH local_clock AS (
+       SELECT timezone('America/Fortaleza', NOW()) AS local_now,
+              timezone('America/Fortaleza', NOW())::date AS local_date,
+              date_trunc('month', timezone('America/Fortaleza', NOW())::date)::date AS month_start,
+              (date_trunc('month', timezone('America/Fortaleza', NOW())::date) + INTERVAL '1 month - 1 day')::date AS month_end
+     ), counts AS (
+       SELECT v.id AS vehicle_id, v.plate, v.model,
+              clock.local_now, clock.local_date, clock.month_end,
+              COUNT(vc.id)::int AS quinzenal_count
+       FROM vehicles v
+       CROSS JOIN local_clock clock
+       LEFT JOIN vehicle_checklists vc
+         ON (vc.vehicle_id = v.id OR (vc.vehicle_id IS NULL AND vc.plate = v.plate))
+        AND vc.checklist_type = 'quinzenal'
+        AND vc.submitted_at IS NOT NULL
+        AND timezone('America/Fortaleza', vc.submitted_at)::date >= clock.month_start
+        AND timezone('America/Fortaleza', vc.submitted_at)::date < (clock.month_end + 1)
+       WHERE v.status = 'ativo'
+       GROUP BY v.id, v.plate, v.model, clock.local_now, clock.local_date, clock.month_end
+     )
+     SELECT vehicle_id, plate, model, local_date, month_end,
+            to_char(local_date, 'YYYY-MM-DD') AS local_date_key,
+            to_char(month_end, 'YYYY-MM-DD') AS month_end_key,
+            quinzenal_count,
+            to_char(local_date, 'YYYY-MM') AS period_key,
+            EXTRACT(DAY FROM local_date)::int AS local_day
+     FROM counts
+     WHERE local_now >= local_date + TIME '12:00'
+       AND ((local_date < month_end AND EXTRACT(DAY FROM local_date) >= 16 AND quinzenal_count < 1)
+         OR (local_date = month_end AND quinzenal_count < 2))`,
+  );
+
+  for (const row of vehicles.rows) {
+    const localDate = row.local_date_key;
+    const monthEnd = row.month_end_key;
+    const subjectLabel = `${row.plate}${row.model ? ` · ${row.model}` : ''}`;
+    if (localDate < monthEnd && row.local_day >= 16 && Number(row.quinzenal_count) < 1) {
+      const alertKey = `vehicle-quinzenal-first:${row.period_key}:vehicle:${row.vehicle_id}`;
+      await ensureComplianceAlert({
+        alertKey,
+        alertType: 'vehicle_fortnightly_first',
+        periodKey: row.period_key,
+        subjectType: 'veiculo',
+        subjectId: row.vehicle_id,
+        subjectLabel,
+        title: 'Checklist quinzenal de veículo pendente',
+        message: `O veículo ${subjectLabel} ainda não possui checklist quinzenal neste mês até o dia 16.`,
+        metadata: { vehicleId: String(row.vehicle_id), plate: row.plate, checklistCount: Number(row.quinzenal_count), deadline: '16' },
+      });
+    }
+    if (localDate === monthEnd && Number(row.quinzenal_count) < 2) {
+      const alertKey = `vehicle-quinzenal-month-end:${row.period_key}:vehicle:${row.vehicle_id}`;
+      await ensureComplianceAlert({
+        alertKey,
+        alertType: 'vehicle_fortnightly_month_end',
+        periodKey: row.period_key,
+        subjectType: 'veiculo',
+        subjectId: row.vehicle_id,
+        subjectLabel,
+        title: 'Checklist quinzenal de veículo incompleto',
+        message: `O veículo ${subjectLabel} encerrou o mês com ${Number(row.quinzenal_count)} checklist(s) quinzenal(is); eram necessários dois.`,
+        metadata: { vehicleId: String(row.vehicle_id), plate: row.plate, checklistCount: Number(row.quinzenal_count), deadline: 'último dia do mês' },
+      });
+    }
+  }
+  await resolveCompletedComplianceAlerts();
 }
 
 async function sendNativePush({ userIds, title, message, data = {} }) {
@@ -516,6 +648,25 @@ function publicNotification(row) {
     entityId: row.entity_id,
     metadata: row.metadata || {},
     readAt: row.read_at,
+    createdAt: row.created_at,
+  };
+}
+
+function publicComplianceAlert(row) {
+  return {
+    alertKey: row.alert_key,
+    alertType: row.alert_type,
+    periodKey: row.period_key,
+    subjectType: row.subject_type,
+    subjectId: row.subject_id,
+    subjectLabel: row.subject_label,
+    title: row.title,
+    message: row.message,
+    status: row.status,
+    justification: row.justification || null,
+    justifiedBy: row.justified_by || null,
+    justifiedByName: row.justified_by_name || null,
+    justifiedAt: row.justified_at || null,
     createdAt: row.created_at,
   };
 }
@@ -686,6 +837,29 @@ async function initSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (user_id, reminder_date)
     );
+
+    CREATE TABLE IF NOT EXISTS compliance_alerts (
+      alert_key TEXT PRIMARY KEY,
+      alert_type TEXT NOT NULL,
+      period_key TEXT NOT NULL,
+      subject_type TEXT NOT NULL CHECK (subject_type IN ('tecnico', 'veiculo')),
+      subject_id BIGINT NOT NULL,
+      subject_label TEXT NOT NULL,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'aberto' CHECK (status IN ('aberto', 'justificado', 'resolvido')),
+      justification TEXT,
+      justified_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      justified_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE compliance_alerts DROP CONSTRAINT IF EXISTS compliance_alerts_status_check;
+    ALTER TABLE compliance_alerts ADD CONSTRAINT compliance_alerts_status_check CHECK (status IN ('aberto', 'justificado', 'resolvido'));
+
+    CREATE INDEX IF NOT EXISTS compliance_alerts_status_created_idx ON compliance_alerts (status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS compliance_alerts_subject_idx ON compliance_alerts (subject_type, subject_id, period_key);
 
     CREATE TABLE IF NOT EXISTS push_devices (
       id BIGSERIAL PRIMARY KEY,
@@ -1622,6 +1796,57 @@ app.post('/api/admin/notifications', auth, requireRole('admin'), async (req, res
   });
   await audit({ req, actorUserId: req.user.id, eventType: 'admin_notification_sent', entityType: 'notification', metadata: { recipientMode, recipientCount: result.rowCount, title } });
   res.status(201).json({ sentCount: result.rowCount });
+});
+
+app.get('/api/admin/compliance-alerts', auth, requireRole('admin'), async (_req, res) => {
+  const result = await pool.query(
+    `SELECT a.*, u.name AS justified_by_name
+     FROM compliance_alerts a
+     LEFT JOIN users u ON u.id = a.justified_by
+     WHERE a.status = 'aberto'
+     ORDER BY a.created_at DESC
+     LIMIT 200`,
+  );
+  res.json({ alerts: result.rows.map(publicComplianceAlert) });
+});
+
+app.post('/api/admin/compliance-alerts/:alertKey/justify', auth, requireRole('admin'), async (req, res) => {
+  const alertKey = cleanText(req.params.alertKey, 240);
+  const observation = cleanText(req.body.observation, 700);
+  if (!alertKey || !observation) return res.status(400).json({ error: 'Informe a justificativa da pendência.' });
+  const result = await pool.query(
+    `UPDATE compliance_alerts
+     SET status = 'justificado', justification = $2, justified_by = $3, justified_at = NOW(), updated_at = NOW()
+     WHERE alert_key = $1 AND status = 'aberto'
+     RETURNING *`,
+    [alertKey, observation, req.user.id],
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: 'Alerta aberto não encontrado.' });
+  await audit({ req, actorUserId: req.user.id, eventType: 'compliance_alert_justified', entityType: 'compliance_alert', entityId: alertKey, metadata: { alertType: result.rows[0].alert_type, periodKey: result.rows[0].period_key, subjectType: result.rows[0].subject_type, subjectId: result.rows[0].subject_id, observation } });
+  res.json({ alert: publicComplianceAlert(result.rows[0]) });
+});
+
+app.post('/api/admin/compliance-alerts/:alertKey/notify', auth, requireRole('admin'), async (req, res) => {
+  const alertKey = cleanText(req.params.alertKey, 240);
+  const result = await pool.query(
+    `SELECT * FROM compliance_alerts WHERE alert_key = $1 AND status = 'aberto'`,
+    [alertKey],
+  );
+  const alert = result.rows[0];
+  if (!alert) return res.status(404).json({ error: 'Alerta aberto não encontrado.' });
+  if (alert.subject_type !== 'tecnico') return res.status(400).json({ error: 'Este alerta não possui um técnico destinatário.' });
+  const message = cleanText(req.body.message, 700) || `O administrador identificou uma pendência: ${alert.message}`;
+  await notifyUsers({
+    userIds: [alert.subject_id],
+    notificationType: 'compliance_alert_followup',
+    title: 'Pendência de checklist diário',
+    message,
+    entityType: 'compliance_alert',
+    entityId: alertKey,
+    metadata: { alertKey, alertType: alert.alert_type, periodKey: alert.period_key, subjectId: String(alert.subject_id), sentBy: String(req.user.id) },
+  });
+  await audit({ req, actorUserId: req.user.id, eventType: 'compliance_alert_followup_sent', entityType: 'compliance_alert', entityId: alertKey, metadata: { alertType: alert.alert_type, periodKey: alert.period_key, subjectId: alert.subject_id, message } });
+  res.json({ ok: true });
 });
 
 app.post('/api/auth/change-password', auth, async (req, res) => {

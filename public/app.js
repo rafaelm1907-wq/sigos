@@ -80,6 +80,8 @@ const eventLabels = {
   epi_process_validated: 'Processo EPI validado',
   epi_transfer_started: 'Transferência de EPI iniciada',
   push_device_registered: 'Dispositivo de notificações registrado',
+  compliance_alert_justified: 'Alerta de conformidade justificado',
+  compliance_alert_followup_sent: 'Notificação de pendência enviada',
 };
 
 let selectedTermId = null;
@@ -230,6 +232,7 @@ function notificationEntityLabel(notification) {
   if (notification.entityType === 'vehicle_checklist') return 'Abrir checklist de veículo';
   if (notification.entityType === 'epi_term') return 'Abrir termo de EPI';
   if (notification.entityType === 'epi_process') return 'Abrir processo de EPI';
+  if (notification.entityType === 'compliance_alert') return currentUser?.role === 'admin' ? 'Abrir alertas de conformidade' : 'Fazer checklist diário';
   if (notification.notificationType === 'daily_checklist_reminder') return 'Abrir checklist diário de EPI';
   if (notification.notificationType === 'admin_message') return 'Mensagem do administrador';
   return 'Abrir registro';
@@ -269,6 +272,10 @@ async function openNotification(notificationId, notifications) {
       setView('epi-view'); await loadTerms(); await openTerm(notification.entityId);
     } else if (notification.entityType === 'epi_process') {
       setView('epi-view'); await openEpiProcess(notification.entityId);
+    } else if (notification.entityType === 'compliance_alert' && currentUser.role === 'admin') {
+      setView('home-view'); await loadComplianceAlerts();
+    } else if (notification.entityType === 'compliance_alert' && currentUser.role === 'tecnico' && notification.notificationType === 'epi_daily_missing') {
+      setView('epi-view'); setEpiProcessType('checklist_diario');
     }
   } catch (error) {
     $('#notifications-panel').classList.remove('hidden');
@@ -424,6 +431,7 @@ function configureNavigation(user) {
   setSettingsTab(user.role === 'admin' ? selectedSettingsTab : 'security');
   $('#vehicle-tech-panel').classList.toggle('hidden', !['tecnico', 'vistoriador'].includes(user.role));
   $('#vehicle-admin-panel').classList.toggle('hidden', user.role !== 'admin');
+  $('#compliance-alerts-card').classList.toggle('hidden', user.role !== 'admin');
 }
 
 function showApp(user) {
@@ -458,6 +466,51 @@ function showApp(user) {
   loadOverview();
 }
 
+function complianceAlertTypeLabel(type) {
+  return ({
+    epi_daily_missing: 'Checklist diário de EPI ausente',
+    vehicle_fortnightly_first: 'Primeiro prazo quinzenal do mês',
+    vehicle_fortnightly_month_end: 'Segundo checklist quinzenal do mês',
+  }[type] || 'Pendência de checklist');
+}
+
+async function loadComplianceAlerts() {
+  const container = $('#compliance-alerts-list');
+  if (!container || currentUser?.role !== 'admin') return;
+  try {
+    const data = await api('/api/admin/compliance-alerts');
+    if (!data.alerts.length) {
+      container.innerHTML = '<p class="muted">Nenhum alerta pendente.</p>';
+      return;
+    }
+    container.innerHTML = data.alerts.map((alert) => {
+      const encodedKey = encodeURIComponent(alert.alertKey);
+      const recipientAction = alert.subjectType === 'tecnico' ? `<button type="button" class="secondary small-button" data-compliance-action="notify" data-alert-key="${escapeHtml(encodedKey)}">Avisar técnico</button>` : '';
+      return `<article class="compliance-alert-item"><div class="compliance-alert-heading"><div><strong>${escapeHtml(alert.title)}</strong><span>${escapeHtml(complianceAlertTypeLabel(alert.alertType))} · ${escapeHtml(alert.periodKey)}</span></div><small>${escapeHtml(alert.subjectLabel)}</small></div><p>${escapeHtml(alert.message)}</p><textarea data-alert-observation="${escapeHtml(encodedKey)}" maxlength="700" placeholder="Justificativa ou mensagem ao técnico (ex.: folga)"></textarea><div class="form-actions"><button type="button" class="small-button" data-compliance-action="justify" data-alert-key="${escapeHtml(encodedKey)}">Justificar pendência</button>${recipientAction}<span class="muted" data-alert-status="${escapeHtml(encodedKey)}" aria-live="polite"></span></div></article>`;
+    }).join('');
+    container.querySelectorAll('[data-compliance-action]').forEach((button) => button.addEventListener('click', async () => {
+      const key = decodeURIComponent(button.dataset.alertKey);
+      const observationField = [...container.querySelectorAll('[data-alert-observation]')].find((field) => field.dataset.alertObservation === button.dataset.alertKey);
+      const status = [...container.querySelectorAll('[data-alert-status]')].find((field) => field.dataset.alertStatus === button.dataset.alertKey);
+      const observation = observationField?.value.trim() || '';
+      try {
+        button.disabled = true;
+        const endpoint = button.dataset.complianceAction === 'justify' ? `/api/admin/compliance-alerts/${encodeURIComponent(key)}/justify` : `/api/admin/compliance-alerts/${encodeURIComponent(key)}/notify`;
+        const body = button.dataset.complianceAction === 'justify' ? { observation } : { message: observation };
+        if (button.dataset.complianceAction === 'justify' && !observation) throw new Error('Informe a justificativa antes de salvar.');
+        await api(endpoint, { method: 'POST', body: JSON.stringify(body) });
+        await loadComplianceAlerts();
+        await loadNotifications();
+      } catch (error) {
+        if (status) status.textContent = error.message;
+        button.disabled = false;
+      }
+    }));
+  } catch (error) {
+    container.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
+  }
+}
+
 async function loadOverview() {
   try {
     const data = await api('/api/overview');
@@ -467,6 +520,7 @@ async function loadOverview() {
     $('#overview-pending-terms').textContent = data.stats.pendingEpiTerms;
     $('#overview-validations').textContent = data.stats.pendingValidations;
     $('#activity-table').innerHTML = data.activity.length ? data.activity.map((item) => `<tr><td>${escapeHtml(formatDate(item.created_at))}</td><td>${escapeHtml(eventLabel(item.event_type))}</td><td>${escapeHtml(item.actor_name || 'Sistema')}</td><td>${escapeHtml(item.entity_type ? `${item.entity_type} #${item.entity_id || '–'}` : '–')}</td></tr>`).join('') : '<tr><td colspan="4" class="muted">Nenhuma atividade registrada no período.</td></tr>';
+    if (currentUser?.role === 'admin') await loadComplianceAlerts();
   } catch (error) {
     $('#activity-table').innerHTML = `<tr><td colspan="4" class="error">${escapeHtml(error.message)}</td></tr>`;
   }
@@ -1539,6 +1593,7 @@ $('#notifications-toggle').addEventListener('click', async () => { const panel =
 $('#notifications-close').addEventListener('click', () => { $('#notifications-panel').classList.add('hidden'); $('#notifications-toggle').setAttribute('aria-expanded', 'false'); });
 $('#notifications-read-all').addEventListener('click', async () => { try { await api('/api/notifications/read-all', { method: 'POST' }); await loadNotifications(); } catch (error) { $('#notifications-list').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`; } });
 $('#refresh-overview').addEventListener('click', () => loadOverview());
+$('#refresh-compliance-alerts').addEventListener('click', () => loadComplianceAlerts());
 $('#refresh-audit').addEventListener('click', () => loadAuditLogs());
 
 $('#onboarding-password-form').addEventListener('submit', async (event) => {
