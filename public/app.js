@@ -26,6 +26,31 @@ const vehicleDailyItems = [
   ['interna', 'PARTE INTERNA'],
 ];
 
+const epiDailyChecklistItems = [
+  { key: 'ppe_capacete_jugular', section: 'verificacao', label: 'Capacete de segurança com jugular' },
+  { key: 'ppe_oculos_seguranca', section: 'verificacao', label: 'Óculos de segurança' },
+  { key: 'ppe_luvas_riscos_mecanicos', section: 'verificacao', label: 'Luvas de proteção contra riscos mecânicos' },
+  { key: 'ppe_calcado_seguranca', section: 'verificacao', label: 'Calçado de segurança' },
+  { key: 'ppe_colete_visibilidade', section: 'verificacao', label: 'Colete/vestimenta de alta visibilidade, quando aplicável' },
+  { key: 'ppe_protetor_auricular', section: 'verificacao', label: 'Protetor auricular, quando houver exposição a ruído' },
+  { key: 'ppe_cinturao_paraquedista', section: 'verificacao', label: 'Cinturão de segurança tipo paraquedista - trabalho em altura' },
+  { key: 'ppe_talabarte_absorvedor', section: 'verificacao', label: 'Talabarte duplo com absorvedor de energia, quando aplicável' },
+  { key: 'ppe_trava_quedas', section: 'verificacao', label: 'Trava-quedas, quando aplicável' },
+  { key: 'ppe_mosquetoes_conectores', section: 'verificacao', label: 'Mosquetões/conectores sem deformações ou danos' },
+  { key: 'ppe_luva_isolante', section: 'verificacao', label: 'Luva isolante adequada ao risco elétrico, quando aplicável' },
+  { key: 'ppe_luva_cobertura', section: 'verificacao', label: 'Luva de cobertura da luva isolante, quando aplicável' },
+  { key: 'ppe_vestimenta_risco_eletrico', section: 'verificacao', label: 'Vestimenta adequada ao risco elétrico, quando aplicável' },
+  { key: 'ppe_protetor_facial', section: 'verificacao', label: 'Protetor facial, quando houver risco de arco/projeção' },
+  { key: 'inspection_limpeza', section: 'inspecao', label: 'EPIs estão limpos e sem rasgos, trincas ou deformações.' },
+  { key: 'inspection_jugular', section: 'inspecao', label: 'Jugular do capacete está funcionando corretamente.' },
+  { key: 'inspection_cinturao', section: 'inspecao', label: 'Cinturão não apresenta cortes, fios rompidos ou costuras danificadas.' },
+  { key: 'inspection_conectores', section: 'inspecao', label: 'Talabartes, trava-quedas e conectores estão sem danos e funcionando corretamente.' },
+  { key: 'inspection_calcado', section: 'inspecao', label: 'Calçado está sem rasgos, sola solta ou desgaste excessivo.' },
+  { key: 'inspection_luvas', section: 'inspecao', label: 'Luvas estão sem furos, rasgos ou contaminação.' },
+  { key: 'inspection_compatibilidade', section: 'inspecao', label: 'EPIs estão compatíveis com a atividade programada e com os riscos identificados.' },
+  { key: 'inspection_substituicao', section: 'inspecao', label: 'Nenhum EPI danificado será utilizado; item não conforme será substituído antes do início.' },
+];
+
 const roleLabels = { admin: 'Administrador', tecnico: 'Técnico', vistoriador: 'Vistoriador' };
 const eventLabels = {
   login_success: 'Login realizado',
@@ -82,6 +107,7 @@ let epiPhotoDrafts = [];
 let epiProcessLocation = { latitude: null, longitude: null };
 let epiWizardIndex = 0;
 let epiWizardItems = [];
+let epiDailyPhotoDrafts = {};
 let vehiclePhotoDrafts = [];
 let epiCatalog = [];
 let stockPpeCatalog = [];
@@ -608,6 +634,9 @@ function captureVideoFrame(videoSelector) {
 
 function normalizeEpiWizardItem(item) {
   return {
+    itemKey: item.itemKey ?? item.key ?? '',
+    section: item.section ?? '',
+    label: item.label ?? item.equipmentName ?? '',
     ppeItemId: item.ppeItemId ?? item[0] ?? '',
     quantity: item.quantity ?? item[1] ?? 1,
     condition: item.condition ?? item[3] ?? 'novo',
@@ -616,14 +645,18 @@ function normalizeEpiWizardItem(item) {
 }
 
 function renderEpiProcessItems(items = null) {
+  const daily = selectedEpiProcessType === 'checklist_diario';
   const selectedItems = items === null
-    ? (epiCatalog.length ? epiCatalog.map((item) => ({ ppeItemId: item.id, quantity: 1, condition: 'novo', observation: '' })) : [{ ppeItemId: '', quantity: 1, condition: 'novo', observation: '' }])
-    : (items.length ? items : [{ ppeItemId: '', quantity: 1, condition: 'novo', observation: '' }]);
+    ? (daily
+      ? (epiWizardItems.length && epiWizardItems.every((item) => item.itemKey) ? epiWizardItems : epiDailyChecklistItems.map((item) => ({ itemKey: item.key, section: item.section, label: item.label, ppeItemId: '', quantity: 1, condition: 'sim', observation: '' })))
+      : (epiCatalog.length ? epiCatalog.map((item) => ({ ppeItemId: item.id, quantity: 1, condition: 'novo', observation: '' })) : [{ ppeItemId: '', quantity: 1, condition: 'novo', observation: '' }]))
+    : (items.length ? items : (daily ? epiDailyChecklistItems.map((item) => ({ itemKey: item.key, section: item.section, label: item.label, ppeItemId: '', quantity: 1, condition: 'sim', observation: '' })) : [{ ppeItemId: '', quantity: 1, condition: 'novo', observation: '' }]));
   epiWizardItems = selectedItems.map(normalizeEpiWizardItem);
   epiWizardIndex = Math.min(epiWizardIndex, epiWizardItems.length - 1);
   if (!Number.isInteger(epiWizardIndex) || epiWizardIndex < 0) epiWizardIndex = 0;
   const container = $('#epi-process-items');
   if (!container) return;
+  $('#epi-add-process-item')?.classList.toggle('hidden', daily || Boolean(window.epiWizardSignatureVisible));
   if (!$('#epi-wizard-navigation')) container.insertAdjacentHTML('afterend', '<div id="epi-wizard-navigation" class="wizard-navigation"><button id="epi-wizard-back" type="button" class="secondary small-button">Anterior</button><span id="epi-wizard-counter" class="muted"></span><button id="epi-wizard-next" type="button" class="small-button">Próximo EPI</button><p id="epi-wizard-message" class="error"></p></div>');
   const signatureStep = $('#epi-process-form')?.querySelector('.epi-step-card');
   signatureStep?.setAttribute('id', 'epi-signature-step');
@@ -635,7 +668,7 @@ function renderEpiProcessItems(items = null) {
         window.epiWizardSignatureVisible = false;
         $('#epi-signature-step')?.classList.add('hidden');
         $('#epi-process-items')?.classList.remove('hidden');
-        $('#epi-add-process-item')?.classList.remove('hidden');
+        $('#epi-add-process-item')?.classList.toggle('hidden', selectedEpiProcessType === 'checklist_diario');
         renderEpiWizardItem();
         return;
       }
@@ -643,10 +676,13 @@ function renderEpiProcessItems(items = null) {
       if (epiWizardIndex > 0) { epiWizardIndex -= 1; renderEpiWizardItem(); }
     });
     $('#epi-wizard-next').addEventListener('click', () => {
-      const current = epiWizardItems[epiWizardIndex];
       saveEpiWizardItem();
+      const current = epiWizardItems[epiWizardIndex];
       const message = $('#epi-wizard-message');
-      if (!current?.ppeItemId || !Number.isInteger(Number(current.quantity)) || Number(current.quantity) < 1) { message.textContent = 'Selecione o EPI e informe uma quantidade válida antes de continuar.'; return; }
+      if (daily ? !['sim', 'nao', 'na'].includes(String(current?.condition || '').toLowerCase()) : (!current?.ppeItemId || !Number.isInteger(Number(current.quantity)) || Number(current.quantity) < 1)) {
+        message.textContent = daily ? 'Responda esta etapa com Sim, Não ou N/A antes de continuar.' : 'Selecione o EPI e informe uma quantidade válida antes de continuar.';
+        return;
+      }
       message.textContent = '';
       if (epiWizardIndex < epiWizardItems.length - 1) { epiWizardIndex += 1; renderEpiWizardItem(); return; }
       window.epiWizardSignatureVisible = true;
@@ -663,7 +699,18 @@ function renderEpiProcessItems(items = null) {
 function saveEpiWizardItem() {
   const row = $('#epi-process-items .epi-process-item');
   if (!row || !epiWizardItems[epiWizardIndex]) return;
+  if (selectedEpiProcessType === 'checklist_diario') {
+    const item = epiWizardItems[epiWizardIndex];
+    const answer = row.querySelector('[data-field="condition"]:checked')?.value || item.condition || 'sim';
+    item.condition = answer;
+    item.observation = row.querySelector('[data-field="observation"]')?.value || '';
+    item.label = row.querySelector('[data-daily-label]')?.textContent || item.label;
+    return;
+  }
   epiWizardItems[epiWizardIndex] = {
+    itemKey: epiWizardItems[epiWizardIndex].itemKey || '',
+    section: epiWizardItems[epiWizardIndex].section || '',
+    label: epiWizardItems[epiWizardIndex].label || '',
     ppeItemId: row.querySelector('[data-field="ppeItemId"]').value,
     quantity: row.querySelector('[data-field="quantity"]').value,
     condition: row.querySelector('[data-field="condition"]').value,
@@ -675,6 +722,10 @@ function renderEpiWizardItem() {
   const container = $('#epi-process-items');
   const item = epiWizardItems[epiWizardIndex];
   if (!container || !item) return;
+  if (selectedEpiProcessType === 'checklist_diario') {
+    renderEpiDailyWizardItem(container, item);
+    return;
+  }
   const options = `<option value="">Selecione o EPI</option>${epiCatalog.map((catalogItem) => `<option value="${escapeHtml(catalogItem.id)}" ${String(catalogItem.id) === String(item.ppeItemId || '') ? 'selected' : ''}>${escapeHtml(catalogItem.name)} · CA ${escapeHtml(catalogItem.ca || '–')}</option>`).join('')}`;
   container.innerHTML = `<div class="epi-process-item epi-wizard-item" data-item-row="${epiWizardIndex}"><div class="wizard-item-heading"><strong>EPI ${epiWizardIndex + 1} de ${epiWizardItems.length}</strong><span class="muted">Um item por vez</span></div><label>Equipamento<select data-field="ppeItemId" required>${options}</select></label><label>Quantidade<input data-field="quantity" type="number" min="1" value="${escapeHtml(item.quantity)}" required /></label><label>Condição<select data-field="condition"><option value="novo" ${item.condition === 'novo' ? 'selected' : ''}>Novo</option><option value="usado" ${item.condition === 'usado' ? 'selected' : ''}>Usado</option><option value="danificado" ${item.condition === 'danificado' ? 'selected' : ''}>Danificado</option></select></label><label>Observação (opcional)<textarea data-field="observation" maxlength="180" placeholder="Observação rápida">${escapeHtml(item.observation)}</textarea></label><button type="button" class="danger-button remove-item">Remover este item</button></div>`;
   const signatureStep = $('#epi-signature-step');
@@ -695,8 +746,54 @@ function renderEpiWizardItem() {
   });
 }
 
+function epiDailyResponseLabel(value) {
+  return ({ sim: 'Sim', nao: 'Não', na: 'N/A' }[String(value || '').toLowerCase()] || '–');
+}
+
+function renderEpiDailyWizardItem(container, item) {
+  const definition = epiDailyChecklistItems.find((entry) => entry.key === item.itemKey) || item;
+  const photo = epiDailyPhotoDrafts[item.itemKey];
+  const sectionTitle = item.section === 'inspecao' ? '2. Inspeção antes do início da atividade' : '1. Verificação dos EPIs';
+  const photoCount = Object.keys(epiDailyPhotoDrafts).length;
+  container.innerHTML = `<div class="epi-process-item epi-wizard-item epi-daily-wizard-item" data-item-row="${epiWizardIndex}"><div class="wizard-item-heading"><span class="eyebrow">${escapeHtml(sectionTitle)}</span><strong>Etapa ${epiWizardIndex + 1} de ${epiWizardItems.length}</strong><span class="muted">Uma etapa por vez</span></div><p class="epi-daily-question" data-daily-label>${escapeHtml(definition.label || item.label)}</p><fieldset class="epi-answer-group"><legend>${item.section === 'verificacao' ? 'O técnico está com este EPI/item?' : 'A verificação está conforme?'}</legend><label class="epi-answer-option"><input type="radio" name="epi-daily-answer" data-field="condition" value="sim" ${item.condition === 'sim' ? 'checked' : ''} /><span>Sim</span></label><label class="epi-answer-option"><input type="radio" name="epi-daily-answer" data-field="condition" value="nao" ${item.condition === 'nao' ? 'checked' : ''} /><span>Não</span></label><label class="epi-answer-option"><input type="radio" name="epi-daily-answer" data-field="condition" value="na" ${item.condition === 'na' ? 'checked' : ''} /><span>N/A</span></label></fieldset><label>Observação (opcional)<textarea data-field="observation" maxlength="500" placeholder="Descreva rapidamente se necessário">${escapeHtml(item.observation)}</textarea><div class="epi-daily-photo-entry"><div class="subheading"><h4>Foto desta etapa (opcional)</h4><span class="muted">${photoCount}/5 fotos</span></div><button type="button" class="secondary small-button" data-action="open-daily-photo-camera" ${photo || photoCount >= 5 ? 'disabled' : ''}>Tirar foto agora</button><div class="hidden" data-role="daily-photo-camera"><video id="epi-daily-photo-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button type="button" data-action="take-daily-photo">Capturar foto</button><button type="button" class="secondary" data-action="cancel-daily-photo">Cancelar</button></div></div><div class="epi-daily-photo-preview">${photo ? `<img src="${photo.imageData}" alt="Foto da etapa" /><button type="button" class="secondary small-button" data-action="remove-daily-photo">Remover foto</button>` : '<span class="muted">Nenhuma foto capturada para esta etapa.</span>'}</div><p class="muted" data-role="daily-photo-message" aria-live="polite">${photoCount >= 5 && !photo ? 'Limite de cinco fotos atingido.' : ''}</p></div></div>`;
+  const signatureStep = $('#epi-signature-step');
+  signatureStep?.classList.toggle('hidden', !window.epiWizardSignatureVisible);
+  const back = $('#epi-wizard-back');
+  const next = $('#epi-wizard-next');
+  const counter = $('#epi-wizard-counter');
+  if (counter) counter.textContent = `Etapa ${epiWizardIndex + 1} de ${epiWizardItems.length}`;
+  if (back) { back.disabled = epiWizardIndex === 0 && !window.epiWizardSignatureVisible; back.textContent = window.epiWizardSignatureVisible ? 'Voltar às etapas' : 'Anterior'; }
+  if (next) { next.classList.toggle('hidden', Boolean(window.epiWizardSignatureVisible)); next.textContent = epiWizardIndex === epiWizardItems.length - 1 ? 'Ir para assinatura' : 'Próxima etapa'; }
+  container.querySelectorAll('[data-field="condition"]').forEach((field) => field.addEventListener('change', saveEpiWizardItem));
+  container.querySelector('[data-field="observation"]')?.addEventListener('input', saveEpiWizardItem);
+  container.querySelector('[data-action="open-daily-photo-camera"]')?.addEventListener('click', () => {
+    const camera = container.querySelector('[data-role="daily-photo-camera"]');
+    camera?.classList.remove('hidden');
+    openEpiCamera('#epi-daily-photo-video', '[data-role="daily-photo-message"]', 'environment');
+  });
+  container.querySelector('[data-action="cancel-daily-photo"]')?.addEventListener('click', () => {
+    stopEpiCamera('#epi-daily-photo-video');
+    container.querySelector('[data-role="daily-photo-camera"]')?.classList.add('hidden');
+  });
+  container.querySelector('[data-action="take-daily-photo"]')?.addEventListener('click', async () => {
+    const imageData = captureVideoFrame('#epi-daily-photo-video');
+    const message = container.querySelector('[data-role="daily-photo-message"]');
+    if (!imageData) { if (message) message.textContent = 'A câmera ainda não está pronta.'; return; }
+    stopEpiCamera('#epi-daily-photo-video');
+    container.querySelector('[data-role="daily-photo-camera"]')?.classList.add('hidden');
+    await requestEpiProcessLocation();
+    epiDailyPhotoDrafts[item.itemKey] = { imageData, captureMode: 'camera', itemKey: item.itemKey, latitude: epiProcessLocation.latitude, longitude: epiProcessLocation.longitude };
+    renderEpiDailyWizardItem(container, epiWizardItems[epiWizardIndex]);
+  });
+  container.querySelector('[data-action="remove-daily-photo"]')?.addEventListener('click', () => {
+    delete epiDailyPhotoDrafts[item.itemKey];
+    renderEpiDailyWizardItem(container, epiWizardItems[epiWizardIndex]);
+  });
+}
+
 function readEpiProcessItems() {
   saveEpiWizardItem();
+  if (selectedEpiProcessType === 'checklist_diario') return epiWizardItems.map((item) => ({ itemKey: item.itemKey, equipmentName: item.label, quantity: 1, ca: '', condition: item.condition, observation: item.observation || '' }));
   return epiWizardItems.map((item) => {
     const catalog = epiCatalog.find((catalogItem) => String(catalogItem.id) === String(item.ppeItemId));
     return { ppeItemId: item.ppeItemId ? Number(item.ppeItemId) : null, equipmentName: catalog?.name || '', quantity: Number(item.quantity), ca: catalog?.ca || '', condition: item.condition, observation: item.observation || '' };
@@ -748,6 +845,7 @@ function setEpiProcessType(processType, reveal = true) {
   $('#epi-target-user').required = isTransfer;
   if (reveal) {
     window.epiWizardSignatureVisible = false;
+    epiDailyPhotoDrafts = {};
     renderEpiProcessItems();
     setEpiWorkflowOpen(true);
   }
@@ -777,7 +875,17 @@ function renderEpiDailyResponsibilityTerm(process) {
   if (!term) return '';
   const signature = term.signatureData || process.signatureData || '';
   const logo = term.companyLogoData ? `<img class="company-term-logo" src="${escapeHtml(term.companyLogoData)}" alt="Logo da empresa" />` : '';
-  return `<section class="epi-responsibility-term"><div class="paper-header"><div class="term-brand">${logo}<div><strong>${escapeHtml(term.companyName)}</strong><span>CNPJ: ${escapeHtml(term.companyCnpj)}</span></div></div><span class="paper-number">TERMO ASSINADO</span></div><h3>${escapeHtml(term.title)}</h3><p>${escapeHtml(term.intro)}</p><ol>${term.clauses.map((clause) => `<li>${escapeHtml(clause)}</li>`).join('')}</ol><div class="recipient-line"><span><b>Funcionário:</b> ${escapeHtml(process.createdBy.name)}</span><span><b>Emissão:</b> ${escapeHtml(formatDate(process.createdAt))}</span></div><table class="paper-table"><thead><tr><th>Equipamentos</th><th>Qtd.</th><th>CA</th><th>Condição</th></tr></thead><tbody>${process.items.map((item) => `<tr><td>${escapeHtml(item.equipmentName)}</td><td>${escapeHtml(item.quantity)}</td><td>${escapeHtml(item.ca || '–')}</td><td>${escapeHtml((item.condition || '–').toUpperCase())}</td></tr>`).join('')}</tbody></table><div class="legal-text"><p>${escapeHtml(term.legalText.clt)}</p><p>${escapeHtml(term.legalText.nr06)}</p><p>${escapeHtml(term.legalText.declaration)}</p></div><div class="signature-block"><img class="saved-signature" src="${signature}" alt="Assinatura eletrônica do técnico" /><div class="signature-line">Ass. do Funcionário · ${escapeHtml(term.signerName)}</div><div class="audit-note">Assinatura validada em ${escapeHtml(formatDate(term.signedAt))} · SHA-256: ${escapeHtml(term.signatureHash || '–')}</div></div><p class="epi-term-attached-note">Este termo assinado faz parte deste checklist diário e foi enviado junto com as fotos registradas.</p></section>`;
+  const groups = [
+    { section: 'verificacao', title: '1. Verificação dos EPIs' },
+    { section: 'inspecao', title: '2. Inspeção antes do início da atividade' },
+  ];
+  const hasSections = process.items.some((item) => item.section);
+  const rows = hasSections ? groups.map((group) => {
+    const items = process.items.filter((item) => item.section === group.section);
+    if (!items.length) return '';
+    return `<tr class="daily-section-row"><th colspan="4">${escapeHtml(group.title)}</th></tr>${items.map((item) => `<tr><td>${escapeHtml(process.items.indexOf(item) + 1)}</td><td>${escapeHtml(item.equipmentName)}</td><td>${escapeHtml(epiDailyResponseLabel(item.checkStatus || item.condition))}</td><td>${escapeHtml(item.observation || '–')}</td></tr>`).join('')}`;
+  }).join('') : process.items.map((item, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(item.equipmentName)}</td><td>${escapeHtml(epiDailyResponseLabel(item.checkStatus || item.condition))}</td><td>${escapeHtml(item.observation || '–')}</td></tr>`).join('');
+  return `<section class="epi-responsibility-term"><div class="paper-header"><div class="term-brand">${logo}<div><strong>${escapeHtml(term.companyName)}</strong><span>CNPJ: ${escapeHtml(term.companyCnpj)}</span></div></div><span class="paper-number">TERMO ASSINADO</span></div><h3>${escapeHtml(term.title)}</h3><p>${escapeHtml(term.intro)}</p><ol>${term.clauses.map((clause) => `<li>${escapeHtml(clause)}</li>`).join('')}</ol><div class="recipient-line"><span><b>Funcionário:</b> ${escapeHtml(process.createdBy.name)}</span><span><b>Emissão:</b> ${escapeHtml(formatDate(process.createdAt))}</span></div><table class="paper-table daily-checklist-table"><thead><tr><th>Nº</th><th>EPI / item de segurança</th><th>Resposta</th><th>Observação</th></tr></thead><tbody>${rows}</tbody></table><div class="legal-text"><p>${escapeHtml(term.legalText.clt)}</p><p>${escapeHtml(term.legalText.nr06)}</p><p>${escapeHtml(term.legalText.declaration)}</p></div><div class="signature-block"><img class="saved-signature" src="${signature}" alt="Assinatura eletrônica do técnico" /><div class="signature-line">Ass. do Funcionário · ${escapeHtml(term.signerName)}</div><div class="audit-note">Assinatura validada em ${escapeHtml(formatDate(term.signedAt))} · SHA-256: ${escapeHtml(term.signatureHash || '–')}</div></div><p class="epi-term-attached-note">Este termo assinado faz parte deste checklist diário e foi enviado junto com as fotos registradas.</p></section>`;
 }
 
 function renderEpiGenericTerm(process) {
@@ -792,7 +900,7 @@ async function openEpiProcess(id) {
   panel.innerHTML = '<p class="muted">Carregando processo...</p>';
   try {
     const { process } = await api(`/api/epi/processes/${id}`);
-    const media = process.media.map((item) => `<figure class="epi-process-media-item"><img src="/api/epi/processes/${process.id}/media/${item.id}" alt="${item.kind === 'selfie' ? 'Selfie do processo' : 'Foto do EPI'}" loading="lazy" /><figcaption><strong>${item.kind === 'selfie' ? 'Selfie' : 'Foto do EPI'}</strong><span>Data/hora: ${escapeHtml(formatDate(item.createdAt))}</span><span>IP: ${escapeHtml(item.ipAddress || 'Não informado')}</span><span>Navegador: ${escapeHtml(browserLabel(item.userAgent || item.deviceInfo))}</span><span>Dispositivo: ${escapeHtml(deviceLabel(item.userAgent || item.deviceInfo))}</span><span>Cidade: ${escapeHtml(formatMediaLocation(item))}</span><span>Coordenadas: ${escapeHtml(formatMediaCoordinates(item))}</span></figcaption></figure>`).join('');
+    const media = process.media.map((item) => { const itemDefinition = epiDailyChecklistItems.find((entry) => entry.key === item.itemKey); const label = item.kind === 'selfie' ? 'Selfie' : itemDefinition ? `Foto · ${itemDefinition.label}` : 'Foto do EPI'; return `<figure class="epi-process-media-item"><img src="/api/epi/processes/${process.id}/media/${item.id}" alt="${escapeHtml(label)}" loading="lazy" /><figcaption><strong>${escapeHtml(label)}</strong><span>Data/hora: ${escapeHtml(formatDate(item.createdAt))}</span><span>IP: ${escapeHtml(item.ipAddress || 'Não informado')}</span><span>Navegador: ${escapeHtml(browserLabel(item.userAgent || item.deviceInfo))}</span><span>Dispositivo: ${escapeHtml(deviceLabel(item.userAgent || item.deviceInfo))}</span><span>Cidade: ${escapeHtml(formatMediaLocation(item))}</span><span>Coordenadas: ${escapeHtml(formatMediaCoordinates(item))}</span></figcaption></figure>`; }).join('');
     const responsibilityTerm = process.processType === 'checklist_diario' ? renderEpiDailyResponsibilityTerm(process) : renderEpiGenericTerm(process);
     const canValidate = currentUser.role === 'admin' || String(process.validatorUserId || '') === String(currentUser.id);
     const validation = process.status === 'pendente_validacao' && canValidate ? `<div class="epi-review-actions"><textarea id="epi-validation-notes" maxlength="500" placeholder="Observação da validação (opcional)"></textarea><div class="form-actions"><button type="button" data-epi-validate="validado">Validar processo</button><button type="button" class="secondary" data-epi-validate="reprovado">Reprovar</button></div></div>` : '';
@@ -1565,10 +1673,37 @@ $('#epi-take-selfie').addEventListener('click', async () => {
     const data = await api(`/api/epi/processes/${currentEpiProcess.id}/selfie`, { method: 'POST', body: JSON.stringify({ imageData, captureMode: 'camera', deviceInfo: navigator.userAgent, latitude: epiProcessLocation.latitude, longitude: epiProcessLocation.longitude }) });
     currentEpiProcess = data.process;
     $('#epi-selfie-step').classList.add('hidden');
+    if (selectedEpiProcessType === 'checklist_diario') {
+      await submitEpiProcessPhotos(Object.values(epiDailyPhotoDrafts), message);
+      return;
+    }
     $('#epi-photos-step').classList.remove('hidden');
     $('#epi-photos-message').textContent = 'Tire até cinco fotos dos EPIs para concluir.';
   } catch (error) { message.textContent = error.message; }
 });
+
+async function submitEpiProcessPhotos(photos, messageElement) {
+  if (!currentEpiProcess) return;
+  await requestEpiProcessLocation();
+  const data = await api(`/api/epi/processes/${currentEpiProcess.id}/photos`, { method: 'POST', body: JSON.stringify({ photos, deviceInfo: navigator.userAgent, latitude: epiProcessLocation.latitude, longitude: epiProcessLocation.longitude }) });
+  currentEpiProcess = data.process;
+  const message = messageElement || $('#epi-photos-message');
+  message.textContent = 'Processo enviado para validação.';
+  $('#epi-process-form-message').textContent = 'Processo enviado para validação.';
+  currentEpiProcess = null;
+  epiPhotoDrafts = [];
+  epiDailyPhotoDrafts = {};
+  renderEpiPhotoDrafts();
+  $('#epi-selfie-step').classList.add('hidden');
+  $('#epi-photos-step').classList.add('hidden');
+  $('#epi-process-form').classList.remove('hidden');
+  $('#epi-process-form').reset();
+  $('#epi-signature-confirm').checked = false;
+  setEpiProcessType(selectedEpiProcessType);
+  await loadEpiProcesses();
+  await loadNotifications();
+  await loadOverview();
+}
 
 function renderEpiPhotoDrafts() {
   $('#epi-photo-previews').innerHTML = epiPhotoDrafts.map((photo, index) => `<div><img src="${photo}" alt="Foto do EPI ${index + 1}" /></div>`).join('');
@@ -1591,21 +1726,7 @@ $('#epi-send-photos').addEventListener('click', async () => {
   if (!currentEpiProcess || !epiPhotoDrafts.length) return;
   const message = $('#epi-photos-message');
   try {
-    await requestEpiProcessLocation();
-    await api(`/api/epi/processes/${currentEpiProcess.id}/photos`, { method: 'POST', body: JSON.stringify({ photos: epiPhotoDrafts.map((imageData) => ({ imageData, captureMode: 'camera', latitude: epiProcessLocation.latitude, longitude: epiProcessLocation.longitude })), deviceInfo: navigator.userAgent, latitude: epiProcessLocation.latitude, longitude: epiProcessLocation.longitude }) });
-    message.textContent = 'Processo enviado para validação.';
-    currentEpiProcess = null;
-    epiPhotoDrafts = [];
-    renderEpiPhotoDrafts();
-    $('#epi-photos-step').classList.add('hidden');
-    $('#epi-process-form').classList.remove('hidden');
-    $('#epi-process-form').reset();
-    $('#epi-signature-confirm').checked = false;
-    renderEpiProcessItems();
-    setEpiProcessType(selectedEpiProcessType);
-    await loadEpiProcesses();
-    await loadNotifications();
-    await loadOverview();
+    await submitEpiProcessPhotos(epiPhotoDrafts.map((imageData) => ({ imageData, captureMode: 'camera', latitude: epiProcessLocation.latitude, longitude: epiProcessLocation.longitude })), message);
   } catch (error) { message.textContent = error.message; }
 });
 

@@ -55,11 +55,11 @@ const EPI_PROCESS_LEGAL_TEXT = {
     ],
   },
   checklist_diario: {
-    title: 'TERMO DE CHECKLIST DIÁRIO DE EPI',
+    title: 'CHECKLIST DIÁRIO DE EPI',
     version: 'epi-checklist-diario-1',
     paragraphs: [
-      'Declaro que conferi, nesta data, os equipamentos de proteção individual que estão sob minha responsabilidade para o trabalho.',
-      'Comprometo-me a utilizar cada equipamento para sua finalidade, mantê-lo em condições adequadas e comunicar imediatamente qualquer dano, alteração ou extravio.',
+      'Declaro que realizei, nesta data, a verificação dos EPIs e itens de segurança indicados neste checklist antes do início da atividade.',
+      'As respostas registradas correspondem à situação encontrada no momento da conferência. Itens ausentes ou não conformes devem ser comunicados e regularizados antes do início da atividade.',
     ],
   },
   transferencia: {
@@ -71,6 +71,37 @@ const EPI_PROCESS_LEGAL_TEXT = {
     ],
   },
 };
+
+const EPI_DAILY_CHECKLIST_ITEMS = [
+  { key: 'ppe_capacete_jugular', section: 'verificacao', label: 'Capacete de segurança com jugular' },
+  { key: 'ppe_oculos_seguranca', section: 'verificacao', label: 'Óculos de segurança' },
+  { key: 'ppe_luvas_riscos_mecanicos', section: 'verificacao', label: 'Luvas de proteção contra riscos mecânicos' },
+  { key: 'ppe_calcado_seguranca', section: 'verificacao', label: 'Calçado de segurança' },
+  { key: 'ppe_colete_visibilidade', section: 'verificacao', label: 'Colete/vestimenta de alta visibilidade, quando aplicável' },
+  { key: 'ppe_protetor_auricular', section: 'verificacao', label: 'Protetor auricular, quando houver exposição a ruído' },
+  { key: 'ppe_cinturao_paraquedista', section: 'verificacao', label: 'Cinturão de segurança tipo paraquedista - trabalho em altura' },
+  { key: 'ppe_talabarte_absorvedor', section: 'verificacao', label: 'Talabarte duplo com absorvedor de energia, quando aplicável' },
+  { key: 'ppe_trava_quedas', section: 'verificacao', label: 'Trava-quedas, quando aplicável' },
+  { key: 'ppe_mosquetoes_conectores', section: 'verificacao', label: 'Mosquetões/conectores sem deformações ou danos' },
+  { key: 'ppe_luva_isolante', section: 'verificacao', label: 'Luva isolante adequada ao risco elétrico, quando aplicável' },
+  { key: 'ppe_luva_cobertura', section: 'verificacao', label: 'Luva de cobertura da luva isolante, quando aplicável' },
+  { key: 'ppe_vestimenta_risco_eletrico', section: 'verificacao', label: 'Vestimenta adequada ao risco elétrico, quando aplicável' },
+  { key: 'ppe_protetor_facial', section: 'verificacao', label: 'Protetor facial, quando houver risco de arco/projeção' },
+  { key: 'inspection_limpeza', section: 'inspecao', label: 'EPIs estão limpos e sem rasgos, trincas ou deformações.' },
+  { key: 'inspection_jugular', section: 'inspecao', label: 'Jugular do capacete está funcionando corretamente.' },
+  { key: 'inspection_cinturao', section: 'inspecao', label: 'Cinturão não apresenta cortes, fios rompidos ou costuras danificadas.' },
+  { key: 'inspection_conectores', section: 'inspecao', label: 'Talabartes, trava-quedas e conectores estão sem danos e funcionando corretamente.' },
+  { key: 'inspection_calcado', section: 'inspecao', label: 'Calçado está sem rasgos, sola solta ou desgaste excessivo.' },
+  { key: 'inspection_luvas', section: 'inspecao', label: 'Luvas estão sem furos, rasgos ou contaminação.' },
+  { key: 'inspection_compatibilidade', section: 'inspecao', label: 'EPIs estão compatíveis com a atividade programada e com os riscos identificados.' },
+  { key: 'inspection_substituicao', section: 'inspecao', label: 'Nenhum EPI danificado será utilizado; item não conforme será substituído antes do início.' },
+];
+
+const EPI_DAILY_CHECKLIST_BY_KEY = new Map(EPI_DAILY_CHECKLIST_ITEMS.map((item) => [item.key, item]));
+
+function epiDailyResponseLabel(value) {
+  return ({ sim: 'Sim', nao: 'Não', na: 'N/A' }[String(value || '').toLowerCase()] || '–');
+}
 
 const EPI_PROCESS_TYPES = Object.keys(EPI_PROCESS_LEGAL_TEXT);
 
@@ -810,10 +841,14 @@ async function initSchema() {
       ca TEXT,
       condition TEXT,
       observation TEXT,
+      item_key TEXT,
+      section TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
     ALTER TABLE epi_process_items ADD COLUMN IF NOT EXISTS ppe_item_id BIGINT REFERENCES ppe_items(id) ON DELETE SET NULL;
+    ALTER TABLE epi_process_items ADD COLUMN IF NOT EXISTS item_key TEXT;
+    ALTER TABLE epi_process_items ADD COLUMN IF NOT EXISTS section TEXT;
     ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS company_logo_data TEXT;
     ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS company_logo_mime_type TEXT;
 
@@ -822,6 +857,7 @@ async function initSchema() {
       process_id BIGINT NOT NULL REFERENCES epi_processes(id) ON DELETE CASCADE,
       uploaded_by BIGINT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
       kind TEXT NOT NULL CHECK (kind IN ('selfie', 'epi_photo')),
+      item_key TEXT,
       file_name TEXT NOT NULL,
       file_path TEXT NOT NULL,
       mime_type TEXT NOT NULL,
@@ -837,6 +873,7 @@ async function initSchema() {
     );
 
     ALTER TABLE epi_process_media ADD COLUMN IF NOT EXISTS ip_address INET;
+    ALTER TABLE epi_process_media ADD COLUMN IF NOT EXISTS item_key TEXT;
     ALTER TABLE epi_process_media ADD COLUMN IF NOT EXISTS user_agent TEXT;
     ALTER TABLE epi_process_media ADD COLUMN IF NOT EXISTS latitude NUMERIC(9, 6);
     ALTER TABLE epi_process_media ADD COLUMN IF NOT EXISTS longitude NUMERIC(9, 6);
@@ -1069,6 +1106,7 @@ async function insertPpeStockMovement(client, {
 function requestedStockItems(row) {
   const items = new Map();
   for (const item of row.items || []) {
+    if (row.process_type === 'checklist_diario' && String(item.condition || '').toLowerCase() !== 'sim') continue;
     const ppeItemId = Number(item.ppeItemId);
     const quantity = Number(item.quantity);
     if (!Number.isInteger(ppeItemId) || ppeItemId < 1 || !Number.isInteger(quantity) || quantity < 1) continue;
@@ -1744,7 +1782,7 @@ async function approximateLocationLabel(latitude, longitude) {
   return label;
 }
 
-async function storeEpiProcessMedia({ req, processId, kind, imageData, deviceInfo, latitude, longitude }) {
+async function storeEpiProcessMedia({ req, processId, kind, itemKey = null, imageData, deviceInfo, latitude, longitude }) {
   const captured = parseCapturedImage(imageData);
   const normalizedLatitude = capturedCoordinate(latitude, -90, 90);
   const normalizedLongitude = capturedCoordinate(longitude, -180, 180);
@@ -1758,11 +1796,11 @@ async function storeEpiProcessMedia({ req, processId, kind, imageData, deviceInf
   const sha256 = crypto.createHash('sha256').update(captured.imageBuffer).digest('hex');
   const result = await pool.query(
     `INSERT INTO epi_process_media
-      (process_id, uploaded_by, kind, file_name, file_path, mime_type, byte_size, sha256, device_info,
+      (process_id, uploaded_by, kind, item_key, file_name, file_path, mime_type, byte_size, sha256, device_info,
        ip_address, user_agent, latitude, longitude, location_label)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-     RETURNING id, process_id, kind, mime_type, byte_size, sha256, device_info, ip_address, user_agent, latitude, longitude, location_label, created_at`,
-    [processId, req.user.id, kind, fileName, absolutePath, captured.mimeType, captured.imageBuffer.length, sha256, cleanText(deviceInfo, 240) || null, clientIp(req), userAgent, normalizedLatitude, normalizedLongitude, locationLabel],
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+     RETURNING id, process_id, kind, item_key, mime_type, byte_size, sha256, device_info, ip_address, user_agent, latitude, longitude, location_label, created_at`,
+    [processId, req.user.id, kind, cleanText(itemKey, 120) || null, fileName, absolutePath, captured.mimeType, captured.imageBuffer.length, sha256, cleanText(deviceInfo, 240) || null, clientIp(req), userAgent, normalizedLatitude, normalizedLongitude, locationLabel],
   );
   return result.rows[0];
 }
@@ -1808,7 +1846,10 @@ const epiProcessQuery = `
         'quantity', i.quantity,
         'ca', i.ca,
         'condition', i.condition,
-        'observation', i.observation
+        'checkStatus', CASE WHEN p.process_type = 'checklist_diario' THEN i.condition ELSE NULL END,
+        'observation', i.observation,
+        'itemKey', i.item_key,
+        'section', i.section
       ) ORDER BY i.id)
       FROM epi_process_items i WHERE i.process_id = p.id
     ), '[]'::json) AS items,
@@ -1816,6 +1857,7 @@ const epiProcessQuery = `
       SELECT JSON_AGG(JSON_BUILD_OBJECT(
         'id', m.id,
         'kind', m.kind,
+        'itemKey', m.item_key,
         'mimeType', m.mime_type,
         'byteSize', m.byte_size,
         'sha256', m.sha256,
@@ -1844,17 +1886,16 @@ function publicEpiProcess(row, includeSignatureData = false) {
   const companyLogoData = row.company_logo_data || row.company_logo_data_current || null;
   const companyLogoMimeType = row.company_logo_mime_type || row.company_logo_mime_type_current || null;
   const responsibilityTerm = row.process_type === 'checklist_diario' ? {
-    title: "TERMO DE DEVOLUÇÃO E RESPONSABILIDADE EPI'S",
+    title: 'CHECKLIST DIÁRIO DE EPI',
     companyName,
     companyCnpj,
     companyLogoData,
     companyLogoMimeType,
-    intro: `Recebi da empresa ${companyName}, a título de empréstimo, para meu uso exclusivo, os equipamentos de proteção individual especificados neste termo, comprometendo-me a mantê-los em perfeito estado de conservação, ficando ciente de que:`,
+    intro: 'Declaro que realizei, nesta data, a verificação dos EPIs e itens de segurança indicados neste checklist antes do início da atividade.',
     clauses: [
-      'Se o equipamento for danificado ou inutilizado por emprego inadequado, mau uso, negligência ou extravio, a empresa me fornecerá novo equipamento e cobrará o valor de um equipamento da mesma marca ou equivalente ao da praça.',
-      'Em caso de dano, inutilização ou extravio do equipamento deverei comunicar imediatamente ao setor competente.',
-      'Terminando os serviços ou no caso de rescisão do contrato de trabalho, devolverei o equipamento completo e em perfeito estado de conservação, considerando-se o tempo do uso do mesmo, ao setor competente.',
-      'Estando os equipamentos em minha posse, estarei sujeito a inspeções sem prévio aviso.',
+      'A resposta “Sim” registra que o EPI ou item de segurança estava disponível ou atendia à verificação no momento do checklist.',
+      'A resposta “Não” ou “N/A” deve ser comunicada ao responsável antes do início da atividade, conforme aplicável.',
+      'As respostas e observações correspondem à situação encontrada no momento do registro.',
     ],
     legalText: TERM_LEGAL_TEXT,
     signerName: row.creator_name,
@@ -1896,6 +1937,7 @@ function publicEpiProcess(row, includeSignatureData = false) {
     media: media.map((item) => ({
       id: item.id,
       kind: item.kind,
+      itemKey: item.itemKey,
       mimeType: item.mimeType,
       byteSize: item.byteSize,
       sha256: item.sha256,
@@ -2007,6 +2049,7 @@ app.post('/api/epi/processes', auth, requireRole('tecnico'), async (req, res) =>
   const targetUserId = req.body.targetUserId === null || req.body.targetUserId === undefined || req.body.targetUserId === '' ? null : Number(req.body.targetUserId);
   const requestedItems = items.map((item) => ({
     ppeItemId: item.ppeItemId === null || item.ppeItemId === undefined || item.ppeItemId === '' ? null : Number(item.ppeItemId),
+    itemKey: cleanText(item.itemKey, 120),
     equipmentName: cleanText(item.equipmentName, 180),
     quantity: Number(item.quantity),
     ca: cleanText(item.ca, 80),
@@ -2017,6 +2060,15 @@ app.post('/api/epi/processes', auth, requireRole('tecnico'), async (req, res) =>
   if (!req.user.signature_data || !req.user.signature_hash) return res.status(400).json({ error: 'Cadastre sua assinatura padrão antes de iniciar um processo.' });
   if (!requestedItems.length || requestedItems.some((item) => !Number.isInteger(item.quantity) || item.quantity < 1)) {
     return res.status(400).json({ error: 'Informe pelo menos um EPI com quantidade válida.' });
+  }
+  if (processType === 'checklist_diario') {
+    const expectedKeys = EPI_DAILY_CHECKLIST_ITEMS.map((item) => item.key);
+    const submittedKeys = requestedItems.map((item) => item.itemKey);
+    const hasAllItems = expectedKeys.length === submittedKeys.length && expectedKeys.every((key) => submittedKeys.includes(key));
+    if (!hasAllItems) return res.status(400).json({ error: 'O checklist diário precisa conter todas as etapas padrão.' });
+    if (requestedItems.some((item) => !['sim', 'nao', 'na'].includes(String(item.condition).toLowerCase()))) {
+      return res.status(400).json({ error: 'Responda cada etapa do checklist diário com Sim, Não ou N/A.' });
+    }
   }
 
   const catalogById = new Map();
@@ -2030,6 +2082,22 @@ app.post('/api/epi/processes', auth, requireRole('tecnico'), async (req, res) =>
   }
   const normalizedItems = [];
   for (const item of requestedItems) {
+    if (processType === 'checklist_diario') {
+      const definition = EPI_DAILY_CHECKLIST_BY_KEY.get(item.itemKey);
+      const catalog = Number.isInteger(item.ppeItemId) ? catalogById.get(item.ppeItemId) : null;
+      if (!definition) return res.status(400).json({ error: 'Etapa de checklist diário inválida.' });
+      normalizedItems.push({
+        ppeItemId: catalog ? Number(catalog.id) : null,
+        equipmentName: definition.label,
+        quantity: 1,
+        ca: catalog?.ca || '',
+        condition: String(item.condition).toLowerCase(),
+        observation: item.observation,
+        itemKey: definition.key,
+        section: definition.section,
+      });
+      continue;
+    }
     let catalog = Number.isInteger(item.ppeItemId) ? catalogById.get(item.ppeItemId) : null;
     if (!catalog && (item.equipmentName || item.ca)) {
       const fallback = await pool.query(
@@ -2048,6 +2116,8 @@ app.post('/api/epi/processes', auth, requireRole('tecnico'), async (req, res) =>
       ca: catalog.ca || '',
       condition: item.condition,
       observation: item.observation,
+      itemKey: null,
+      section: null,
     });
   }
 
@@ -2086,9 +2156,9 @@ app.post('/api/epi/processes', auth, requireRole('tecnico'), async (req, res) =>
     processId = created.rows[0].id;
     for (const item of normalizedItems) {
       await client.query(
-        `INSERT INTO epi_process_items (process_id, ppe_item_id, equipment_name, quantity, ca, condition, observation)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [processId, item.ppeItemId, item.equipmentName, item.quantity, item.ca || null, item.condition || null, item.observation || null],
+        `INSERT INTO epi_process_items (process_id, ppe_item_id, equipment_name, quantity, ca, condition, observation, item_key, section)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [processId, item.ppeItemId, item.equipmentName, item.quantity, item.ca || null, item.condition || null, item.observation || null, item.itemKey || null, item.section || null],
       );
     }
     documentHash = sha256Json({
@@ -2142,12 +2212,18 @@ app.post('/api/epi/processes/:id/photos', auth, uploadRateLimit, async (req, res
   if (String(row.created_by) !== String(req.user.id)) return res.status(403).json({ error: 'Somente o usuário que iniciou o processo pode registrar as fotos.' });
   if (row.status !== 'aguarda_fotos') return res.status(409).json({ error: 'A etapa das fotos não está disponível para este processo.' });
   const photos = Array.isArray(req.body.photos) ? req.body.photos : [];
-  if (!photos.length || photos.length > 5) return res.status(400).json({ error: 'Envie de uma a cinco fotos capturadas pela câmera.' });
+  if ((!photos.length && row.process_type !== 'checklist_diario') || photos.length > 5) return res.status(400).json({ error: 'Envie até cinco fotos capturadas pela câmera.' });
   if (photos.some((photo) => photo?.captureMode !== 'camera')) return res.status(400).json({ error: 'As fotos precisam ser capturadas pela câmera no momento do registro.' });
+  if (row.process_type === 'checklist_diario') {
+    const validItemKeys = new Set((row.items || []).map((item) => item.itemKey).filter(Boolean));
+    const submittedItemKeys = photos.map((photo) => String(photo.itemKey || ''));
+    if (submittedItemKeys.some((itemKey) => !validItemKeys.has(itemKey))) return res.status(400).json({ error: 'Cada foto do checklist diário deve estar vinculada a uma etapa válida.' });
+    if (new Set(submittedItemKeys).size !== submittedItemKeys.length) return res.status(400).json({ error: 'Use no máximo uma foto por etapa do checklist diário.' });
+  }
   const media = [];
-  for (const photo of photos) media.push(await storeEpiProcessMedia({ req, processId: row.id, kind: 'epi_photo', imageData: photo.imageData, deviceInfo: req.body.deviceInfo, latitude: photo.latitude ?? req.body.latitude, longitude: photo.longitude ?? req.body.longitude }));
+  for (const photo of photos) media.push(await storeEpiProcessMedia({ req, processId: row.id, kind: 'epi_photo', itemKey: row.process_type === 'checklist_diario' ? photo.itemKey : null, imageData: photo.imageData, deviceInfo: req.body.deviceInfo, latitude: photo.latitude ?? req.body.latitude, longitude: photo.longitude ?? req.body.longitude }));
   await pool.query(`UPDATE epi_processes SET status = 'pendente_validacao', submitted_at = NOW() WHERE id = $1`, [row.id]);
-  await audit({ req, actorUserId: req.user.id, eventType: 'epi_process_photos_uploaded', entityType: 'epi_process', entityId: row.id, metadata: { mediaIds: media.map((item) => item.id), photoCount: media.length, captureMode: 'camera', signatureHash: row.signature_hash, documentHash: row.signature_document_hash, termVersion: row.term_version, coordinates: media.map((item) => ({ mediaId: item.id, latitude: item.latitude, longitude: item.longitude, locationLabel: item.location_label })) } });
+  await audit({ req, actorUserId: req.user.id, eventType: 'epi_process_photos_uploaded', entityType: 'epi_process', entityId: row.id, metadata: { mediaIds: media.map((item) => item.id), itemKeys: media.map((item) => item.item_key).filter(Boolean), photoCount: media.length, captureMode: 'camera', signatureHash: row.signature_hash, documentHash: row.signature_document_hash, termVersion: row.term_version, coordinates: media.map((item) => ({ mediaId: item.id, itemKey: item.item_key, latitude: item.latitude, longitude: item.longitude, locationLabel: item.location_label })) } });
   const recipientIds = [row.validator_user_id, row.target_user_id].filter((id) => id && String(id) !== String(req.user.id));
   if (recipientIds.length) await notifyUsers({ userIds: recipientIds, notificationType: 'epi_process_pending_validation', title: `${epiProcessTitle(row.process_type)} aguardando validação`, message: `${req.user.name} enviou um processo de EPI para sua validação.`, entityType: 'epi_process', entityId: row.id, metadata: { processType: row.process_type } });
   await notifyRoles({ roles: ['admin'], notificationType: 'epi_process_pending_validation', title: 'Processo de EPI aguardando validação', message: `${req.user.name} concluiu um processo de EPI e aguarda validação.`, entityType: 'epi_process', entityId: row.id, metadata: { processType: row.process_type, createdBy: req.user.id } });
@@ -2532,29 +2608,52 @@ function renderEpiProcessPdf(doc, process) {
   doc.font('Helvetica-Bold').fontSize(13).fillColor('#172033').text(legalText.title, { align: 'center' });
   doc.moveDown(.7);
 
-  if (processType === 'checklist_diario') {
-    pdfParagraph(doc, `Recebi da empresa ${companyName}, a título de empréstimo, para meu uso exclusivo, os equipamentos de proteção individual especificados neste termo, comprometendo-me a mantê-los em perfeito estado de conservação, ficando ciente de que:`);
-    [
-      'Se o equipamento for danificado ou inutilizado por emprego inadequado, mau uso, negligência ou extravio, a empresa me fornecerá novo equipamento e cobrará o valor de um equipamento da mesma marca ou equivalente ao da praça.',
-      'Em caso de dano, inutilização ou extravio do equipamento deverei comunicar imediatamente ao setor competente.',
-      'Terminando os serviços ou no caso de rescisão do contrato de trabalho, devolverei o equipamento completo e em perfeito estado de conservação, considerando-se o tempo do uso do mesmo, ao setor competente.',
-      'Estando os equipamentos em minha posse, estarei sujeito a inspeções sem prévio aviso.',
-    ].forEach((clause, index) => pdfParagraph(doc, `${index + 1}. ${clause}`));
-  } else {
-    (legalText.paragraphs || []).forEach((paragraph) => pdfParagraph(doc, paragraph));
-  }
+  (legalText.paragraphs || []).forEach((paragraph) => pdfParagraph(doc, paragraph));
 
   pdfEnsureSpace(doc, 55);
   doc.font('Helvetica').fontSize(9).fillColor('#172033').text(`Processo: #${process.id}    Responsável: ${process.creator_name || '–'}    Emissão: ${process.created_at ? new Date(process.created_at).toLocaleString('pt-BR') : '–'}`);
   if (process.validator_name) doc.text(`Validador designado: ${process.validator_name}`);
   if (process.target_name) doc.text(`Destinatário: ${process.target_name}`);
   doc.moveDown(.8);
-  pdfTermTable(doc, (process.items || []).map((item) => ({
-    equipment_name: item.equipmentName || '–',
-    quantity: item.quantity,
-    ca: item.ca || '–',
-    observation: `${String(item.condition || '').toUpperCase()}${item.observation ? ` · ${item.observation}` : ''}`,
-  })));
+  if (processType === 'checklist_diario') {
+    const dailyColumns = [
+      { label: 'Nº', width: 38, key: 'number' },
+      { label: 'EPI / item de segurança', width: 280, key: 'item' },
+      { label: 'Resposta', width: 62, key: 'response' },
+      { label: 'Observação', width: 110, key: 'observation' },
+    ];
+    const dailyItems = process.items || [];
+    const dailyGroups = [
+      { section: 'verificacao', title: '1. VERIFICAÇÃO DOS EPIs' },
+      { section: 'inspecao', title: '2. INSPEÇÃO ANTES DO INÍCIO DA ATIVIDADE' },
+    ];
+    const hasSections = dailyItems.some((item) => item.section);
+    const drawDailyRows = (items) => pdfTable(doc, dailyColumns, items.map((item) => ({
+      number: dailyItems.indexOf(item) + 1,
+      item: item.equipmentName || '–',
+      response: epiDailyResponseLabel(item.checkStatus || item.condition),
+      observation: item.observation || '–',
+    })));
+    if (hasSections) {
+      dailyGroups.forEach((group) => {
+        const items = dailyItems.filter((item) => item.section === group.section);
+        if (!items.length) return;
+        pdfEnsureSpace(doc, 38);
+        doc.font('Helvetica-Bold').fontSize(10).fillColor('#172033').text(group.title);
+        doc.moveDown(.25);
+        drawDailyRows(items);
+      });
+    } else {
+      drawDailyRows(dailyItems);
+    }
+  } else {
+    pdfTermTable(doc, (process.items || []).map((item) => ({
+      equipment_name: item.equipmentName || '–',
+      quantity: item.quantity,
+      ca: item.ca || '–',
+      observation: `${String(item.condition || '').toUpperCase()}${item.observation ? ` · ${item.observation}` : ''}`,
+    })));
+  }
 
   if (processType === 'checklist_diario') {
     pdfParagraph(doc, TERM_LEGAL_TEXT.clt);

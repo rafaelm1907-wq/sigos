@@ -449,6 +449,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .epi-wizard-item { grid-template-columns: 1fr; }
 .epi-wizard-item .wizard-item-heading, .epi-wizard-item .remove-item { grid-column: 1; }
 .epi-wizard-item .remove-item { width: max-content; }
+.epi-daily-wizard-item { gap: 12px; }
+.epi-daily-wizard-item .wizard-item-heading { display: grid; grid-template-columns: 1fr auto; align-items: center; }
+.epi-daily-wizard-item .wizard-item-heading .eyebrow, .epi-daily-wizard-item .wizard-item-heading .muted { grid-column: 1 / -1; }
+.epi-daily-question { margin: 0; color: #f4f7fb; font-size: 1.08rem; font-weight: 800; line-height: 1.4; }
+.epi-answer-group { display: flex; flex-wrap: wrap; gap: 9px; margin: 0; padding: 0; border: 0; }
+.epi-answer-group legend { width: 100%; margin-bottom: 1px; color: #9aa8c2; font-size: .82rem; }
+.epi-answer-option { display: flex; align-items: center; gap: 8px; min-width: 100px; padding: 10px 14px; border: 1px solid #33415e; border-radius: 10px; background: #0d162a; color: #dbeafe; cursor: pointer; }
+.epi-answer-option input { width: auto; min-height: 20px; margin: 0; }
+.epi-daily-photo-entry { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid rgba(148, 163, 184, .14); }
+.epi-daily-photo-entry .subheading { margin: 0; }
+.epi-daily-photo-preview { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-height: 40px; }
+.epi-daily-photo-preview img { display: block; width: min(100%, 280px); aspect-ratio: 4 / 3; object-fit: cover; border-radius: 10px; border: 1px solid rgba(148, 163, 184, .18); }
+.daily-checklist-table .daily-section-row th { padding-top: 10px; padding-bottom: 10px; color: #172033; background: #dbeafe; text-transform: uppercase; letter-spacing: .02em; }
+.daily-checklist-table th:first-child, .daily-checklist-table td:first-child { width: 44px; text-align: center; }
+.daily-checklist-table th:nth-child(3), .daily-checklist-table td:nth-child(3) { width: 82px; }
 .epi-step-card { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; padding: 16px; border-radius: 14px; border: 1px solid rgba(148, 163, 184, .14); background: rgba(7, 15, 31, .3); }
 .epi-step-card > :not(.step-number) { grid-column: 2; }
 .epi-step-card > .step-number { grid-row: span 2; }
