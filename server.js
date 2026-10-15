@@ -3649,10 +3649,12 @@ app.post('/api/stock/ppes', auth, requireRole('admin'), async (req, res) => {
   const category = cleanText(req.body.category, 100);
   const code = cleanText(req.body.code, 80) || `CA-${ca.replace(/[^A-Za-z0-9]+/g, '-')}`;
   const stockQuantity = Number(req.body.stockQuantity || 0);
-  const minimumStock = Number(req.body.minimumStock || 0);
+  const requestedMinimumStock = req.body.minimumStock === undefined || req.body.minimumStock === null || req.body.minimumStock === ''
+    ? null
+    : Number(req.body.minimumStock);
   if (!name || !ca) return res.status(400).json({ error: 'Informe o nome do EPI e o CA.' });
   if (id !== null && (!Number.isInteger(id) || id < 1)) return res.status(400).json({ error: 'EPI inválido.' });
-  if (!Number.isInteger(stockQuantity) || stockQuantity < 0 || !Number.isInteger(minimumStock) || minimumStock < 0) return res.status(400).json({ error: 'As quantidades de estoque precisam ser números inteiros não negativos.' });
+  if (!Number.isInteger(stockQuantity) || stockQuantity < 0 || (requestedMinimumStock !== null && (!Number.isInteger(requestedMinimumStock) || requestedMinimumStock < 0))) return res.status(400).json({ error: 'As quantidades de estoque precisam ser números inteiros não negativos.' });
   const client = await pool.connect();
   let result;
   let previousQuantity = 0;
@@ -3669,6 +3671,7 @@ app.post('/api/stock/ppes', auth, requireRole('admin'), async (req, res) => {
     if (existing.rows[0]) {
       itemId = Number(existing.rows[0].id);
       previousQuantity = Number(existing.rows[0].stock_quantity || 0);
+      const effectiveMinimumStock = requestedMinimumStock === null ? Number(existing.rows[0].minimum_stock || 0) : requestedMinimumStock;
       const assigned = await getAssignedQuantity(client, itemId);
       if (stockQuantity < assigned) {
         throw new StockConflictError(`A quantidade total não pode ficar abaixo dos ${assigned} EPI(s) atualmente em posse de usuários.`);
@@ -3678,14 +3681,15 @@ app.post('/api/stock/ppes', auth, requireRole('admin'), async (req, res) => {
          SET code = $1, name = $2, ca = $3, category = $4, stock_quantity = $5, minimum_stock = $6, active = TRUE
          WHERE id = $7
          RETURNING *`,
-        [code, name, ca, category || null, stockQuantity, minimumStock, itemId],
+        [code, name, ca, category || null, stockQuantity, effectiveMinimumStock, itemId],
       );
     } else {
+      const effectiveMinimumStock = requestedMinimumStock === null ? 0 : requestedMinimumStock;
       result = await client.query(
         `INSERT INTO ppe_items (code, name, ca, category, stock_quantity, minimum_stock, active)
          VALUES ($1, $2, $3, $4, $5, $6, TRUE)
          RETURNING *`,
-        [code, name, ca, category || null, stockQuantity, minimumStock],
+        [code, name, ca, category || null, stockQuantity, effectiveMinimumStock],
       );
       itemId = Number(result.rows[0].id);
     }
@@ -3710,7 +3714,7 @@ app.post('/api/stock/ppes', auth, requireRole('admin'), async (req, res) => {
       });
     }
     await client.query('COMMIT');
-    await audit({ req, actorUserId: req.user.id, eventType: id === null ? 'ppe_registered' : 'ppe_updated', entityType: 'ppe_item', entityId: result.rows[0].id, metadata: { code, name, ca, stockQuantity, minimumStock, previousQuantity } });
+    await audit({ req, actorUserId: req.user.id, eventType: id === null ? 'ppe_registered' : 'ppe_updated', entityType: 'ppe_item', entityId: result.rows[0].id, metadata: { code, name, ca, stockQuantity, minimumStock: result.rows[0].minimum_stock, previousQuantity } });
     res.status(201).json({ ppe: publicStockPpe(result.rows[0]) });
   } catch (error) {
     await client.query('ROLLBACK');

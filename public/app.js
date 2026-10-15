@@ -743,7 +743,6 @@ async function loadStock() {
     $('#stock-ppe-ca').value = ppe.ca || '';
     $('#stock-ppe-category').value = ppe.category || '';
     $('#stock-ppe-quantity').value = ppe.stockQuantity ?? 0;
-    $('#stock-ppe-minimum').value = ppe.minimumStock ?? 0;
     $('#stock-ppe-cancel').classList.remove('hidden');
     $('#stock-ppe-message').textContent = 'Editando EPI do catálogo.';
     $('#stock-ppe-name').focus();
@@ -757,7 +756,6 @@ function resetStockPpeForm() {
   $('#stock-ppe-form').reset();
   $('#stock-ppe-id').value = '';
   $('#stock-ppe-code').value = '';
-  $('#stock-ppe-minimum').value = 0;
   $('#stock-ppe-cancel').classList.add('hidden');
 }
 
@@ -1251,7 +1249,7 @@ $('#stock-ppe-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const message = $('#stock-ppe-message');
   try {
-    await api('/api/stock/ppes', { method: 'POST', body: JSON.stringify({ id: $('#stock-ppe-id').value || null, code: $('#stock-ppe-code').value || null, name: $('#stock-ppe-name').value, ca: $('#stock-ppe-ca').value, category: $('#stock-ppe-category').value, stockQuantity: $('#stock-ppe-quantity').value, minimumStock: $('#stock-ppe-minimum').value }) });
+    await api('/api/stock/ppes', { method: 'POST', body: JSON.stringify({ id: $('#stock-ppe-id').value || null, code: $('#stock-ppe-code').value || null, name: $('#stock-ppe-name').value, ca: $('#stock-ppe-ca').value, category: $('#stock-ppe-category').value, stockQuantity: $('#stock-ppe-quantity').value }) });
     resetStockPpeForm(); message.textContent = 'EPI salvo no catálogo.'; await loadStock();
   } catch (error) { message.textContent = error.message; }
 });
