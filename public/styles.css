@@ -178,6 +178,9 @@ textarea { width: 100%; min-height: 68px; resize: vertical; border: 1px solid #3
 .vehicle-photo-entry { margin-top: 14px; padding: 18px; border-radius: 14px; background: rgba(7, 15, 31, .34); }
 .vehicle-photo-entry .subheading { margin-top: 0; }
 .vehicle-step { display: grid; gap: 14px; min-width: 0; }
+.vehicle-checklist-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.vehicle-checklist-option { background: rgba(30, 58, 95, .45); color: #cbd5e1; }
+.vehicle-checklist-option.active { background: #34d399; color: #062218; }
 .vehicle-selected-card, .vehicle-wizard-progress, .vehicle-wizard-item { display: grid; gap: 8px; padding: 14px; border: 1px solid rgba(148, 163, 184, .14); border-radius: 12px; background: rgba(7, 15, 31, .3); }
 .vehicle-selected-card strong { font-size: 1.05rem; }
 .vehicle-final-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
@@ -464,6 +467,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .epi-wizard-item .remove-item { width: 100%; }
   .vehicle-wizard-fields { grid-template-columns: 1fr; }
   .vehicle-wizard-fields label:nth-child(n + 3) { grid-column: auto; }
+  .vehicle-checklist-options { grid-template-columns: 1fr; }
   .vehicle-final-heading { flex-direction: column; }
   .vehicle-final-heading button { width: 100%; }
   .wizard-navigation { grid-template-columns: 1fr 1fr; }

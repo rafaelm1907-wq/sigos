@@ -18,6 +18,14 @@ const vehicleItems = [
   ['limpador_parabrisa', 'LIMPADOR DE PARA-BRISA'], ['painel', 'PAINEL'], ['luz_painel', 'LUZ DO PAINEL'], ['alarme', 'ALARME'], ['chave', 'CHAVE'], ['freio_mao', 'FREIO DE MÃO'], ['antena', 'ANTENA'], ['som', 'SOM'], ['volante_freio', 'VOLANTE / FREIO'], ['quebra_sol_esquerdo', 'QUEBRA-SOL ESQUERDO'], ['quebra_sol_direito', 'QUEBRA-SOL DIREITO'], ['farol_dianteiro_esquerdo', 'FAROL DIANTEIRO ESQUERDO'], ['farol_dianteiro_direito', 'FAROL DIANTEIRO DIREITO'], ['banco', 'BANCO'], ['cambio', 'CÂMBIO'],
 ];
 
+const vehicleDailyItems = [
+  ['esquerda', 'LADO ESQUERDO'],
+  ['direita', 'LADO DIREITO'],
+  ['frente', 'FRENTE'],
+  ['traseira', 'TRASEIRA'],
+  ['interna', 'PARTE INTERNA'],
+];
+
 const roleLabels = { admin: 'Administrador', tecnico: 'Técnico', vistoriador: 'Vistoriador' };
 const eventLabels = {
   login_success: 'Login realizado',
@@ -61,6 +69,7 @@ let vehicleWizardIndex = 0;
 let vehicleWizardDraft = [];
 let vehicleSelfieDraft = null;
 let vehiclePhotoCaptureItemKey = null;
+let selectedVehicleChecklistType = null;
 let onboardingSignatureCanvas = null;
 let onboardingLocation = { latitude: null, longitude: null };
 let selectedEpiProcessType = null;
@@ -821,7 +830,7 @@ function stockProcessLabel(movement) {
 function renderStockVehicleIntegrity(vehicle) {
   const items = vehicle.integrityItems || [];
   const content = vehicle.lastChecklistId && items.length
-    ? `<small class="table-subtext">Último checklist: ${escapeHtml(formatDate(vehicle.lastChecklistAt))}</small><div class="vehicle-integrity-list">${items.map((item) => `<div class="vehicle-integrity-item"><strong>${escapeHtml(item.itemName)}</strong><span>Estado: ${escapeHtml(vehicleStatusLabel(item.afterStatus || item.beforeStatus))}</span>${item.beforeStatus !== item.afterStatus ? `<small>Antes: ${escapeHtml(vehicleStatusLabel(item.beforeStatus))} · Depois: ${escapeHtml(vehicleStatusLabel(item.afterStatus))}</small>` : ''}${item.afterDescription || item.beforeDescription ? `<small>Descrição: ${escapeHtml(item.afterDescription || item.beforeDescription)}</small>` : ''}</div>`).join('')}</div>`
+    ? `<small class="table-subtext">${escapeHtml(vehicle.lastChecklistType === 'diario' ? 'Checklist diário' : 'Checklist quinzenal')} · ${escapeHtml(formatDate(vehicle.lastChecklistAt))}</small><div class="vehicle-integrity-list">${items.map((item) => `<div class="vehicle-integrity-item"><strong>${escapeHtml(item.itemName)}</strong><span>Estado: ${escapeHtml(vehicleStatusLabel(item.afterStatus || item.beforeStatus))}</span>${item.beforeStatus !== item.afterStatus ? `<small>Antes: ${escapeHtml(vehicleStatusLabel(item.beforeStatus))} · Depois: ${escapeHtml(vehicleStatusLabel(item.afterStatus))}</small>` : ''}${item.afterDescription || item.beforeDescription ? `<small>Descrição: ${escapeHtml(item.afterDescription || item.beforeDescription)}</small>` : ''}</div>`).join('')}</div>`
     : '<span class="muted">Nenhum checklist lançado para este veículo.</span>';
   return `<details class="vehicle-integrity-details"><summary>Integridade</summary><div class="vehicle-integrity-content">${content}</div></details>`;
 }
@@ -903,6 +912,26 @@ function updateVehicleDescriptionCell(row, side) {
   if (!hasProblem) description.value = '';
 }
 
+function vehicleChecklistDefinition() {
+  return selectedVehicleChecklistType === 'diario' ? vehicleDailyItems : vehicleItems;
+}
+
+function vehicleChecklistTypeLabel(type = selectedVehicleChecklistType) {
+  return type === 'diario' ? 'Checklist diário' : 'Checklist quinzenal';
+}
+
+function vehicleExtraPhotoCount() {
+  return vehiclePhotoDrafts.filter((photo) => !photo.itemKey).length;
+}
+
+function setVehicleChecklistType(type) {
+  if (!['diario', 'quinzenal'].includes(type)) return;
+  selectedVehicleChecklistType = type;
+  document.querySelectorAll('[data-vehicle-checklist-type]').forEach((button) => button.classList.toggle('active', button.dataset.vehicleChecklistType === type));
+  $('#vehicle-start-message').textContent = `${vehicleChecklistTypeLabel()} selecionado. Agora escolha o veículo.`;
+  resetVehicleWizard();
+}
+
 function initializeVehicleWizardDom() {
   const form = $('#vehicle-checklist-form');
   if (!form || $('#vehicle-start-step')) return;
@@ -912,7 +941,7 @@ function initializeVehicleWizardDom() {
   const signature = form.querySelector('.vehicle-signature-entry');
   const photo = form.querySelector('.vehicle-photo-entry');
   const submitActions = [...form.children].find((child) => child.classList.contains('form-actions'));
-  form.insertAdjacentHTML('afterbegin', '<div id="vehicle-start-step" class="vehicle-step"><div class="subheading"><h3>Escolha o veículo</h3></div><label>Veículo<select id="vehicle-select"><option value="">Carregando veículos...</option></select></label><div class="form-actions"><button id="vehicle-start-checklist" type="button">Iniciar checklist</button><span id="vehicle-start-message" class="muted"></span></div></div><div id="vehicle-checklist-step" class="vehicle-step hidden"><div class="vehicle-selected-card"><strong id="vehicle-selected-title">Veículo selecionado</strong><span id="vehicle-selected-details" class="muted"></span></div><label>Quilometragem (opcional)<input id="vehicle-wizard-mileage" type="number" min="0" placeholder="Quilometragem atual" /></label><div class="vehicle-wizard-progress"><strong id="vehicle-wizard-counter">Item 1</strong><span>Faça a conferência antes e depois e avance.</span><div class="wizard-progress-track"><span id="vehicle-wizard-progress-bar"></span></div></div><div id="vehicle-item-wizard"></div><div class="wizard-navigation"><button id="vehicle-item-back" type="button" class="secondary small-button">Anterior</button><span id="vehicle-item-message" class="muted"></span><button id="vehicle-item-next" type="button" class="small-button">Próximo item</button></div></div>');
+  form.insertAdjacentHTML('afterbegin', '<div id="vehicle-start-step" class="vehicle-step"><div class="subheading"><h3>Tipo de checklist</h3></div><div class="vehicle-checklist-options" role="tablist" aria-label="Tipo de checklist de veículo"><button type="button" class="vehicle-checklist-option" data-vehicle-checklist-type="diario">Checklist Diário</button><button type="button" class="vehicle-checklist-option" data-vehicle-checklist-type="quinzenal">Checklist Quinzenal</button></div><label>Veículo<select id="vehicle-select"><option value="">Carregando veículos...</option></select></label><div class="form-actions"><button id="vehicle-start-checklist" type="button">Iniciar checklist</button><span id="vehicle-start-message" class="muted">Escolha o tipo e o veículo para iniciar.</span></div></div><div id="vehicle-checklist-step" class="vehicle-step hidden"><div class="vehicle-selected-card"><strong id="vehicle-selected-title">Veículo selecionado</strong><span id="vehicle-selected-details" class="muted"></span></div><label id="vehicle-mileage-field">Quilometragem (opcional)<input id="vehicle-wizard-mileage" type="number" min="0" placeholder="Quilometragem atual" /></label><div class="vehicle-wizard-progress"><strong id="vehicle-wizard-counter">Item 1</strong><span id="vehicle-wizard-instruction">Faça a conferência e avance.</span><div class="wizard-progress-track"><span id="vehicle-wizard-progress-bar"></span></div></div><div id="vehicle-item-wizard"></div><div class="wizard-navigation"><button id="vehicle-item-back" type="button" class="secondary small-button">Anterior</button><span id="vehicle-item-message" class="muted"></span><button id="vehicle-item-next" type="button" class="small-button">Próximo item</button></div></div>');
   meta?.classList.add('hidden');
   legend?.classList.add('hidden');
   table?.classList.add('hidden');
@@ -927,6 +956,7 @@ function initializeVehicleWizardDom() {
   form.append(finalStep);
   const submitButton = submitActions?.querySelector('button[type="submit"]');
   if (submitButton) submitButton.textContent = 'Enviar checklist';
+  document.querySelectorAll('[data-vehicle-checklist-type]').forEach((button) => button.addEventListener('click', () => setVehicleChecklistType(button.dataset.vehicleChecklistType)));
   $('#vehicle-start-checklist').addEventListener('click', startVehicleChecklist);
   $('#vehicle-item-back').addEventListener('click', () => {
     saveVehicleWizardItem();
@@ -934,6 +964,12 @@ function initializeVehicleWizardDom() {
   });
   $('#vehicle-item-next').addEventListener('click', () => {
     saveVehicleWizardItem();
+    const currentItem = vehicleWizardDraft[vehicleWizardIndex];
+    if (!currentItem || !vehiclePhotoDrafts.some((photo) => photo.itemKey === currentItem.itemKey)) {
+      $('#vehicle-item-message').textContent = `Capture a foto obrigatória de ${currentItem?.itemName || 'este item'} antes de continuar.`;
+      return;
+    }
+    $('#vehicle-item-message').textContent = '';
     if (vehicleWizardIndex < vehicleWizardDraft.length - 1) { vehicleWizardIndex += 1; renderVehicleWizardItem(); return; }
     $('#vehicle-checklist-step').classList.add('hidden');
     $('#vehicle-final-step').classList.remove('hidden');
@@ -964,12 +1000,16 @@ function startVehicleChecklist() {
   const selectedId = $('#vehicle-select')?.value;
   const vehicle = vehicleCatalog.find((item) => String(item.id) === String(selectedId));
   const message = $('#vehicle-start-message');
+  if (!selectedVehicleChecklistType) {
+    if (message) message.textContent = 'Escolha o tipo de checklist antes de iniciar.';
+    return;
+  }
   if (!vehicle) {
     if (message) message.textContent = 'Selecione um veículo antes de iniciar.';
     return;
   }
   vehicleWizardIndex = 0;
-  vehicleWizardDraft = vehicleItems.map(([itemKey, itemName]) => ({ itemKey, itemName, beforeStatus: 'ok', beforeDescription: '', afterStatus: 'ok', afterDescription: '' }));
+  vehicleWizardDraft = vehicleChecklistDefinition().map(([itemKey, itemName]) => ({ itemKey, itemName, beforeStatus: 'ok', beforeDescription: '', afterStatus: 'ok', afterDescription: '' }));
   vehiclePhotoDrafts = [];
   vehicleSelfieDraft = null;
   vehiclePhotoCaptureItemKey = null;
@@ -977,7 +1017,9 @@ function startVehicleChecklist() {
   $('#vehicle-model').value = vehicle.model || '';
   $('#vehicle-year').value = vehicle.year || '';
   $('#vehicle-selected-title').textContent = `${vehicle.plate} · ${vehicle.model || 'Modelo não informado'}`;
-  $('#vehicle-selected-details').textContent = [vehicle.year, vehicle.color].filter(Boolean).join(' · ') || 'Veículo selecionado';
+  $('#vehicle-selected-details').textContent = [vehicleChecklistTypeLabel(), vehicle.year, vehicle.color].filter(Boolean).join(' · ') || 'Veículo selecionado';
+  $('#vehicle-mileage-field').classList.toggle('hidden', selectedVehicleChecklistType === 'diario');
+  $('#vehicle-wizard-instruction').textContent = selectedVehicleChecklistType === 'diario' ? 'Marque OK ou Não OK, registre uma observação se quiser e capture a foto.' : 'Confira antes e depois, registre a descrição quando necessário e capture a foto.';
   $('#vehicle-start-step').classList.add('hidden');
   $('#vehicle-final-step').classList.add('hidden');
   $('#vehicle-checklist-step').classList.remove('hidden');
@@ -1002,7 +1044,7 @@ async function loadVehicleCatalog() {
 
 function resetVehicleWizard() {
   vehicleWizardIndex = 0;
-  vehicleWizardDraft = vehicleItems.map(([itemKey, itemName]) => ({ itemKey, itemName, beforeStatus: 'ok', beforeDescription: '', afterStatus: 'ok', afterDescription: '' }));
+  vehicleWizardDraft = [];
   vehiclePhotoDrafts = [];
   vehicleSelfieDraft = null;
   vehiclePhotoCaptureItemKey = null;
@@ -1010,6 +1052,7 @@ function resetVehicleWizard() {
   $('#vehicle-checklist-step')?.classList.add('hidden');
   $('#vehicle-final-step')?.classList.add('hidden');
   $('#vehicle-wizard-mileage').value = '';
+  $('#vehicle-item-wizard').innerHTML = '';
   renderVehicleWizardItem();
   renderVehiclePhotoDrafts();
   if ($('#vehicle-selfie-preview')) $('#vehicle-selfie-preview').innerHTML = '';
@@ -1018,6 +1061,8 @@ function resetVehicleWizard() {
 
 function renderVehicleEditor() {
   initializeVehicleWizardDom();
+  selectedVehicleChecklistType = null;
+  document.querySelectorAll('[data-vehicle-checklist-type]').forEach((button) => button.classList.remove('active'));
   resetVehicleWizard();
   populateVehicleCatalog();
 }
@@ -1026,6 +1071,12 @@ function saveVehicleWizardItem() {
   const card = $('#vehicle-item-wizard .vehicle-wizard-item');
   const item = vehicleWizardDraft[vehicleWizardIndex];
   if (!card || !item) return;
+  if (selectedVehicleChecklistType === 'diario') {
+    const status = card.querySelector('[data-side="daily-status"]').value;
+    const observation = card.querySelector('[data-side="daily-description"]').value;
+    vehicleWizardDraft[vehicleWizardIndex] = { ...item, beforeStatus: status, beforeDescription: observation, afterStatus: status, afterDescription: observation };
+    return;
+  }
   const beforeStatus = card.querySelector('[data-side="before-status"]').value;
   const afterStatus = card.querySelector('[data-side="after-status"]').value;
   vehicleWizardDraft[vehicleWizardIndex] = { ...item, beforeStatus, beforeDescription: beforeStatus === 'ok' ? '' : card.querySelector('[data-side="before-description"]').value, afterStatus, afterDescription: afterStatus === 'ok' ? '' : card.querySelector('[data-side="after-description"]').value };
@@ -1036,12 +1087,21 @@ function renderVehicleWizardItem() {
   const item = vehicleWizardDraft[vehicleWizardIndex];
   if (!container || !item) return;
   const photoCount = vehiclePhotoDrafts.filter((photo) => photo.itemKey === item.itemKey).length;
-  container.innerHTML = `<div class="vehicle-wizard-item"><div class="wizard-item-heading"><strong>${escapeHtml(item.itemName)}</strong><span class="muted">Item ${vehicleWizardIndex + 1} de ${vehicleWizardDraft.length}</span></div><div class="vehicle-wizard-fields"><label>Antes<select data-side="before-status"><option value="ok" ${item.beforeStatus === 'ok' ? 'selected' : ''}>OK</option><option value="defeito" ${item.beforeStatus === 'defeito' ? 'selected' : ''}>Com defeito</option><option value="quebrado" ${item.beforeStatus === 'quebrado' ? 'selected' : ''}>Quebrado</option></select></label><label>Depois<select data-side="after-status"><option value="ok" ${item.afterStatus === 'ok' ? 'selected' : ''}>OK</option><option value="defeito" ${item.afterStatus === 'defeito' ? 'selected' : ''}>Com defeito</option><option value="quebrado" ${item.afterStatus === 'quebrado' ? 'selected' : ''}>Quebrado</option></select></label><label data-description-wrap="before" class="hidden">Descrição antes<textarea data-side="before-description" maxlength="500">${escapeHtml(item.beforeDescription)}</textarea></label><label data-description-wrap="after" class="hidden">Descrição depois<textarea data-side="after-description" maxlength="500">${escapeHtml(item.afterDescription)}</textarea></label></div><button id="vehicle-item-photo-button" type="button" class="secondary">${photoCount ? `Capturar outra foto (${photoCount})` : 'Capturar foto deste item'}</button><div id="vehicle-item-camera" class="hidden"><video id="vehicle-item-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-item-take-photo" type="button">Capturar foto</button><button id="vehicle-item-cancel-photo" type="button" class="secondary">Cancelar</button></div></div><p id="vehicle-item-photo-message" class="muted" aria-live="polite">${photoCount ? `${photoCount} foto(s) deste item preparada(s).` : 'Foto opcional.'}</p></div>`;
-  const updateDescription = (side) => { const status = container.querySelector(`[data-side="${side}-status"]`); container.querySelector(`[data-description-wrap="${side}"]`).classList.toggle('hidden', status.value === 'ok'); };
-  ['before', 'after'].forEach((side) => { container.querySelector(`[data-side="${side}-status"]`).addEventListener('change', () => { updateDescription(side); saveVehicleWizardItem(); }); updateDescription(side); });
+  const isDaily = selectedVehicleChecklistType === 'diario';
+  const fields = isDaily
+    ? `<label>Status<select data-side="daily-status"><option value="ok" ${item.beforeStatus === 'ok' ? 'selected' : ''}>OK</option><option value="defeito" ${item.beforeStatus === 'defeito' ? 'selected' : ''}>Não OK</option></select></label><label>Observação (opcional)<textarea data-side="daily-description" maxlength="500" placeholder="Descreva uma irregularidade, se quiser">${escapeHtml(item.beforeDescription)}</textarea></label>`
+    : `<label>Antes<select data-side="before-status"><option value="ok" ${item.beforeStatus === 'ok' ? 'selected' : ''}>OK</option><option value="defeito" ${item.beforeStatus === 'defeito' ? 'selected' : ''}>Com defeito</option><option value="quebrado" ${item.beforeStatus === 'quebrado' ? 'selected' : ''}>Quebrado</option></select></label><label>Depois<select data-side="after-status"><option value="ok" ${item.afterStatus === 'ok' ? 'selected' : ''}>OK</option><option value="defeito" ${item.afterStatus === 'defeito' ? 'selected' : ''}>Com defeito</option><option value="quebrado" ${item.afterStatus === 'quebrado' ? 'selected' : ''}>Quebrado</option></select></label><label data-description-wrap="before" class="hidden">Descrição antes<textarea data-side="before-description" maxlength="500">${escapeHtml(item.beforeDescription)}</textarea></label><label data-description-wrap="after" class="hidden">Descrição depois<textarea data-side="after-description" maxlength="500">${escapeHtml(item.afterDescription)}</textarea></label>`;
+  container.innerHTML = `<div class="vehicle-wizard-item"><div class="wizard-item-heading"><strong>${escapeHtml(item.itemName)}</strong><span class="muted">Item ${vehicleWizardIndex + 1} de ${vehicleWizardDraft.length}</span></div><div class="vehicle-wizard-fields">${fields}</div><button id="vehicle-item-photo-button" type="button" class="secondary">${photoCount ? 'Refazer foto deste item' : 'Capturar foto deste item'}</button><div id="vehicle-item-camera" class="hidden"><video id="vehicle-item-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-item-take-photo" type="button">Capturar foto</button><button id="vehicle-item-cancel-photo" type="button" class="secondary">Cancelar</button></div></div><p id="vehicle-item-photo-message" class="muted" aria-live="polite">${photoCount ? 'Foto deste item preparada.' : 'A foto deste item é obrigatória.'}</p></div>`;
+  if (isDaily) {
+    container.querySelector('[data-side="daily-status"]').addEventListener('change', saveVehicleWizardItem);
+    container.querySelector('[data-side="daily-description"]').addEventListener('input', saveVehicleWizardItem);
+  } else {
+    const updateDescription = (side) => { const status = container.querySelector(`[data-side="${side}-status"]`); container.querySelector(`[data-description-wrap="${side}"]`).classList.toggle('hidden', status.value === 'ok'); };
+    ['before', 'after'].forEach((side) => { container.querySelector(`[data-side="${side}-status"]`).addEventListener('change', () => { updateDescription(side); saveVehicleWizardItem(); }); updateDescription(side); });
+  }
   container.querySelector('#vehicle-item-photo-button').addEventListener('click', () => { vehiclePhotoCaptureItemKey = item.itemKey; container.querySelector('#vehicle-item-camera').classList.remove('hidden'); openEpiCamera('#vehicle-item-video', '#vehicle-item-photo-message', 'environment'); });
   container.querySelector('#vehicle-item-cancel-photo').addEventListener('click', () => { stopEpiCamera('#vehicle-item-video'); container.querySelector('#vehicle-item-camera').classList.add('hidden'); });
-  container.querySelector('#vehicle-item-take-photo').addEventListener('click', () => { const imageData = captureVideoFrame('#vehicle-item-video'); if (!imageData) { container.querySelector('#vehicle-item-photo-message').textContent = 'A câmera ainda não está pronta.'; return; } if (vehiclePhotoDrafts.length >= 10) { container.querySelector('#vehicle-item-photo-message').textContent = 'O limite de dez fotos foi atingido.'; return; } vehiclePhotoDrafts.push({ imageData, itemKey: vehiclePhotoCaptureItemKey }); stopEpiCamera('#vehicle-item-video'); renderVehicleWizardItem(); });
+  container.querySelector('#vehicle-item-take-photo').addEventListener('click', () => { const imageData = captureVideoFrame('#vehicle-item-video'); if (!imageData) { container.querySelector('#vehicle-item-photo-message').textContent = 'A câmera ainda não está pronta.'; return; } const existingIndex = vehiclePhotoDrafts.findIndex((photo) => photo.itemKey === vehiclePhotoCaptureItemKey); const photo = { imageData, itemKey: vehiclePhotoCaptureItemKey }; if (existingIndex >= 0) vehiclePhotoDrafts[existingIndex] = photo; else vehiclePhotoDrafts.push(photo); stopEpiCamera('#vehicle-item-video'); renderVehicleWizardItem(); renderVehiclePhotoDrafts(); });
   $('#vehicle-wizard-counter').textContent = `Item ${vehicleWizardIndex + 1} de ${vehicleWizardDraft.length}`;
   $('#vehicle-wizard-progress-bar').style.width = `${((vehicleWizardIndex + 1) / vehicleWizardDraft.length) * 100}%`;
   $('#vehicle-item-back').disabled = vehicleWizardIndex === 0;
@@ -1056,7 +1116,7 @@ function readVehicleEditor() {
 function renderVehicleSummary(checklist, includeAction = false) {
   const problems = checklist.items.filter((item) => item.beforeStatus !== 'ok' || item.afterStatus !== 'ok').length;
   const action = includeAction ? `<button type="button" class="secondary small-button vehicle-open" data-vehicle-id="${checklist.id}">Abrir</button>` : '';
-  return `<div class="vehicle-list-item"><div><strong>${escapeHtml(checklist.plate)} · ${escapeHtml(checklist.model || 'Modelo não informado')}</strong><small>${escapeHtml(checklist.driverName || 'Técnico não informado')} · ${escapeHtml(formatDate(checklist.createdAt))} · ${problems} ocorrência(s)</small></div><div class="vehicle-list-actions"><span class="status status-${escapeHtml(checklist.status)}">${escapeHtml({ pendente_validacao: 'Aguardando validação', validado: 'Validado', reprovado: 'Reprovado', rascunho: 'Rascunho' }[checklist.status] || checklist.status)}</span>${action}</div></div>`;
+  return `<div class="vehicle-list-item"><div><strong>${escapeHtml(checklist.plate)} · ${escapeHtml(checklist.model || 'Modelo não informado')}</strong><small>${escapeHtml(checklist.checklistType === 'diario' ? 'Checklist diário' : 'Checklist quinzenal')} · ${escapeHtml(checklist.driverName || 'Técnico não informado')} · ${escapeHtml(formatDate(checklist.createdAt))} · ${problems} ocorrência(s)</small></div><div class="vehicle-list-actions"><span class="status status-${escapeHtml(checklist.status)}">${escapeHtml({ pendente_validacao: 'Aguardando validação', validado: 'Validado', reprovado: 'Reprovado', rascunho: 'Rascunho' }[checklist.status] || checklist.status)}</span>${action}</div></div>`;
 }
 
 async function loadVehicleChecklists() {
@@ -1085,10 +1145,14 @@ function renderVehicleDetail(checklist, containerSelector, canValidate) {
   const container = $(containerSelector);
   if (!container) return;
   container.classList.remove('hidden');
+  const isDaily = checklist.checklistType === 'diario';
   const requiresValidationSignature = currentUser?.role !== 'admin';
   const validationControls = canValidate && checklist.status === 'pendente_validacao' ? `<div class="validation-controls">${requiresValidationSignature ? `<div class="epi-signature-preview"><img src="${escapeHtml(currentUser?.signatureData || '')}" alt="Assinatura padrão do responsável pela validação" /></div><label class="consent-check"><input id="vehicle-validation-signature-confirm" type="checkbox" /> Confirmo o uso da minha assinatura padrão nesta validação.</label>` : '<p class="muted">A validação administrativa registra a decisão e a auditoria sem assinatura do administrador.</p>'}<div class="signature-actions"><button id="vehicle-validation-capture-location" type="button" class="secondary">Capturar localização</button></div><textarea id="validation-notes" maxlength="700" placeholder="Observação da validação (opcional)"></textarea><div class="signature-actions"><button id="approve-vehicle" type="button">Validar vistoria</button><button id="reject-vehicle" type="button" class="danger-button">Reprovar vistoria</button></div><p id="validation-message" class="muted">${requiresValidationSignature ? 'A assinatura padrão e a localização serão registradas na validação.' : 'A decisão, data, IP, dispositivo e localização disponível serão registrados.'}</p></div>` : '';
-  const media = (checklist.media || []).map((item) => { const isSelfie = item.kind === 'selfie'; const itemName = vehicleItems.find(([key]) => key === item.itemKey)?.[1]; const label = isSelfie ? 'Selfie do checklist' : itemName ? `Foto · ${itemName}` : 'Foto geral do veículo'; return `<figure class="epi-process-media-item"><img src="/api/vehicles/checklists/${checklist.id}/media/${item.id}" alt="${escapeHtml(label)}" loading="lazy" /><figcaption><strong>${escapeHtml(label)}</strong><span>Data/hora: ${escapeHtml(formatDate(item.createdAt))}</span><span>IP: ${escapeHtml(item.ipAddress || 'Não informado')}</span><span>Navegador: ${escapeHtml(browserLabel(item.userAgent || item.deviceInfo))}</span><span>Dispositivo: ${escapeHtml(deviceLabel(item.userAgent || item.deviceInfo))}</span><span>Cidade: ${escapeHtml(formatMediaLocation(item))}</span><span>Coordenadas: ${escapeHtml(formatMediaCoordinates(item))}</span></figcaption></figure>`; }).join('');
-  container.innerHTML = `<div class="vehicle-detail-card"><div class="section-heading"><div><div class="eyebrow">CHECKLIST #${checklist.id}</div><h3>${escapeHtml(checklist.plate)} · ${escapeHtml(checklist.model || '')}</h3><p class="muted">Técnico: ${escapeHtml(checklist.driverName || '–')} · ${escapeHtml(formatDate(checklist.createdAt))}</p></div><span class="status status-${escapeHtml(checklist.status)}">${escapeHtml({ pendente_validacao: 'Aguardando validação', validado: 'Validado', reprovado: 'Reprovado' }[checklist.status] || checklist.status)}</span></div><div class="table-wrap"><table class="vehicle-detail-table"><thead><tr><th>Item</th><th>Antes</th><th>Descrição</th><th>Depois</th><th>Descrição</th></tr></thead><tbody>${checklist.items.map((item) => `<tr><td>${escapeHtml(item.itemName)}</td><td>${escapeHtml(vehicleStatusLabel(item.beforeStatus))}</td><td>${escapeHtml(item.beforeDescription || '–')}</td><td>${escapeHtml(vehicleStatusLabel(item.afterStatus))}</td><td>${escapeHtml(item.afterDescription || '–')}</td></tr>`).join('')}</tbody></table></div>${checklist.validationNotes ? `<p class="validation-note"><b>Observação do vistoriador:</b> ${escapeHtml(checklist.validationNotes)}</p>` : ''}${media ? `<section class="vehicle-checklist-media"><h4>Fotos registradas</h4><div class="epi-process-media">${media}</div></section>` : ''}${renderVehicleSignatures(checklist)}${validationControls}</div>`;
+  const media = (checklist.media || []).map((item) => { const isSelfie = item.kind === 'selfie'; const itemName = [...vehicleItems, ...vehicleDailyItems].find(([key]) => key === item.itemKey)?.[1]; const label = isSelfie ? 'Selfie do checklist' : itemName ? `Foto · ${itemName}` : 'Foto extra do veículo'; return `<figure class="epi-process-media-item"><img src="/api/vehicles/checklists/${checklist.id}/media/${item.id}" alt="${escapeHtml(label)}" loading="lazy" /><figcaption><strong>${escapeHtml(label)}</strong><span>Data/hora: ${escapeHtml(formatDate(item.createdAt))}</span><span>IP: ${escapeHtml(item.ipAddress || 'Não informado')}</span><span>Navegador: ${escapeHtml(browserLabel(item.userAgent || item.deviceInfo))}</span><span>Dispositivo: ${escapeHtml(deviceLabel(item.userAgent || item.deviceInfo))}</span><span>Cidade: ${escapeHtml(formatMediaLocation(item))}</span><span>Coordenadas: ${escapeHtml(formatMediaCoordinates(item))}</span></figcaption></figure>`; }).join('');
+  const table = isDaily
+    ? `<table class="vehicle-detail-table"><thead><tr><th>Ponto</th><th>Status</th><th>Observação</th></tr></thead><tbody>${checklist.items.map((item) => `<tr><td>${escapeHtml(item.itemName)}</td><td>${escapeHtml(vehicleStatusLabel(item.beforeStatus))}</td><td>${escapeHtml(item.beforeDescription || '–')}</td></tr>`).join('')}</tbody></table>`
+    : `<table class="vehicle-detail-table"><thead><tr><th>Item</th><th>Antes</th><th>Descrição</th><th>Depois</th><th>Descrição</th></tr></thead><tbody>${checklist.items.map((item) => `<tr><td>${escapeHtml(item.itemName)}</td><td>${escapeHtml(vehicleStatusLabel(item.beforeStatus))}</td><td>${escapeHtml(item.beforeDescription || '–')}</td><td>${escapeHtml(vehicleStatusLabel(item.afterStatus))}</td><td>${escapeHtml(item.afterDescription || '–')}</td></tr>`).join('')}</tbody></table>`;
+  container.innerHTML = `<div class="vehicle-detail-card"><div class="section-heading"><div><div class="eyebrow">${escapeHtml(isDaily ? 'CHECKLIST DIÁRIO' : 'CHECKLIST QUINZENAL')} #${checklist.id}</div><h3>${escapeHtml(checklist.plate)} · ${escapeHtml(checklist.model || '')}</h3><p class="muted">Técnico: ${escapeHtml(checklist.driverName || '–')} · ${escapeHtml(formatDate(checklist.createdAt))}</p></div><span class="status status-${escapeHtml(checklist.status)}">${escapeHtml({ pendente_validacao: 'Aguardando validação', validado: 'Validado', reprovado: 'Reprovado' }[checklist.status] || checklist.status)}</span></div><div class="table-wrap">${table}</div>${checklist.validationNotes ? `<p class="validation-note"><b>Observação do vistoriador:</b> ${escapeHtml(checklist.validationNotes)}</p>` : ''}${media ? `<section class="vehicle-checklist-media"><h4>Fotos registradas</h4><div class="epi-process-media">${media}</div></section>` : ''}${renderVehicleSignatures(checklist)}${validationControls}</div>`;
   container.querySelector('.vehicle-detail-card')?.insertAdjacentHTML('afterbegin', '<div class="detail-actions"><button id="download-vehicle-checklist-pdf" type="button" class="secondary small-button">Baixar PDF</button></div>');
   container.querySelector('#download-vehicle-checklist-pdf')?.addEventListener('click', () => {
     const link = document.createElement('a');
@@ -1231,11 +1295,11 @@ function setupVehicleTechnicianSignature() {
 
 function renderVehiclePhotoDrafts() {
   const previews = $('#vehicle-photo-previews');
-  if (previews) previews.innerHTML = vehiclePhotoDrafts.map((photo, index) => `<div><img src="${photo.imageData}" alt="Foto do veículo ${index + 1}" /><small>${photo.itemKey ? escapeHtml(vehicleItems.find(([key]) => key === photo.itemKey)?.[1] || 'Item') : 'Foto geral do veículo'}</small></div>`).join('');
+  if (previews) previews.innerHTML = vehiclePhotoDrafts.map((photo, index) => { const extraNumber = vehiclePhotoDrafts.slice(0, index + 1).filter((entry) => !entry.itemKey).length; return `<div><img src="${photo.imageData}" alt="Foto do veículo ${index + 1}" /><small>${photo.itemKey ? escapeHtml([...vehicleItems, ...vehicleDailyItems].find(([key]) => key === photo.itemKey)?.[1] || 'Item') : `Foto extra ${extraNumber}`}</small></div>`; }).join('');
   const openButton = $('#vehicle-open-photo-camera');
-  if (openButton) openButton.disabled = vehiclePhotoDrafts.length >= 10;
+  if (openButton) openButton.disabled = vehicleExtraPhotoCount() >= 2;
   const message = $('#vehicle-photo-message');
-  if (message && !vehiclePhotoDrafts.length) message.textContent = 'Nenhuma foto capturada.';
+  if (message) message.textContent = vehicleExtraPhotoCount() ? `${vehicleExtraPhotoCount()} de 2 fotos extras preparadas.` : 'Nenhuma foto extra capturada. Você pode enviar até 2.';
 }
 
 async function ensureVehicleLocation() {
@@ -1478,7 +1542,7 @@ $('#vehicle-cancel-photo').addEventListener('click', () => { stopEpiCamera('#veh
 $('#vehicle-take-photo').addEventListener('click', () => {
   const imageData = captureVideoFrame('#vehicle-photo-video');
   if (!imageData) { $('#vehicle-photo-message').textContent = 'A câmera ainda não está pronta.'; return; }
-  if (vehiclePhotoDrafts.length >= 10) { $('#vehicle-photo-message').textContent = 'O limite de dez fotos foi atingido.'; return; }
+  if (vehicleExtraPhotoCount() >= 2) { $('#vehicle-photo-message').textContent = 'O limite de duas fotos extras foi atingido.'; return; }
   vehiclePhotoDrafts.push({ imageData, itemKey: null });
   stopEpiCamera('#vehicle-photo-video');
   $('#vehicle-photo-camera').classList.add('hidden');
@@ -1489,13 +1553,16 @@ $('#vehicle-take-photo').addEventListener('click', () => {
 $('#vehicle-checklist-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const message = $('#vehicle-form-message');
+  if (!selectedVehicleChecklistType) { message.textContent = 'Escolha o tipo de checklist antes de enviar.'; return; }
   if (!currentUser?.signatureData || !$('#vehicle-signature-confirm').checked) { message.textContent = 'Confirme a assinatura padrão cadastrada antes de enviar o checklist.'; return; }
   if (!vehicleSelfieDraft) { message.textContent = 'Capture a selfie pela câmera antes de enviar o checklist.'; return; }
-  if (!vehiclePhotoDrafts.length) { message.textContent = 'Capture pelo menos uma foto do veículo antes de enviar o checklist.'; return; }
+  const missingPhoto = vehicleWizardDraft.find((item) => !vehiclePhotoDrafts.some((photo) => photo.itemKey === item.itemKey));
+  if (missingPhoto) { message.textContent = `Capture a foto obrigatória do item: ${missingPhoto.itemName}.`; return; }
   try {
     await ensureVehicleLocation();
-    await api('/api/vehicles/checklists', { method: 'POST', body: JSON.stringify({ plate: $('#vehicle-plate').value, model: $('#vehicle-model').value, vehicleYear: $('#vehicle-year').value, mileage: $('#vehicle-wizard-mileage').value, items: readVehicleEditor(), signatureConfirmed: true, latitude: vehicleSignatureLocation.latitude, longitude: vehicleSignatureLocation.longitude, deviceInfo: navigator.userAgent, selfie: vehicleSelfieDraft, photos: vehiclePhotoDrafts.map((photo) => ({ imageData: photo.imageData, itemKey: photo.itemKey || null, captureMode: 'camera', latitude: vehicleSignatureLocation.latitude, longitude: vehicleSignatureLocation.longitude })) }) });
-    event.target.reset(); renderVehicleEditor(); setupVehicleTechnicianSignature(); message.textContent = 'Checklist e fotos enviados para validação do vistoriador.'; await loadVehicleChecklists(); await loadOverview();
+    await api('/api/vehicles/checklists', { method: 'POST', body: JSON.stringify({ checklistType: selectedVehicleChecklistType, plate: $('#vehicle-plate').value, model: $('#vehicle-model').value, vehicleYear: $('#vehicle-year').value, mileage: $('#vehicle-wizard-mileage').value, items: readVehicleEditor(), signatureConfirmed: true, latitude: vehicleSignatureLocation.latitude, longitude: vehicleSignatureLocation.longitude, deviceInfo: navigator.userAgent, selfie: vehicleSelfieDraft, photos: vehiclePhotoDrafts.map((photo) => ({ imageData: photo.imageData, itemKey: photo.itemKey || null, captureMode: 'camera', latitude: vehicleSignatureLocation.latitude, longitude: vehicleSignatureLocation.longitude })) }) });
+    const sentType = vehicleChecklistTypeLabel();
+    event.target.reset(); selectedVehicleChecklistType = null; renderVehicleEditor(); setupVehicleTechnicianSignature(); message.textContent = `${sentType} e fotos enviados para validação do vistoriador.`; await loadVehicleChecklists(); await loadOverview();
   } catch (error) { message.textContent = error.message; }
 });
 $('#refresh-vehicle-checklists').addEventListener('click', () => loadVehicleChecklists().catch((error) => { $('#vehicle-tech-list').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`; }));

@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b1020" />
     <meta name="mobile-web-app-capable" content="yes" />
     <title>SIGOS · Gestão operacional</title>
-    <link rel="stylesheet" href="/styles.css?v=mobile-wizards-20261015-1" />
+    <link rel="stylesheet" href="/styles.css?v=vehicle-daily-20261015-2" />
   </head>
   <body>
     <main class="shell">
@@ -120,7 +120,7 @@
                     <div class="checklist-legend"><span><b>Antes</b> = retirada do veículo</span><span><b>Depois</b> = devolução do veículo</span><span><i class="legend-ok"></i> OK</span><span><i class="legend-problem"></i> Defeito / Quebrado</span></div>
                     <div class="vehicle-checklist-table"><table><thead><tr><th>Equipamento do veículo</th><th>Antes</th><th>Depois</th></tr></thead><tbody id="vehicle-items-editor"></tbody></table></div>
                     <div class="vehicle-signature-entry"><div class="subheading"><h3>Assinatura do responsável</h3></div><div id="vehicle-signature-preview" class="epi-signature-preview"><p class="muted">Carregando assinatura padrão...</p></div><label class="consent-check"><input id="vehicle-signature-confirm" type="checkbox" required /> Confirmo que esta é minha assinatura padrão e autorizo seu uso neste checklist.</label><input id="vehicle-typed-name" type="hidden" /><div class="signature-actions"><button id="vehicle-capture-location" type="button" class="secondary">Capturar localização</button></div><p id="vehicle-signature-message" class="muted">A assinatura cadastrada no primeiro acesso será usada. A localização é opcional, mas recomendada.</p></div>
-                    <div class="vehicle-photo-entry"><div class="subheading"><h3>Fotos do veículo</h3></div><p class="muted">Tire de uma a dez fotos agora pela câmera. Não é permitido escolher imagens da galeria.</p><button id="vehicle-open-photo-camera" type="button">Abrir câmera</button><div id="vehicle-photo-camera" class="hidden"><video id="vehicle-photo-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-take-photo" type="button">Capturar foto</button><button id="vehicle-cancel-photo" type="button" class="secondary">Cancelar</button></div></div><div id="vehicle-photo-previews" class="epi-photo-previews"></div><p id="vehicle-photo-message" class="muted" aria-live="polite">Nenhuma foto capturada.</p></div>
+                    <div class="vehicle-photo-entry"><div class="subheading"><h3>Fotos extras do veículo</h3></div><p class="muted">Se precisar, tire até duas fotos extras pela câmera. Não é permitido escolher imagens da galeria.</p><button id="vehicle-open-photo-camera" type="button">Abrir câmera</button><div id="vehicle-photo-camera" class="hidden"><video id="vehicle-photo-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-take-photo" type="button">Capturar foto</button><button id="vehicle-cancel-photo" type="button" class="secondary">Cancelar</button></div></div><div id="vehicle-photo-previews" class="epi-photo-previews"></div><p id="vehicle-photo-message" class="muted" aria-live="polite">Nenhuma foto extra capturada.</p></div>
                     <div class="form-actions"><button type="submit">Enviar para validação</button><span id="vehicle-form-message" class="muted"></span></div>
                   </form>
                   <div class="vehicle-history"><div class="subheading"><h3>Meus checklists recentes</h3><button id="refresh-vehicle-checklists" type="button" class="secondary small-button">Atualizar</button></div><div id="vehicle-tech-list" class="terms-list"><p class="muted">Nenhum checklist realizado.</p></div><div id="vehicle-tech-detail" class="vehicle-detail hidden"></div></div>
@@ -152,6 +152,6 @@
         </div>
       </section>
     </main>
-    <script src="/app.js?v=mobile-wizards-20261015-1"></script>
+    <script src="/app.js?v=vehicle-daily-20261015-2"></script>
   </body>
 </html>

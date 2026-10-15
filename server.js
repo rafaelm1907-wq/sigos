@@ -147,6 +147,14 @@ const VEHICLE_CHECKLIST_ITEMS = [
   ['cambio', 'CÂMBIO'],
 ];
 
+const VEHICLE_DAILY_CHECKLIST_ITEMS = [
+  ['esquerda', 'LADO ESQUERDO'],
+  ['direita', 'LADO DIREITO'],
+  ['frente', 'FRENTE'],
+  ['traseira', 'TRASEIRA'],
+  ['interna', 'PARTE INTERNA'],
+];
+
 if (!process.env.DATABASE_URL || !jwtSecret) {
   throw new Error('DATABASE_URL e JWT_SECRET são obrigatórios.');
 }
@@ -879,6 +887,10 @@ async function initSchema() {
       submitted_at TIMESTAMPTZ,
       validated_at TIMESTAMPTZ
     );
+
+    ALTER TABLE vehicle_checklists ADD COLUMN IF NOT EXISTS checklist_type TEXT NOT NULL DEFAULT 'quinzenal';
+    ALTER TABLE vehicle_checklists DROP CONSTRAINT IF EXISTS vehicle_checklists_checklist_type_check;
+    ALTER TABLE vehicle_checklists ADD CONSTRAINT vehicle_checklists_checklist_type_check CHECK (checklist_type IN ('diario', 'quinzenal'));
 
     CREATE TABLE IF NOT EXISTS vehicle_checklist_items (
       id BIGSERIAL PRIMARY KEY,
@@ -2556,17 +2568,18 @@ function renderEpiProcessPdf(doc, process) {
 }
 
 function renderVehicleChecklistPdf(doc, checklist, company) {
+  const isDaily = checklist.checklistType === 'diario';
   const companyName = company.tradeName || company.legalName || DEFAULT_COMPANY_SETTINGS.tradeName;
   const companyCnpj = company.cnpj || DEFAULT_COMPANY_SETTINGS.cnpj;
   pdfCompanyHeader(doc, {
     companyName,
     companyCnpj,
     logoData: company.logoData,
-    label: `CHECKLIST DE VEÍCULO #${checklist.id}`,
+    label: `${isDaily ? 'CHECKLIST DIÁRIO' : 'CHECKLIST QUINZENAL'} DE VEÍCULO #${checklist.id}`,
   });
   doc.info.Title = `Termo de responsabilidade de veículo #${checklist.id}`;
   doc.info.Author = 'SIGOS';
-  doc.font('Helvetica-Bold').fontSize(13).fillColor('#172033').text('TERMO DE RESPONSABILIDADE DE VEÍCULOS', { align: 'center' });
+  doc.font('Helvetica-Bold').fontSize(13).fillColor('#172033').text(`${isDaily ? 'CHECKLIST DIÁRIO DE VEÍCULOS' : 'TERMO DE RESPONSABILIDADE DE VEÍCULOS'}`, { align: 'center' });
   doc.moveDown(.7);
   pdfParagraph(doc, VEHICLE_TERM_INTRO);
   VEHICLE_TERM_CLAUSES.forEach((clause, index) => pdfParagraph(doc, `${index + 1}. ${clause}`));
@@ -2576,19 +2589,27 @@ function renderVehicleChecklistPdf(doc, checklist, company) {
   doc.text(`Placa: ${checklist.plate || '–'}    Modelo: ${checklist.model || '–'}    Ano: ${checklist.vehicleYear || '–'}    KM: ${checklist.mileage ?? '–'}`);
   doc.text(`Status: ${checklist.status || '–'}    Emissão: ${checklist.createdAt ? new Date(checklist.createdAt).toLocaleString('pt-BR') : '–'}`);
   doc.moveDown(.8);
-  pdfTable(doc, [
-    { label: 'Item', width: 145, key: 'item' },
-    { label: 'Antes', width: 58, key: 'before' },
-    { label: 'Descrição', width: 116, key: 'beforeDescription' },
-    { label: 'Depois', width: 58, key: 'after' },
-    { label: 'Descrição', width: 116, key: 'afterDescription' },
-  ], (checklist.items || []).map((item) => ({
-    item: item.itemName || '–',
-    before: item.beforeStatus || '–',
-    beforeDescription: item.beforeDescription || '–',
-    after: item.afterStatus || '–',
-    afterDescription: item.afterDescription || '–',
-  })));
+  if (isDaily) {
+    pdfTable(doc, [
+      { label: 'Ponto', width: 170, key: 'item' },
+      { label: 'Status', width: 85, key: 'status' },
+      { label: 'Observação', width: 238, key: 'observation' },
+    ], (checklist.items || []).map((item) => ({ item: item.itemName || '–', status: item.beforeStatus || '–', observation: item.beforeDescription || '–' })));
+  } else {
+    pdfTable(doc, [
+      { label: 'Item', width: 145, key: 'item' },
+      { label: 'Antes', width: 58, key: 'before' },
+      { label: 'Descrição', width: 116, key: 'beforeDescription' },
+      { label: 'Depois', width: 58, key: 'after' },
+      { label: 'Descrição', width: 116, key: 'afterDescription' },
+    ], (checklist.items || []).map((item) => ({
+      item: item.itemName || '–',
+      before: item.beforeStatus || '–',
+      beforeDescription: item.beforeDescription || '–',
+      after: item.afterStatus || '–',
+      afterDescription: item.afterDescription || '–',
+    })));
+  }
   if (checklist.validationNotes) pdfParagraph(doc, `Observação da validação: ${checklist.validationNotes}`);
 
   (checklist.signatures || []).forEach((signature) => {
@@ -2922,6 +2943,7 @@ app.post('/api/epi/terms/:id/validate-signature', auth, async (req, res) => {
 function publicVehicleChecklist(row, includeSignatureData = false) {
   return {
     id: row.id,
+    checklistType: row.checklist_type || 'quinzenal',
     plate: row.plate,
     model: row.model,
     vehicleYear: row.vehicle_year,
@@ -3134,7 +3156,7 @@ function vehicleChecklistScope(req, alias = 'c', includePending = false) {
 
 app.get('/api/vehicles/checklists/template', auth, (req, res) => {
   if (!['admin', 'tecnico', 'vistoriador'].includes(req.user.role)) return res.status(403).json({ error: 'Perfil sem acesso ao checklist de veículos.' });
-  res.json({ items: VEHICLE_CHECKLIST_ITEMS.map(([key, name]) => ({ key, name })) });
+  res.json({ items: VEHICLE_CHECKLIST_ITEMS.map(([key, name]) => ({ key, name })), dailyItems: VEHICLE_DAILY_CHECKLIST_ITEMS.map(([key, name]) => ({ key, name })) });
 });
 
 app.get('/api/vehicles/catalog', auth, requireRole('admin', 'tecnico', 'vistoriador'), async (_req, res) => {
@@ -3219,6 +3241,9 @@ app.get('/api/vehicles/checklists/:id/pdf', auth, async (req, res) => {
 });
 
 app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('tecnico', 'vistoriador'), async (req, res) => {
+  const checklistType = String(req.body.checklistType || 'quinzenal');
+  if (!['diario', 'quinzenal'].includes(checklistType)) return res.status(400).json({ error: 'Tipo de checklist de veículo inválido.' });
+  const checklistDefinition = checklistType === 'diario' ? VEHICLE_DAILY_CHECKLIST_ITEMS : VEHICLE_CHECKLIST_ITEMS;
   const plate = cleanText(req.body.plate, 12).toUpperCase();
   const model = cleanText(req.body.model, 120);
   const vehicleYear = req.body.vehicleYear === null || req.body.vehicleYear === undefined || req.body.vehicleYear === '' ? null : Number(req.body.vehicleYear);
@@ -3228,8 +3253,14 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('tecnico
   const submittedSelfie = req.body.selfie && typeof req.body.selfie === 'object' ? req.body.selfie : null;
   const submittedPhotos = Array.isArray(req.body.photos) ? req.body.photos : [];
   const itemMap = new Map(submittedItems.map((item) => [String(item.itemKey || ''), item]));
-  const normalizedItems = VEHICLE_CHECKLIST_ITEMS.map(([itemKey, itemName]) => {
+  const normalizedItems = checklistDefinition.map(([itemKey, itemName]) => {
     const item = itemMap.get(itemKey) || {};
+    if (checklistType === 'diario') {
+      const dailyStatus = item.status ?? item.beforeStatus;
+      const status = ['ok', 'defeito', 'quebrado'].includes(dailyStatus) ? dailyStatus : 'ok';
+      const observation = cleanText(item.observation || item.beforeDescription, 500) || null;
+      return { itemKey, itemName, beforeStatus: status, beforeDescription: observation, afterStatus: status, afterDescription: observation };
+    }
     const beforeStatus = ['ok', 'defeito', 'quebrado'].includes(item.beforeStatus) ? item.beforeStatus : 'ok';
     const afterStatus = ['ok', 'defeito', 'quebrado'].includes(item.afterStatus) ? item.afterStatus : 'ok';
     return {
@@ -3247,7 +3278,16 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('tecnico
   if (mileage !== null && (!Number.isInteger(mileage) || mileage < 0)) return res.status(400).json({ error: 'Quilometragem inválida.' });
   if (signatureRequest.error) return res.status(400).json({ error: signatureRequest.error });
   if (!submittedSelfie || submittedSelfie.captureMode !== 'camera' || !submittedSelfie.imageData) return res.status(400).json({ error: 'Capture uma selfie pela câmera antes de enviar o checklist.' });
-  if (!submittedPhotos.length || submittedPhotos.length > 10) return res.status(400).json({ error: 'Envie de uma a dez fotos do veículo capturadas pela câmera.' });
+  const expectedPhotoKeys = new Set(checklistDefinition.map(([itemKey]) => itemKey));
+  const itemPhotos = submittedPhotos.filter((photo) => photo?.itemKey);
+  const extraPhotos = submittedPhotos.filter((photo) => !photo?.itemKey);
+  const itemPhotoKeys = itemPhotos.map((photo) => String(photo.itemKey));
+  const invalidPhotoKey = itemPhotoKeys.find((itemKey) => !expectedPhotoKeys.has(itemKey));
+  const duplicatePhotoKey = itemPhotoKeys.find((itemKey, index) => itemPhotoKeys.indexOf(itemKey) !== index);
+  const missingPhotoKey = [...expectedPhotoKeys].find((itemKey) => !itemPhotoKeys.includes(itemKey));
+  if (invalidPhotoKey || duplicatePhotoKey || missingPhotoKey) return res.status(400).json({ error: 'Envie exatamente uma foto capturada pela câmera para cada item do checklist.' });
+  if (extraPhotos.length > 2) return res.status(400).json({ error: 'Envie no máximo duas fotos extras do veículo.' });
+  if (!submittedPhotos.length) return res.status(400).json({ error: 'Capture as fotos obrigatórias do checklist.' });
   if (submittedPhotos.some((photo) => photo?.captureMode !== 'camera' || !photo?.imageData)) return res.status(400).json({ error: 'As fotos do veículo precisam ser capturadas pela câmera no momento do registro.' });
   try {
     parseCapturedImage(submittedSelfie.imageData);
@@ -3285,10 +3325,10 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('tecnico
       [plate, [model, vehicleYear ? `Ano ${vehicleYear}` : null].filter(Boolean).join(' · '), model, vehicleYear],
     );
     const checklistResult = await client.query(
-      `INSERT INTO vehicle_checklists (vehicle_id, driver_user_id, plate, model, vehicle_year, mileage, status, submitted_at)
-       VALUES ($1, $2, $3, $4, $5, $6, 'pendente_validacao', $7)
+      `INSERT INTO vehicle_checklists (vehicle_id, driver_user_id, checklist_type, plate, model, vehicle_year, mileage, status, submitted_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pendente_validacao', $8)
        RETURNING id`,
-      [vehicleResult.rows[0].id, req.user.id, plate, model, vehicleYear, mileage, signedAt],
+      [vehicleResult.rows[0].id, req.user.id, checklistType, plate, model, vehicleYear, mileage, signedAt],
     );
     const checklistId = checklistResult.rows[0].id;
     for (const item of normalizedItems) {
@@ -3365,10 +3405,10 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('tecnico
       roles: ['admin', 'vistoriador'],
       notificationType: 'checklist_created',
       title: 'Novo checklist de veículo',
-      message: `O checklist do veículo ${plate} foi criado e está aguardando validação.`,
+      message: `O ${checklistType === 'diario' ? 'checklist diário' : 'checklist quinzenal'} do veículo ${plate} foi criado e está aguardando validação.`,
       entityType: 'vehicle_checklist',
       entityId: checklistId,
-      metadata: { plate, createdBy: req.user.id, creatorRole: req.user.role },
+      metadata: { plate, checklistType, createdBy: req.user.id, creatorRole: req.user.role },
     });
     const created = await pool.query(`${vehicleChecklistQuery} WHERE c.id = $1 GROUP BY c.id, driver.name, inspector.name`, [checklistId]);
     res.status(201).json({ checklist: publicVehicleChecklist(created.rows[0], true) });
@@ -3528,6 +3568,7 @@ function publicStockVehicle(row) {
     status: row.status,
     lastDriver: row.last_driver || null,
     lastChecklistStatus: row.last_checklist_status || null,
+    lastChecklistType: row.last_checklist_type || 'quinzenal',
     lastChecklistAt: row.last_checklist_at || null,
     lastChecklistId: row.last_checklist_id || null,
     integrityItems: row.integrity_items || [],
@@ -3583,7 +3624,7 @@ app.get('/api/stock', auth, requireRole('admin'), async (_req, res) => {
              last_checklist.integrity_items
       FROM vehicles v
       LEFT JOIN LATERAL (
-        SELECT vc.id, vc.status, vc.created_at, u.name AS driver_name,
+        SELECT vc.id, vc.status, vc.checklist_type, vc.created_at, u.name AS driver_name,
                COALESCE(
                  (SELECT json_agg(json_build_object(
                     'itemKey', i.item_key,
