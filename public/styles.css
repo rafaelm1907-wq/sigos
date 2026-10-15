@@ -213,6 +213,13 @@ textarea { width: 100%; min-height: 68px; resize: vertical; border: 1px solid #3
 .stock-panel table { width: 100%; min-width: 0; table-layout: auto; white-space: normal; }
 .stock-panel th, .stock-panel td { white-space: normal; overflow-wrap: anywhere; }
 .table-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.vehicle-integrity-details { min-width: 210px; }
+.vehicle-integrity-details summary { cursor: pointer; color: #a7f3d0; font-weight: 800; }
+.vehicle-integrity-content { margin-top: 8px; min-width: 260px; }
+.vehicle-integrity-list { display: grid; gap: 6px; margin-top: 8px; }
+.vehicle-integrity-item { display: grid; gap: 2px; padding: 7px 9px; border-radius: 8px; background: rgba(30, 58, 95, .28); }
+.vehicle-integrity-item span { color: #e2e8f0; font-size: .78rem; }
+.vehicle-integrity-item small { color: #9aa8c2; font-size: .7rem; }
 .audit-open-process { display: inline-block; margin: 4px 0 0 8px; }
 .table-subtext { display: block; margin-top: 3px; color: #9aa8c2; font-size: .7rem; }
 .stock-movements-panel { margin-top: 18px; }

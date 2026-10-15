@@ -727,10 +727,23 @@ function stockProcessLabel(movement) {
   return 'Ajuste manual';
 }
 
+function renderStockVehicleIntegrity(vehicle) {
+  const items = vehicle.integrityItems || [];
+  const content = vehicle.lastChecklistId && items.length
+    ? `<small class="table-subtext">Último checklist: ${escapeHtml(formatDate(vehicle.lastChecklistAt))}</small><div class="vehicle-integrity-list">${items.map((item) => `<div class="vehicle-integrity-item"><strong>${escapeHtml(item.itemName)}</strong><span>Estado: ${escapeHtml(vehicleStatusLabel(item.afterStatus || item.beforeStatus))}</span>${item.beforeStatus !== item.afterStatus ? `<small>Antes: ${escapeHtml(vehicleStatusLabel(item.beforeStatus))} · Depois: ${escapeHtml(vehicleStatusLabel(item.afterStatus))}</small>` : ''}${item.afterDescription || item.beforeDescription ? `<small>Descrição: ${escapeHtml(item.afterDescription || item.beforeDescription)}</small>` : ''}</div>`).join('')}</div>`
+    : '<span class="muted">Nenhum checklist lançado para este veículo.</span>';
+  return `<details class="vehicle-integrity-details"><summary>Integridade</summary><div class="vehicle-integrity-content">${content}</div></details>`;
+}
+
 async function loadStock() {
   const data = await api('/api/stock');
   stockPpeCatalog = data.ppes || [];
-  $('#stock-vehicles-table').innerHTML = data.vehicles.length ? data.vehicles.map((vehicle) => `<tr><td><strong>${escapeHtml(vehicle.plate)}</strong></td><td>${escapeHtml(vehicle.model || '–')}</td><td>${escapeHtml(vehicle.year || '–')}</td><td>${escapeHtml(vehicle.color || '–')}</td><td>${escapeHtml(vehicle.lastDriver || 'Sem checklist')}${vehicle.lastChecklistAt ? `<small class="table-subtext">${escapeHtml(formatDate(vehicle.lastChecklistAt))}</small>` : ''}</td><td>${escapeHtml(vehicle.status === 'ativo' ? 'Ativo' : 'Inativo')}</td><td><div class="table-actions"><button type="button" class="secondary small-button" data-vehicle-edit="${escapeHtml(vehicle.id)}">Editar</button><button type="button" class="secondary small-button" data-vehicle-delete="${escapeHtml(vehicle.id)}">Excluir</button></div></td></tr>`).join('') : '<tr><td colspan="7" class="muted">Nenhum veículo cadastrado.</td></tr>';
+  const vehicleTableHead = document.querySelector('#stock-vehicles-table')?.closest('table')?.querySelector('thead tr');
+  if (vehicleTableHead && !vehicleTableHead.querySelector('[data-stock-vehicle-integrity-heading]')) {
+    const actionsHeading = [...vehicleTableHead.children].find((heading) => heading.textContent.trim() === 'Ações');
+    if (actionsHeading) actionsHeading.insertAdjacentHTML('beforebegin', '<th data-stock-vehicle-integrity-heading>Integridade</th>');
+  }
+  $('#stock-vehicles-table').innerHTML = data.vehicles.length ? data.vehicles.map((vehicle) => `<tr><td><strong>${escapeHtml(vehicle.plate)}</strong></td><td>${escapeHtml(vehicle.model || '–')}</td><td>${escapeHtml(vehicle.year || '–')}</td><td>${escapeHtml(vehicle.color || '–')}</td><td>${escapeHtml(vehicle.lastDriver || 'Sem checklist')}${vehicle.lastChecklistAt ? `<small class="table-subtext">${escapeHtml(formatDate(vehicle.lastChecklistAt))}</small>` : ''}</td><td>${escapeHtml(vehicle.status === 'ativo' ? 'Ativo' : 'Inativo')}</td><td>${renderStockVehicleIntegrity(vehicle)}</td><td><div class="table-actions"><button type="button" class="secondary small-button" data-vehicle-edit="${escapeHtml(vehicle.id)}">Editar</button><button type="button" class="secondary small-button" data-vehicle-delete="${escapeHtml(vehicle.id)}">Excluir</button></div></td></tr>`).join('') : '<tr><td colspan="8" class="muted">Nenhum veículo cadastrado.</td></tr>';
   $('#stock-ppes-table').innerHTML = stockPpeCatalog.length ? stockPpeCatalog.map((ppe) => {
     const holders = (ppe.assignedUsers || []).map((holder) => `${holder.name || 'Usuário'} · ${holder.quantity} un.`).join(', ');
     return `<tr><td><strong>${escapeHtml(ppe.name)}</strong><small class="table-subtext">${escapeHtml(ppe.category || 'Sem categoria')}</small></td><td>${escapeHtml(ppe.ca)}</td><td>${escapeHtml(ppe.stockQuantity)}</td><td><strong>${escapeHtml(ppe.availableQuantity)}</strong></td><td>${escapeHtml(holders || 'Ninguém')}${ppe.assignedQuantity ? `<small class="table-subtext">Total em posse: ${escapeHtml(ppe.assignedQuantity)}</small>` : ''}</td><td><span class="stock-state stock-state-${escapeHtml(ppe.stockStatus || 'normal')}">${escapeHtml(stockStatusLabel(ppe.stockStatus))}</span><small class="table-subtext">${escapeHtml(ppe.active ? 'Ativo' : 'Inativo')}</small></td><td><div class="table-actions"><button type="button" class="secondary small-button" data-ppe-edit="${escapeHtml(ppe.id)}">Editar</button><button type="button" class="secondary small-button" data-ppe-toggle="${escapeHtml(ppe.id)}" data-ppe-next-active="${ppe.active ? 'false' : 'true'}">${ppe.active ? 'Desativar' : 'Ativar'}</button></div></td></tr>`;
@@ -1260,7 +1273,7 @@ $('#vehicle-checklist-form').addEventListener('submit', async (event) => {
 });
 $('#refresh-vehicle-checklists').addEventListener('click', () => loadVehicleChecklists().catch((error) => { $('#vehicle-tech-list').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`; }));
 $('#refresh-validation').addEventListener('click', () => loadValidationQueue().catch((error) => { $('#validation-list').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`; }));
-$('#refresh-stock').addEventListener('click', () => loadStock().catch((error) => { $('#stock-vehicles-table').innerHTML = `<tr><td colspan="6" class="error">${escapeHtml(error.message)}</td></tr>`; }));
+$('#refresh-stock').addEventListener('click', () => loadStock().catch((error) => { $('#stock-vehicles-table').innerHTML = `<tr><td colspan="8" class="error">${escapeHtml(error.message)}</td></tr>`; }));
 
 $('#stock-vehicle-form').addEventListener('submit', async (event) => {
   event.preventDefault();

@@ -3497,6 +3497,8 @@ function publicStockVehicle(row) {
     lastDriver: row.last_driver || null,
     lastChecklistStatus: row.last_checklist_status || null,
     lastChecklistAt: row.last_checklist_at || null,
+    lastChecklistId: row.last_checklist_id || null,
+    integrityItems: row.integrity_items || [],
   };
 }
 
@@ -3544,10 +3546,25 @@ app.get('/api/stock', auth, requireRole('admin'), async (_req, res) => {
     pool.query(`
       SELECT v.*, last_checklist.driver_name AS last_driver,
              last_checklist.status AS last_checklist_status,
-             last_checklist.created_at AS last_checklist_at
+             last_checklist.created_at AS last_checklist_at,
+             last_checklist.id AS last_checklist_id,
+             last_checklist.integrity_items
       FROM vehicles v
       LEFT JOIN LATERAL (
-        SELECT vc.status, vc.created_at, u.name AS driver_name
+        SELECT vc.id, vc.status, vc.created_at, u.name AS driver_name,
+               COALESCE(
+                 (SELECT json_agg(json_build_object(
+                    'itemKey', i.item_key,
+                    'itemName', i.item_name,
+                    'beforeStatus', i.before_status,
+                    'beforeDescription', i.before_description,
+                    'afterStatus', i.after_status,
+                    'afterDescription', i.after_description
+                  ) ORDER BY i.id)
+                  FROM vehicle_checklist_items i
+                  WHERE i.checklist_id = vc.id),
+                 '[]'::json
+               ) AS integrity_items
         FROM vehicle_checklists vc
         LEFT JOIN users u ON u.id = vc.driver_user_id
         WHERE vc.vehicle_id = v.id OR vc.plate = v.plate
