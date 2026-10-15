@@ -279,6 +279,7 @@ function publicUser(row, { companyProfileComplete = null } = {}) {
     createdAt: row.created_at,
     mustChangePassword: ['tecnico', 'vistoriador'].includes(row.role) && Boolean(row.must_change_password),
     signatureRegistered: Boolean(row.signature_data),
+    signatureMode: row.signature_mode || 'desenhada',
     consentRegistered: !['tecnico', 'vistoriador'].includes(row.role) || Boolean(row.consent_at),
     onboardingComplete: signatureUserOnboardingComplete,
     companyProfileComplete: row.role === 'admin' ? companyProfileComplete : true,
@@ -503,7 +504,7 @@ async function auth(req, res, next) {
     const payload = jwt.verify(token, jwtSecret);
     const result = await pool.query(
       `SELECT id, name, email, role, active, created_at,
-              must_change_password, signature_data, signature_hash,
+              must_change_password, signature_data, signature_hash, signature_mode,
               consent_location, consent_ip, consent_image, consent_at,
               consent_ip_address, consent_user_agent, consent_latitude, consent_longitude
        FROM users WHERE id = $1`,
@@ -556,6 +557,7 @@ async function initSchema() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS signature_data TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS signature_hash TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS signature_mode TEXT NOT NULL DEFAULT 'desenhada';
     ALTER TABLE users ADD COLUMN IF NOT EXISTS signature_registered_at TIMESTAMPTZ;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_location BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_ip BOOLEAN NOT NULL DEFAULT FALSE;
@@ -1434,25 +1436,29 @@ app.get('/api/onboarding/status', auth, requireRole('admin', 'tecnico', 'vistori
       consentAt: req.user.consent_at || null,
     },
     signatureData: req.user.signature_data || null,
+    signatureMode: req.user.signature_mode || 'desenhada',
   });
 });
 
 app.post('/api/onboarding/signature', auth, requireRole('admin', 'tecnico', 'vistoriador'), async (req, res) => {
   const signatureData = String(req.body.signatureData || '');
   const confirmed = req.body.confirmed === true;
+  const signatureMode = ['desenhada', 'nome_digitado'].includes(String(req.body.signatureMode || ''))
+    ? String(req.body.signatureMode)
+    : 'desenhada';
   if (!confirmed) return res.status(400).json({ error: 'Confirme que esta assinatura será usada para validar seus registros.' });
   if (!/^data:image\/png;base64,[a-zA-Z0-9+/=]+$/.test(signatureData) || signatureData.length > 700000) {
-    return res.status(400).json({ error: 'A assinatura desenhada é inválida ou excede o limite permitido.' });
+    return res.status(400).json({ error: 'A assinatura é inválida ou excede o limite permitido.' });
   }
   const signatureHash = sha256Json({ algorithm: 'SHA-256', version: 1, userId: String(req.user.id), signatureData });
   await pool.query(
     `UPDATE users
-     SET signature_data = $1, signature_hash = $2, signature_registered_at = NOW(), updated_at = NOW()
-     WHERE id = $3`,
-    [signatureData, signatureHash, req.user.id],
+     SET signature_data = $1, signature_hash = $2, signature_mode = $3, signature_registered_at = NOW(), updated_at = NOW()
+     WHERE id = $4`,
+    [signatureData, signatureHash, signatureMode, req.user.id],
   );
-  await audit({ req, actorUserId: req.user.id, eventType: 'user_signature_registered', entityType: 'user', entityId: req.user.id, metadata: { signatureHash, confirmed: true } });
-  res.json({ ok: true, signatureRegistered: true, signatureHash });
+  await audit({ req, actorUserId: req.user.id, eventType: 'user_signature_registered', entityType: 'user', entityId: req.user.id, metadata: { signatureHash, signatureMode, confirmed: true } });
+  res.json({ ok: true, signatureRegistered: true, signatureHash, signatureMode });
 });
 
 app.post('/api/onboarding/consent', auth, requireRole('tecnico', 'vistoriador'), async (req, res) => {

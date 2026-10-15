@@ -72,6 +72,8 @@ let vehiclePhotoCaptureItemKey = null;
 let selectedVehicleChecklistType = null;
 let onboardingSignatureCanvas = null;
 let securitySignatureCanvas = null;
+let onboardingSignatureMode = 'desenhada';
+let securitySignatureMode = 'desenhada';
 let onboardingLocation = { latitude: null, longitude: null };
 let selectedEpiProcessType = null;
 let currentEpiProcess = null;
@@ -496,7 +498,10 @@ async function loadOnboardingStatus() {
 function setupOnboardingSignature(signatureData) {
   const mount = $('#onboarding-signature-mount');
   if (!mount) return;
+  const nameInput = $('#onboarding-signature-name');
+  if (nameInput && !nameInput.value) nameInput.value = currentUser?.name || '';
   mount.innerHTML = '';
+  onboardingSignatureMode = 'desenhada';
   if (signatureData) {
     mount.innerHTML = `<img class="saved-signature" src="${signatureData}" alt="Assinatura cadastrada" />`;
     return;
@@ -512,15 +517,48 @@ function renderSecuritySignatureEditor(signatureData) {
   const preview = $('#security-signature-preview');
   const mount = $('#security-signature-mount');
   if (!preview || !mount) return;
+  const nameInput = $('#security-signature-name');
+  if (nameInput && !nameInput.value) nameInput.value = currentUser?.name || '';
   preview.innerHTML = signatureData
     ? `<p class="muted">Assinatura atual:</p><img class="saved-signature" src="${escapeHtml(signatureData)}" alt="Assinatura padrão atual" />`
     : '<p class="muted">Nenhuma assinatura padrão cadastrada.</p>';
   mount.innerHTML = '';
+  securitySignatureMode = 'desenhada';
   securitySignatureCanvas = makeSignatureCanvas();
   const frame = document.createElement('div');
   frame.className = 'signature-pad-frame';
   frame.appendChild(securitySignatureCanvas);
   mount.appendChild(frame);
+}
+
+function generateAutomaticSignature(canvas, name) {
+  const normalizedName = String(name || '').trim().replace(/\s+/g, ' ');
+  if (!canvas || !normalizedName) throw new Error('Digite o nome que será usado para gerar a assinatura.');
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  let fontSize = 72;
+  let font = '';
+  let width = 0;
+  do {
+    font = `italic ${fontSize}px "Segoe Script", "Brush Script MT", "URW Chancery L", cursive`;
+    context.font = font;
+    width = context.measureText(normalizedName).width;
+    fontSize -= 2;
+  } while (width > canvas.width - 80 && fontSize >= 30);
+  context.font = font;
+  context.fillStyle = '#172033';
+  context.textBaseline = 'middle';
+  const x = Math.max(35, (canvas.width - width) / 2);
+  context.fillText(normalizedName, x, 92);
+  context.beginPath();
+  context.strokeStyle = '#172033';
+  context.lineWidth = 2.2;
+  context.lineCap = 'round';
+  context.moveTo(x, 132);
+  context.quadraticCurveTo(x + width * 0.52, 145, Math.min(canvas.width - 30, x + width + 15), 128);
+  context.stroke();
+  return canvas.toDataURL('image/png');
 }
 
 function renderEpiSignaturePreview(signatureData) {
@@ -1407,19 +1445,28 @@ $('#onboarding-password-form').addEventListener('submit', async (event) => {
   } catch (error) { message.textContent = error.message; }
 });
 
-$('#onboarding-clear-signature').addEventListener('click', () => { if (onboardingSignatureCanvas) clearSignatureCanvas(onboardingSignatureCanvas); });
 $('#onboarding-save-signature').addEventListener('click', async () => {
   const message = $('#onboarding-signature-message');
   if (!onboardingSignatureCanvas || !$('#onboarding-signature-confirm').checked) { message.textContent = 'Desenhe sua assinatura e confirme que ela será usada para validar seus registros.'; return; }
-  try { await api('/api/onboarding/signature', { method: 'POST', body: JSON.stringify({ signatureData: onboardingSignatureCanvas.toDataURL('image/png'), confirmed: true }) }); message.textContent = ''; await loadOnboardingStatus(); } catch (error) { message.textContent = error.message; }
+  try { await api('/api/onboarding/signature', { method: 'POST', body: JSON.stringify({ signatureData: onboardingSignatureCanvas.toDataURL('image/png'), signatureMode: onboardingSignatureMode, confirmed: true }) }); message.textContent = ''; await loadOnboardingStatus(); } catch (error) { message.textContent = error.message; }
 });
 
-$('#security-clear-signature').addEventListener('click', () => { if (securitySignatureCanvas) clearSignatureCanvas(securitySignatureCanvas); });
+$('#onboarding-generate-signature').addEventListener('click', () => {
+  const message = $('#onboarding-signature-message');
+  try { generateAutomaticSignature(onboardingSignatureCanvas, $('#onboarding-signature-name').value); onboardingSignatureMode = 'nome_digitado'; message.textContent = 'Assinatura gerada. Confira e confirme para salvar.'; } catch (error) { message.textContent = error.message; }
+});
+
+$('#onboarding-clear-signature').addEventListener('click', () => { if (onboardingSignatureCanvas) { clearSignatureCanvas(onboardingSignatureCanvas); onboardingSignatureMode = 'desenhada'; } });
+$('#security-clear-signature').addEventListener('click', () => { if (securitySignatureCanvas) { clearSignatureCanvas(securitySignatureCanvas); securitySignatureMode = 'desenhada'; } });
+$('#security-generate-signature').addEventListener('click', () => {
+  const message = $('#security-signature-message');
+  try { generateAutomaticSignature(securitySignatureCanvas, $('#security-signature-name').value); securitySignatureMode = 'nome_digitado'; message.textContent = 'Assinatura gerada. Confira e confirme para salvar.'; } catch (error) { message.textContent = error.message; }
+});
 $('#security-save-signature').addEventListener('click', async () => {
   const message = $('#security-signature-message');
   if (!securitySignatureCanvas || !$('#security-signature-confirm').checked) { message.textContent = 'Desenhe a nova assinatura e confirme o uso dela no SIGOS.'; return; }
   try {
-    await api('/api/onboarding/signature', { method: 'POST', body: JSON.stringify({ signatureData: securitySignatureCanvas.toDataURL('image/png'), confirmed: true }) });
+    await api('/api/onboarding/signature', { method: 'POST', body: JSON.stringify({ signatureData: securitySignatureCanvas.toDataURL('image/png'), signatureMode: securitySignatureMode, confirmed: true }) });
     $('#security-signature-confirm').checked = false;
     message.textContent = 'Assinatura padrão atualizada.';
     await loadOnboardingStatus();

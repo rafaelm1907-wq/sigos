@@ -343,6 +343,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .form-actions button { width: 100%; }
   .signature-actions { display: grid; grid-template-columns: 1fr; }
   .signature-actions button { width: 100%; }
+  .signature-generator { align-items: stretch; flex-direction: column; }
+  .signature-generator button { width: 100%; }
   .term-paper { padding: 22px; }
   .paper-header, .recipient-line { align-items: flex-start; flex-direction: column; gap: 8px; }
   .recipient-line { margin-top: 14px; }
@@ -427,6 +429,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .settings-panel { margin-top: 0 !important; }
 .security-signature-section { margin-top: 22px; padding-top: 22px; border-top: 1px solid rgba(148, 163, 184, .16); }
 .security-signature-section .subheading { margin-top: 0; }
+.signature-generator { display: flex; align-items: flex-end; gap: 10px; margin: 14px 0 8px; }
+.signature-generator label { flex: 1 1 auto; }
+.signature-generator button { flex: 0 0 auto; }
+.signature-pad-help { margin: 0 0 8px; }
 .consent-check { display: flex; grid-template-columns: none; align-items: flex-start; gap: 9px; line-height: 1.4; }
 .consent-check input { flex: 0 0 auto; width: 20px; min-height: 20px; margin-top: 2px; }
 .epi-process-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
