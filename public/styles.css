@@ -155,7 +155,7 @@ th { color: #9aa8c2; font-weight: 600; }
 .overview-stats { margin-bottom: 18px; }
 .activity-card { padding: 24px; }
 .activity-card .section-heading { margin-bottom: 0; }
-.compliance-alerts-card { display: grid; gap: 14px; }
+.compliance-alerts-card { display: grid; gap: 14px; padding: 24px; }
 .compliance-alerts-card .section-heading { margin-bottom: 0; }
 .compliance-alerts-list { display: grid; gap: 10px; }
 .compliance-alert-item { display: grid; gap: 10px; padding: 14px; border: 1px solid rgba(251, 191, 36, .35); border-radius: 12px; background: rgba(120, 53, 15, .18); }
@@ -352,7 +352,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .form-grid, .user-form, .password-form, .stock-form, .company-form-grid { grid-template-columns: 1fr; }
   .admin-notification-grid { grid-template-columns: 1fr; }
   .user-form button, .password-form button, .stock-form button { grid-column: auto; }
-  .admin-panel, .profile-card, .module-card, .stock-panel, .activity-card { padding: 18px; }
+  .admin-panel, .profile-card, .module-card, .stock-panel, .activity-card, .compliance-alerts-card { padding: 18px; }
   .term-form, .terms-panel, .vehicle-history { padding: 14px; }
   .form-actions { align-items: stretch; flex-direction: column; }
   .form-actions button { width: 100%; }
@@ -384,7 +384,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .stat { padding: 14px; gap: 8px; }
   .stat span { font-size: .74rem; line-height: 1.25; }
   .stat strong { font-size: 1.65rem; }
-  .admin-panel, .profile-card, .module-card, .stock-panel, .activity-card { padding: 14px; }
+  .admin-panel, .profile-card, .module-card, .stock-panel, .activity-card, .compliance-alerts-card { padding: 14px; }
   .term-form, .terms-panel, .vehicle-history { padding: 12px; }
   .section-heading { margin-bottom: 14px; }
   .section-heading h2 { font-size: 1.15rem; }
