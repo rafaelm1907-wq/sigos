@@ -106,6 +106,8 @@ th { color: #9aa8c2; font-weight: 600; }
 .signature-validation-status.valid { background: #dcfce7; color: #166534 !important; }
 .signature-validation-status.invalid { background: #fee2e2; color: #991b1b !important; }
 .signature-pad { display: block; width: 100%; max-width: 760px; height: 190px !important; min-height: 190px; box-sizing: border-box; margin: 0 auto; border: 1px dashed #9ca3af; border-radius: 8px; background: #fff; cursor: crosshair; touch-action: none; }
+.signature-pad-frame { display: block; width: min(100%, 760px); height: 190px; min-height: 190px; margin: 0 auto; border: 1px dashed #9ca3af; border-radius: 8px; background: #fff; overflow: hidden; }
+.signature-pad-frame .signature-pad { width: 100%; max-width: none; height: 100% !important; min-height: 0; border: 0; border-radius: 0; }
 .saved-signature { display: block; width: min(100%, 420px); height: 120px; object-fit: contain; margin: 0 auto; }
 .signature-line { width: min(360px, 80%); margin: 7px auto 0; border-top: 1px solid #172033; padding-top: 5px; font-size: .82rem; }
 .audit-note { margin-top: 12px; color: #4b5563; font-family: Inter, sans-serif; font-size: .65rem; line-height: 1.35; }
@@ -385,6 +387,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .paper-table th, .paper-table td { padding: 6px 5px; font-size: .7rem; }
   .legal-text { font-size: .76rem; }
   .signature-pad { height: 160px !important; min-height: 160px; }
+  .signature-pad-frame { height: 160px; min-height: 160px; }
   .technician-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .technician-stats div { padding: 11px; }
   .technician-stats strong { font-size: 1.35rem; }

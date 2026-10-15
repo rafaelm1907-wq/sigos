@@ -502,7 +502,10 @@ function setupOnboardingSignature(signatureData) {
     return;
   }
   onboardingSignatureCanvas = makeSignatureCanvas();
-  mount.appendChild(onboardingSignatureCanvas);
+  const frame = document.createElement('div');
+  frame.className = 'signature-pad-frame';
+  frame.appendChild(onboardingSignatureCanvas);
+  mount.appendChild(frame);
 }
 
 function renderSecuritySignatureEditor(signatureData) {
@@ -514,7 +517,10 @@ function renderSecuritySignatureEditor(signatureData) {
     : '<p class="muted">Nenhuma assinatura padrão cadastrada.</p>';
   mount.innerHTML = '';
   securitySignatureCanvas = makeSignatureCanvas();
-  mount.appendChild(securitySignatureCanvas);
+  const frame = document.createElement('div');
+  frame.className = 'signature-pad-frame';
+  frame.appendChild(securitySignatureCanvas);
+  mount.appendChild(frame);
 }
 
 function renderEpiSignaturePreview(signatureData) {
