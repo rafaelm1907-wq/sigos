@@ -3332,7 +3332,13 @@ app.get('/api/users/:id/technician-summary', auth, requireRole('admin'), async (
               a.ip_address, a.user_agent, a.metadata, a.created_at
        FROM audit_logs a
        WHERE a.actor_user_id = $1
-         AND a.event_type IN ('epi_term_created', 'epi_term_signed', 'vehicle_checklist_created', 'vehicle_checklist_validated')
+         AND a.event_type IN (
+           'epi_term_created', 'epi_term_signed',
+           'epi_process_created', 'epi_process_signature_validated',
+           'epi_process_selfie_uploaded', 'epi_process_photos_uploaded',
+           'epi_process_validated', 'vehicle_checklist_created',
+           'vehicle_checklist_validated'
+         )
        ORDER BY a.created_at DESC
        LIMIT 100`,
       [technician.id],
@@ -3345,7 +3351,16 @@ app.get('/api/users/:id/technician-summary', auth, requireRole('admin'), async (
        WHERE (t.created_by = $1 OR t.signer_user_id = $1)
          AND t.status = 'assinado'
          AND timezone('America/Fortaleza', t.signed_at)::date = timezone('America/Fortaleza', NOW())::date
-       ORDER BY t.signed_at DESC, ti.id ASC`,
+       UNION ALL
+       SELECT p.id AS term_id, p.submitted_at AS signed_at, p.status,
+              pi.equipment_name, pi.quantity, pi.ca, pi.condition, pi.observation
+       FROM epi_processes p
+       JOIN epi_process_items pi ON pi.process_id = p.id
+       WHERE p.created_by = $1
+         AND p.process_type = 'checklist_diario'
+         AND p.submitted_at IS NOT NULL
+         AND timezone('America/Fortaleza', p.submitted_at)::date = timezone('America/Fortaleza', NOW())::date
+       ORDER BY signed_at DESC, term_id ASC`,
       [technician.id],
     ),
     pool.query(
@@ -3357,6 +3372,11 @@ app.get('/api/users/:id/technician-summary', auth, requireRole('admin'), async (
        FROM epi_terms
        WHERE (created_by = $1 OR signer_user_id = $1)
          AND status IN ('rascunho', 'pendente_assinatura')
+       UNION ALL
+       SELECT 'epi_process' AS type, id, process_type AS label, status, created_at
+       FROM epi_processes
+       WHERE created_by = $1
+         AND status IN ('aguarda_selfie', 'aguarda_fotos', 'pendente_validacao', 'reprovado')
        ORDER BY created_at DESC`,
       [technician.id],
     ),
