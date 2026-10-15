@@ -359,6 +359,80 @@ async function notifyUsers({ userIds, notificationType, title, message, entityTy
   });
 }
 
+async function checkDailyChecklistReminders() {
+  const client = await pool.connect();
+  const pushRecipients = new Set();
+  try {
+    await client.query('BEGIN');
+    const due = await client.query(
+      `WITH local_clock AS (
+         SELECT timezone('America/Fortaleza', NOW()) AS local_now,
+                timezone('America/Fortaleza', NOW())::date AS local_date
+       ), missing AS (
+         INSERT INTO daily_checklist_reminders (user_id, reminder_date)
+         SELECT u.id, clock.local_date
+         FROM users u
+         CROSS JOIN local_clock clock
+         WHERE u.active = TRUE
+           AND u.role = 'tecnico'
+           AND clock.local_now >= clock.local_date + TIME '12:00'
+           AND timezone('America/Fortaleza', u.created_at) < clock.local_date + TIME '12:00'
+           AND NOT EXISTS (
+             SELECT 1
+             FROM epi_processes p
+             WHERE p.created_by = u.id
+               AND p.process_type = 'checklist_diario'
+               AND p.submitted_at IS NOT NULL
+               AND timezone('America/Fortaleza', p.submitted_at)::date = clock.local_date
+           )
+         ON CONFLICT (user_id, reminder_date) DO NOTHING
+         RETURNING user_id, reminder_date
+       )
+       SELECT missing.user_id, missing.reminder_date, u.name
+       FROM missing
+       JOIN users u ON u.id = missing.user_id`,
+    );
+
+    for (const reminder of due.rows) {
+      const reminderDate = String(reminder.reminder_date).slice(0, 10);
+      const metadata = { technicianId: String(reminder.user_id), reminderDate };
+      await client.query(
+        `INSERT INTO notifications
+          (user_id, notification_type, title, message, metadata)
+         VALUES ($1, 'daily_checklist_reminder', 'Lembrete: checklist diário pendente', $2, $3)`,
+        [reminder.user_id, 'Você ainda não enviou seu checklist diário de EPI de hoje.', metadata],
+      );
+      pushRecipients.add(String(reminder.user_id));
+
+      const adminNotifications = await client.query(
+        `INSERT INTO notifications
+          (user_id, notification_type, title, message, metadata)
+         SELECT id, 'daily_checklist_reminder', 'Checklist diário pendente', $1, $2
+         FROM users
+         WHERE active = TRUE AND role = 'admin'
+         RETURNING user_id`,
+        [`O técnico ${reminder.name} ainda não enviou o checklist diário de EPI de hoje.`, metadata],
+      );
+      adminNotifications.rows.forEach((row) => pushRecipients.add(String(row.user_id)));
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  if (pushRecipients.size) {
+    await sendNativePush({
+      userIds: [...pushRecipients],
+      title: 'Checklist diário pendente',
+      message: 'Há uma notificação de checklist diário pendente no SIGOS.',
+      data: { notificationType: 'daily_checklist_reminder' },
+    });
+  }
+}
+
 async function sendNativePush({ userIds, title, message, data = {} }) {
   if (!firebaseMessaging || !userIds?.length) return;
   try {
@@ -560,6 +634,13 @@ async function initSchema() {
 
     CREATE INDEX IF NOT EXISTS notifications_user_created_idx ON notifications (user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS notifications_user_unread_idx ON notifications (user_id, read_at, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS daily_checklist_reminders (
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      reminder_date DATE NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, reminder_date)
+    );
 
     CREATE TABLE IF NOT EXISTS push_devices (
       id BIGSERIAL PRIMARY KEY,
@@ -3245,7 +3326,7 @@ app.get('/api/users/:id/technician-summary', auth, requireRole('admin'), async (
   if (!technician) return res.status(404).json({ error: 'Usuário não encontrado.' });
   if (technician.role !== 'tecnico') return res.status(400).json({ error: 'O detalhe de checklist está disponível apenas para técnicos.' });
 
-  const [logs, epis, pending] = await Promise.all([
+  const [logs, epis, pending, dailyChecklistDays] = await Promise.all([
     pool.query(
       `SELECT a.id, a.event_type, a.entity_type, a.entity_id,
               a.ip_address, a.user_agent, a.metadata, a.created_at
@@ -3279,6 +3360,15 @@ app.get('/api/users/:id/technician-summary', auth, requireRole('admin'), async (
        ORDER BY created_at DESC`,
       [technician.id],
     ),
+    pool.query(
+      `SELECT DISTINCT to_char(timezone('America/Fortaleza', submitted_at)::date, 'YYYY-MM-DD') AS day
+       FROM epi_processes
+       WHERE created_by = $1
+         AND process_type = 'checklist_diario'
+         AND submitted_at IS NOT NULL
+       ORDER BY day DESC`,
+      [technician.id],
+    ),
   ]);
 
   res.json({
@@ -3292,6 +3382,7 @@ app.get('/api/users/:id/technician-summary', auth, requireRole('admin'), async (
     logs: logs.rows,
     epis: epis.rows,
     pending: pending.rows,
+    dailyChecklistDays: dailyChecklistDays.rows.map((row) => row.day),
   });
 });
 
@@ -3385,6 +3476,11 @@ app.use((error, _req, res, _next) => {
 async function main() {
   await initSchema();
   await bootstrapAdmin();
+  await checkDailyChecklistReminders();
+  const reminderTimer = setInterval(() => {
+    checkDailyChecklistReminders().catch((error) => console.error('Não foi possível verificar checklists diários pendentes:', error));
+  }, 60_000);
+  reminderTimer.unref?.();
   app.listen(port, host, () => console.log(`SIGOS ouvindo em ${host}:${port}`));
 }
 

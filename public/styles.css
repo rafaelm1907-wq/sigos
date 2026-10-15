@@ -224,6 +224,19 @@ textarea { width: 100%; min-height: 68px; resize: vertical; border: 1px solid #3
 .technician-stats div { display: grid; gap: 4px; padding: 14px; border: 1px solid rgba(148, 163, 184, .14); border-radius: 11px; background: rgba(30, 58, 95, .28); }
 .technician-stats strong { color: #ecfdf5; font-size: 1.6rem; line-height: 1; }
 .technician-stats span { color: #9aa8c2; font-size: .74rem; }
+.technician-calendar-section { max-width: 420px; margin: 18px 0 24px; padding: 16px; border: 1px solid rgba(148, 163, 184, .14); border-radius: 12px; background: rgba(7, 15, 31, .28); }
+.technician-calendar-section h4 { margin: 0 0 12px; }
+.technician-calendar-heading { display: grid; grid-template-columns: 40px 1fr 40px; align-items: center; gap: 10px; margin-bottom: 12px; }
+.technician-calendar-heading h4 { margin: 0; text-align: center; text-transform: capitalize; }
+.technician-calendar-heading .small-button { min-width: 40px; padding: 5px; font-size: 1.2rem; line-height: 1; }
+.technician-calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 5px; text-align: center; }
+.calendar-weekday { padding: 5px 0; color: #9aa8c2; font-size: .68rem; font-weight: 800; }
+.calendar-day { position: relative; display: grid; min-height: 36px; place-items: center; border: 1px solid rgba(148, 163, 184, .12); border-radius: 8px; color: #dbeafe; font-size: .78rem; }
+.calendar-day.empty { border-color: transparent; }
+.calendar-day.completed { border-color: rgba(52, 211, 153, .5); background: rgba(52, 211, 153, .16); color: #a7f3d0; font-weight: 900; }
+.calendar-check { color: #34d399; font-weight: 900; }
+.calendar-day .calendar-check { position: absolute; top: 1px; right: 3px; font-size: .55rem; }
+.calendar-legend { display: flex; align-items: center; gap: 6px; margin: 11px 0 0; color: #9aa8c2; font-size: .72rem; }
 .technician-detail-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(260px, .8fr); gap: 18px; }
 .technician-detail section { margin-top: 18px; }
 .technician-detail h4 { margin: 0 0 10px; }

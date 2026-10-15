@@ -65,6 +65,8 @@ let epiCatalog = [];
 let stockPpeCatalog = [];
 let nativePushToken = null;
 let selectedSettingsTab = 'company';
+let technicianCalendarMonth = '';
+let technicianCalendarDays = [];
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[char]));
@@ -73,6 +75,43 @@ function escapeHtml(value) {
 function formatDate(value) {
   if (!value) return '–';
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
+}
+
+function currentFortalezaMonth() {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza', year: 'numeric', month: '2-digit' }).formatToParts(new Date());
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  return `${year}-${month}`;
+}
+
+function shiftCalendarMonth(value, amount) {
+  const [year, month] = value.split('-').map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1 + amount, 1, 12));
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+function renderTechnicianCalendar() {
+  const container = $('#technician-calendar');
+  if (!container || !technicianCalendarMonth) return;
+  const [year, month] = technicianCalendarMonth.split('-').map(Number);
+  const firstDayOffset = (new Date(Date.UTC(year, month - 1, 1, 12)).getUTCDay() + 6) % 7;
+  const daysInMonth = new Date(Date.UTC(year, month, 0, 12)).getUTCDate();
+  const title = new Date(Date.UTC(year, month - 1, 1, 12)).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const completedDays = new Set(technicianCalendarDays);
+  const cells = [
+    ...Array.from({ length: firstDayOffset }, () => '<span class="calendar-day empty" aria-hidden="true"></span>'),
+    ...Array.from({ length: daysInMonth }, (_, index) => {
+      const day = index + 1;
+      const dateKey = `${technicianCalendarMonth}-${String(day).padStart(2, '0')}`;
+      const completed = completedDays.has(dateKey);
+      return `<span class="calendar-day ${completed ? 'completed' : ''}" ${completed ? `title="Checklist diário realizado em ${dateKey}" aria-label="${day}, checklist realizado"` : `title="${dateKey}: sem checklist diário registrado" aria-label="${day}, sem checklist"`}>${day}${completed ? '<span class="calendar-check" aria-hidden="true">✓</span>' : ''}</span>`;
+    }),
+  ].join('');
+  container.innerHTML = `<div class="technician-calendar-heading"><button type="button" class="secondary small-button" data-calendar-shift="-1" aria-label="Mês anterior">‹</button><h4>${escapeHtml(title)}</h4><button type="button" class="secondary small-button" data-calendar-shift="1" aria-label="Próximo mês">›</button></div><div class="technician-calendar-grid" aria-label="Calendário de checklists diários"><span class="calendar-weekday">Seg</span><span class="calendar-weekday">Ter</span><span class="calendar-weekday">Qua</span><span class="calendar-weekday">Qui</span><span class="calendar-weekday">Sex</span><span class="calendar-weekday">Sáb</span><span class="calendar-weekday">Dom</span>${cells}</div><p class="calendar-legend"><span class="calendar-check" aria-hidden="true">✓</span> Checklist diário registrado</p>`;
+  container.querySelectorAll('[data-calendar-shift]').forEach((button) => button.addEventListener('click', () => {
+    technicianCalendarMonth = shiftCalendarMonth(technicianCalendarMonth, Number(button.dataset.calendarShift));
+    renderTechnicianCalendar();
+  }));
 }
 
 function browserLabel(userAgent) {
@@ -143,6 +182,7 @@ function notificationEntityLabel(notification) {
   if (notification.entityType === 'vehicle_checklist') return 'Abrir checklist de veículo';
   if (notification.entityType === 'epi_term') return 'Abrir termo de EPI';
   if (notification.entityType === 'epi_process') return 'Abrir processo de EPI';
+  if (notification.notificationType === 'daily_checklist_reminder') return 'Abrir checklist diário de EPI';
   if (notification.notificationType === 'admin_message') return 'Mensagem do administrador';
   return 'Abrir registro';
 }
@@ -640,7 +680,10 @@ async function loadTechnicianSummary(userId) {
   panel.innerHTML = '<p class="muted">Carregando dados do técnico...</p>';
   try {
     const data = await api(`/api/users/${userId}/technician-summary`);
-    panel.innerHTML = `<div class="technician-detail-heading"><div><div class="eyebrow">DETALHE DO TÉCNICO · ${escapeHtml(data.period.toUpperCase())}</div><h3>${escapeHtml(data.technician.name)}</h3><p class="muted">${escapeHtml(data.technician.email)} · ${data.technician.active ? 'Conta ativa' : 'Conta desativada'}</p></div><button id="close-technician-detail" type="button" class="secondary small-button">Fechar</button></div><div class="technician-stats"><div><strong>${escapeHtml(data.stats.checklistEvents)}</strong><span>eventos de checklist</span></div><div><strong>${escapeHtml(data.stats.episToday)}</strong><span>EPIs registrados hoje</span></div><div><strong>${escapeHtml(data.stats.pending)}</strong><span>pendências</span></div></div><div class="technician-detail-grid"><section><h4>EPIs com o técnico hoje</h4>${data.epis.length ? `<div class="table-wrap"><table><thead><tr><th>EPI</th><th>Qtd.</th><th>CA</th><th>Condição</th><th>Assinado</th></tr></thead><tbody>${data.epis.map((item) => `<tr><td>${escapeHtml(item.equipment_name)}</td><td>${escapeHtml(item.quantity)}</td><td>${escapeHtml(item.ca || '–')}</td><td>${escapeHtml(item.condition || '–')}</td><td>${escapeHtml(formatDate(item.signed_at))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhum EPI registrado em termo assinado hoje.</p>'}</section><section><h4>Pendências</h4>${data.pending.length ? `<div class="pending-list">${data.pending.map((item) => `<div class="pending-item"><strong>${escapeHtml(item.type === 'vehicle_checklist' ? 'Checklist de veículo' : 'Termo de EPI')}</strong><span>${escapeHtml(item.label)} · ${escapeHtml(item.status)}</span></div>`).join('')}</div>` : '<p class="muted">Nenhuma pendência encontrada.</p>'}</section></div><section><h4>Logs de checklist</h4>${data.logs.length ? `<div class="table-wrap"><table><thead><tr><th>Quando</th><th>Evento</th><th>Registro</th><th>IP</th></tr></thead><tbody>${data.logs.map((item) => `<tr><td>${escapeHtml(formatDate(item.created_at))}</td><td>${escapeHtml(eventLabel(item.event_type))}</td><td>${escapeHtml(item.entity_type ? `${item.entity_type} #${item.entity_id || '–'}` : '–')}</td><td>${escapeHtml(item.ip_address || '–')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhum log de checklist encontrado.</p>'}</section>`;
+    technicianCalendarDays = data.dailyChecklistDays || [];
+    technicianCalendarMonth = currentFortalezaMonth();
+    panel.innerHTML = `<div class="technician-detail-heading"><div><div class="eyebrow">DETALHE DO TÉCNICO · ${escapeHtml(data.period.toUpperCase())}</div><h3>${escapeHtml(data.technician.name)}</h3><p class="muted">${escapeHtml(data.technician.email)} · ${data.technician.active ? 'Conta ativa' : 'Conta desativada'}</p></div><button id="close-technician-detail" type="button" class="secondary small-button">Fechar</button></div><div class="technician-stats"><div><strong>${escapeHtml(data.stats.checklistEvents)}</strong><span>eventos de checklist</span></div><div><strong>${escapeHtml(data.stats.episToday)}</strong><span>EPIs registrados hoje</span></div><div><strong>${escapeHtml(data.stats.pending)}</strong><span>pendências</span></div></div><section class="technician-calendar-section"><h4>Calendário de checklist diário</h4><div id="technician-calendar"></div></section><div class="technician-detail-grid"><section><h4>EPIs com o técnico hoje</h4>${data.epis.length ? `<div class="table-wrap"><table><thead><tr><th>EPI</th><th>Qtd.</th><th>CA</th><th>Condição</th><th>Assinado</th></tr></thead><tbody>${data.epis.map((item) => `<tr><td>${escapeHtml(item.equipment_name)}</td><td>${escapeHtml(item.quantity)}</td><td>${escapeHtml(item.ca || '–')}</td><td>${escapeHtml(item.condition || '–')}</td><td>${escapeHtml(formatDate(item.signed_at))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhum EPI registrado em termo assinado hoje.</p>'}</section><section><h4>Pendências</h4>${data.pending.length ? `<div class="pending-list">${data.pending.map((item) => `<div class="pending-item"><strong>${escapeHtml(item.type === 'vehicle_checklist' ? 'Checklist de veículo' : 'Termo de EPI')}</strong><span>${escapeHtml(item.label)} · ${escapeHtml(item.status)}</span></div>`).join('')}</div>` : '<p class="muted">Nenhuma pendência encontrada.</p>'}</section></div><section><h4>Logs de checklist</h4>${data.logs.length ? `<div class="table-wrap"><table><thead><tr><th>Quando</th><th>Evento</th><th>Registro</th><th>IP</th></tr></thead><tbody>${data.logs.map((item) => `<tr><td>${escapeHtml(formatDate(item.created_at))}</td><td>${escapeHtml(eventLabel(item.event_type))}</td><td>${escapeHtml(item.entity_type ? `${item.entity_type} #${item.entity_id || '–'}` : '–')}</td><td>${escapeHtml(item.ip_address || '–')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhum log de checklist encontrado.</p>'}</section>`;
+    renderTechnicianCalendar();
     $('#close-technician-detail').addEventListener('click', () => panel.classList.add('hidden'));
   } catch (error) {
     panel.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
