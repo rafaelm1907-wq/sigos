@@ -5,13 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0b1020" />
     <meta name="mobile-web-app-capable" content="yes" />
+    <link rel="icon" type="image/png" href="/assets/sigos-symbol.png" />
+    <link rel="apple-touch-icon" href="/assets/sigos-symbol.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <title>SIGOS · Gestão operacional</title>
-    <link rel="stylesheet" href="/styles.css?v=auto-signature-20261015-1" />
+    <link rel="stylesheet" href="/styles.css?v=sigos-brand-20261015-1" />
   </head>
   <body>
     <main class="shell">
       <section id="login-view" class="card auth-card">
-        <div class="eyebrow">SIGOS · GESTÃO OPERACIONAL</div>
+        <div class="auth-brand"><img class="system-logo" src="/assets/sigos-symbol.png" alt="" /><div><div class="eyebrow">SIGOS · GESTÃO OPERACIONAL</div><p class="muted">Sistema Integrado de Gestão Operacional e Segurança</p></div></div>
         <h1>SIGOS</h1>
         <form id="login-form" class="stack">
           <label>E-mail<input id="login-email" type="email" required autocomplete="username" /></label>
@@ -55,7 +58,7 @@
         </section>
         <div id="main-app-layout" class="app-layout hidden">
           <aside class="sidebar">
-            <div class="brand"><span class="brand-mark">S</span><span><strong>SIGOS</strong><small>Gestão operacional</small></span></div>
+            <div class="brand"><span class="brand-mark"><img class="system-logo" src="/assets/sigos-symbol.png" alt="" /></span><span><strong>SIGOS</strong><small>Gestão operacional</small></span></div>
             <button id="mobile-menu-toggle" class="mobile-menu-toggle secondary" type="button" aria-expanded="false" aria-controls="sidebar-nav"><span>☰</span> Menu</button>
             <nav id="sidebar-nav" class="sidebar-nav">
               <button class="nav-item active" data-view="home-view"><span>⌂</span> Visão geral</button>

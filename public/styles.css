@@ -4,6 +4,9 @@ body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top r
 .shell { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 48px 0 72px; }
 .card { background: rgba(18, 27, 48, .88); border: 1px solid rgba(148, 163, 184, .16); border-radius: 18px; box-shadow: 0 24px 80px rgba(0, 0, 0, .22); }
 .auth-card { width: min(440px, 100%); margin: 9vh auto; padding: 34px; }
+.auth-brand { display: flex; align-items: center; gap: 14px; }
+.auth-brand .system-logo { width: 62px; height: 62px; }
+.auth-brand p { margin: 5px 0 0; font-size: .76rem; line-height: 1.35; }
 h1, h2 { margin: 6px 0 10px; letter-spacing: -.04em; }
 h1 { font-size: clamp(2rem, 4vw, 3.3rem); }
 h2 { font-size: 1.35rem; }
@@ -132,7 +135,8 @@ th { color: #9aa8c2; font-weight: 600; }
 .app-layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 24px; align-items: start; }
 .sidebar { position: sticky; top: 24px; min-height: calc(100vh - 48px); display: flex; flex-direction: column; padding: 18px 12px; border: 1px solid rgba(148, 163, 184, .16); border-radius: 18px; background: rgba(12, 21, 39, .9); }
 .brand { display: flex; align-items: center; gap: 10px; padding: 7px 9px 24px; border-bottom: 1px solid rgba(148, 163, 184, .12); }
-.brand-mark { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: #34d399; color: #062218; font-weight: 900; }
+.brand-mark { display: grid; place-items: center; width: 42px; height: 42px; flex: 0 0 42px; border-radius: 11px; background: #f8fafc; overflow: hidden; }
+.system-logo { display: block; width: 100%; height: 100%; object-fit: contain; }
 .brand strong, .brand small { display: block; }
 .brand strong { letter-spacing: .08em; }
 .brand small { color: #9aa8c2; font-size: .7rem; margin-top: 2px; }

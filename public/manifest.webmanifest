@@ -1,0 +1,19 @@
+{
+  "name": "SIGOS · Gestão operacional",
+  "short_name": "SIGOS",
+  "description": "Sistema Integrado de Gestão Operacional e Segurança",
+  "lang": "pt-BR",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b1020",
+  "theme_color": "#0b1020",
+  "icons": [
+    {
+      "src": "/assets/sigos-symbol.png",
+      "sizes": "1280x1280",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
