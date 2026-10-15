@@ -1061,10 +1061,12 @@ function stockProcessLabel(movement) {
 
 function renderStockVehicleIntegrity(vehicle) {
   const items = vehicle.integrityItems || [];
+  const hasIntegrityIssue = items.some((item) => [item.afterStatus, item.beforeStatus].some((status) => status && status !== 'ok'));
   const content = vehicle.lastChecklistId && items.length
     ? `<small class="table-subtext">${escapeHtml(vehicle.lastChecklistType === 'diario' ? 'Checklist diário' : 'Checklist quinzenal')} · ${escapeHtml(formatDate(vehicle.lastChecklistAt))}</small><div class="vehicle-integrity-list">${items.map((item) => `<div class="vehicle-integrity-item"><strong>${escapeHtml(item.itemName)}</strong><span>Estado: ${escapeHtml(vehicleStatusLabel(item.afterStatus || item.beforeStatus))}</span>${item.beforeStatus !== item.afterStatus ? `<small>Antes: ${escapeHtml(vehicleStatusLabel(item.beforeStatus))} · Depois: ${escapeHtml(vehicleStatusLabel(item.afterStatus))}</small>` : ''}${item.afterDescription || item.beforeDescription ? `<small>Descrição: ${escapeHtml(item.afterDescription || item.beforeDescription)}</small>` : ''}</div>`).join('')}</div>`
     : '<span class="muted">Nenhum checklist lançado para este veículo.</span>';
-  return `<details class="vehicle-integrity-details"><summary>Integridade</summary><div class="vehicle-integrity-content">${content}</div></details>`;
+  const warning = hasIntegrityIssue ? '<span class="vehicle-integrity-warning" title="Há item com avaria ou irregularidade" aria-label="Há item com avaria ou irregularidade">!</span>' : '';
+  return `<details class="vehicle-integrity-details"><summary>Integridade ${warning}</summary><div class="vehicle-integrity-content">${content}</div></details>`;
 }
 
 async function loadStock() {
