@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b1020" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>SIGOS · Gestão operacional</title>
+    <link rel="stylesheet" href="/styles.css?v=photo-limits-20261015-1" />
+  </head>
+  <body>
+    <main class="shell">
+      <section id="login-view" class="card auth-card">
+        <div class="eyebrow">SIGOS · GESTÃO OPERACIONAL</div>
+        <h1>SIGOS</h1>
+        <form id="login-form" class="stack">
+          <label>E-mail<input id="login-email" type="email" required autocomplete="username" /></label>
+          <label>Senha<input id="login-password" type="password" required autocomplete="current-password" /></label>
+          <button type="submit">Entrar</button>
+          <p id="login-error" class="error"></p>
+        </form>
+      </section>
+
+      <section id="app-view" class="hidden">
+        <section id="onboarding-gate" class="onboarding-gate hidden">
+          <div class="onboarding-card card">
+            <div class="eyebrow">PRIMEIRO ACESSO</div>
+            <h2>Configure seu acesso ao SIGOS</h2>
+            <p class="muted">Antes de usar os checklists, conclua as três etapas de segurança.</p>
+            <section id="onboarding-password-step" class="onboarding-step hidden">
+              <div class="step-number">1</div><div><h3>Troque sua senha</h3><p class="muted">A senha provisória foi criada pelo administrador.</p></div>
+              <form id="onboarding-password-form" class="onboarding-form"><input id="onboarding-current-password" type="password" placeholder="Senha provisória" minlength="10" required /><input id="onboarding-new-password" type="password" placeholder="Nova senha (10+ caracteres)" minlength="10" required /><input id="onboarding-confirm-password" type="password" placeholder="Repita a nova senha" minlength="10" required /><button type="submit">Salvar nova senha</button></form><p id="onboarding-password-message" class="error"></p>
+            </section>
+            <section id="onboarding-signature-step" class="onboarding-step hidden">
+              <div class="step-number">2</div><div><h3>Cadastre sua assinatura padrão</h3><p class="muted">Ela será usada para validar os termos. Não precisa ser igual ao seu nome.</p></div>
+              <div id="onboarding-signature-mount"></div><label class="consent-check"><input id="onboarding-signature-confirm" type="checkbox" /> Confirmo que esta assinatura será usada para validar meus registros no SIGOS.</label><div class="form-actions"><button id="onboarding-clear-signature" type="button" class="secondary">Limpar</button><button id="onboarding-save-signature" type="button">Salvar assinatura</button></div><p id="onboarding-signature-message" class="error"></p>
+            </section>
+            <section id="onboarding-consent-step" class="onboarding-step hidden">
+              <div class="step-number">3</div><div><h3>Consinta com os registros do aplicativo</h3><p class="muted">O SIGOS registra dados necessários para auditoria dos checklists.</p></div>
+              <label class="consent-check"><input id="consent-location" type="checkbox" /> Autorizo o uso da minha localização quando eu permitir a captura.</label><label class="consent-check"><input id="consent-ip" type="checkbox" /> Estou ciente do registro do IP e dispositivo.</label><label class="consent-check"><input id="consent-image" type="checkbox" /> Autorizo o uso da minha imagem nas selfies e fotos dos processos.</label><div class="form-actions"><button id="onboarding-capture-location" type="button" class="secondary">Tentar capturar localização</button><button id="onboarding-save-consent" type="button">Concluir primeiro acesso</button></div><p id="onboarding-consent-message" class="error"></p>
+            </section>
+          </div>
+        </section>
+        <section id="company-onboarding-gate" class="onboarding-gate hidden">
+          <div class="onboarding-card card">
+            <div class="eyebrow">PRIMEIRO ACESSO DO ADMIN</div>
+            <h2>Cadastre os dados da empresa</h2>
+            <p class="muted">Essas informações serão usadas nas configurações e nos próximos termos emitidos pelo SIGOS.</p>
+            <form id="company-onboarding-form" class="company-form">
+              <div class="company-form-grid"><label>Nome fantasia<input id="company-onboarding-trade-name" required /></label><label>Razão social<input id="company-onboarding-legal-name" required /></label><label>CNPJ<input id="company-onboarding-cnpj" inputmode="numeric" placeholder="00.000.000/0000-00" required /></label><label>Telefone de contato<input id="company-onboarding-phone" type="tel" required /></label><label>E-mail da empresa<input id="company-onboarding-email" type="email" required /></label><label>Nome do responsável<input id="company-onboarding-responsible-name" required /></label><label>Site<input id="company-onboarding-website" type="url" placeholder="https://" /></label><label>Endereço<input id="company-onboarding-address" /></label><label>Cidade<input id="company-onboarding-city" /></label><label>Estado<input id="company-onboarding-state" maxlength="80" /></label><label>CEP<input id="company-onboarding-zip-code" inputmode="numeric" /></label><label class="company-logo-field">Logo da empresa (opcional)<input id="company-onboarding-logo" type="file" accept="image/jpeg,image/png" /><small class="muted">PNG ou JPG. Será compactada antes de ser salva.</small><img id="company-onboarding-logo-preview" class="company-logo-preview hidden" alt="Pré-visualização da logo da empresa" /></label></div>
+              <button type="submit">Salvar dados da empresa e entrar</button>
+              <p id="company-onboarding-message" class="error" aria-live="polite"></p>
+            </form>
+          </div>
+        </section>
+        <div id="main-app-layout" class="app-layout hidden">
+          <aside class="sidebar">
+            <div class="brand"><span class="brand-mark">S</span><span><strong>SIGOS</strong><small>Gestão operacional</small></span></div>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle secondary" type="button" aria-expanded="false" aria-controls="sidebar-nav"><span>☰</span> Menu</button>
+            <nav id="sidebar-nav" class="sidebar-nav">
+              <button class="nav-item active" data-view="home-view"><span>⌂</span> Visão geral</button>
+              <div class="nav-label">CHECKLISTS</div>
+              <button id="nav-epi" class="nav-item" data-view="epi-view"><span>✓</span> EPI's</button>
+              <button class="nav-item" data-view="vehicles-view"><span>▣</span> Veículos</button>
+              <button id="nav-validation" class="nav-item hidden" data-view="validation-view"><span>◈</span> Validações</button>
+              <div class="nav-label">CONFIGURAÇÕES</div>
+              <button id="nav-settings" class="nav-item hidden" data-view="settings-view"><span>⚙</span> Usuários e perfil</button>
+              <button id="nav-stock" class="nav-item hidden" data-view="stock-view"><span>▤</span> Estoque</button>
+              <button id="nav-audit" class="nav-item hidden" data-view="audit-view"><span>≡</span> Logs</button>
+            </nav>
+            <div class="sidebar-footer"><span id="sidebar-role" class="badge"></span><button id="logout" class="secondary">Sair</button></div>
+          </aside>
+
+          <div class="app-content">
+            <header class="topbar">
+              <div><div class="eyebrow">SIGOS · PAINEL PRINCIPAL</div><h1>Olá, <span id="user-name"></span></h1></div>
+              <div class="topbar-actions"><div class="notification-wrap"><button id="notifications-toggle" type="button" class="notification-button secondary" aria-expanded="false" aria-controls="notifications-panel" title="Notificações"><span aria-hidden="true">♢</span><span>Notificações</span><span id="notification-count" class="notification-count hidden">0</span></button><div id="notifications-panel" class="notifications-panel hidden"><div class="notifications-heading"><h3>Notificações</h3><div class="notifications-heading-actions"><button id="notifications-read-all" type="button" class="secondary small-button">Marcar todas como lidas</button><button id="notifications-close" type="button" class="secondary small-button notifications-close" aria-label="Fechar notificações">Fechar</button></div></div><div id="notifications-list" class="notifications-list"><p class="muted">Nenhuma notificação.</p></div></div></div><span id="user-role" class="badge"></span></div>
+            </header>
+
+            <section id="home-view" class="app-section">
+              <div class="page-intro"><div><div class="eyebrow">RESUMO OPERACIONAL</div><h2>O que aconteceu recentemente · <span id="overview-period">últimos 7 dias</span></h2></div><button id="refresh-overview" type="button" class="secondary">Atualizar</button></div>
+              <section class="stats-grid overview-stats">
+                <article class="stat card"><span>Atividades registradas</span><strong id="overview-activity">–</strong></article>
+                <article class="stat card"><span>Termos EPI emitidos</span><strong id="overview-terms">–</strong></article>
+                <article class="stat card"><span>Termos pendentes</span><strong id="overview-pending-terms">–</strong></article>
+                <article class="stat card"><span>Validações pendentes</span><strong id="overview-validations">–</strong></article>
+              </section>
+              <section class="card activity-card"><div class="section-heading"><div><div class="eyebrow">LOG RECENTE · HOJE</div><h2>Últimos 15 eventos</h2></div></div><div class="table-wrap"><table><thead><tr><th>Quando</th><th>Evento</th><th>Responsável</th><th>Registro</th></tr></thead><tbody id="activity-table"></tbody></table></div></section>
+            </section>
+
+            <section id="epi-view" class="app-section hidden">
+              <section id="epi-module" class="card module-card">
+                <div class="section-heading"><div><div class="eyebrow">PROCESSOS · EPI</div><h2>Movimentação de equipamentos</h2></div><button id="refresh-epi-processes" type="button" class="secondary">Atualizar</button></div>
+                <div id="epi-technician-form" class="epi-process-workflow">
+                  <div class="epi-process-options" role="tablist" aria-label="Tipo de processo EPI"><button type="button" class="epi-process-option" data-process-type="devolucao">Devolução</button><button type="button" class="epi-process-option" data-process-type="checklist_diario">Checklist Diário</button><button type="button" class="epi-process-option" data-process-type="transferencia">Transferência</button></div>
+                  <p id="epi-process-selection-hint" class="muted epi-process-selection-hint">Selecione uma opção para iniciar.</p>
+                  <form id="epi-process-form" class="term-form hidden">
+                    <input id="epi-process-type" type="hidden" value="devolucao" />
+                    <div id="epi-validator-field" class="form-grid"><label>Responsável pela validação<select id="epi-validator-user" required><option value="">Selecione um vistoriador ou admin</option></select></label></div>
+                    <div id="epi-target-field" class="form-grid hidden"><label>Usuário que receberá o EPI<select id="epi-target-user"><option value="">Selecione o usuário</option></select></label></div>
+                    <div class="subheading"><h3>Equipamentos do processo</h3><button id="epi-add-process-item" type="button" class="secondary small-button">Adicionar item</button></div>
+                    <div id="epi-process-items" class="epi-process-items"></div>
+                    <section class="epi-step-card"><div class="step-number">1</div><div><h3>Validar termo com sua assinatura</h3><p class="muted">Confira a assinatura cadastrada no primeiro acesso.</p></div><div id="epi-process-signature-preview" class="epi-signature-preview"><p class="muted">Assinatura não cadastrada.</p></div><label class="consent-check"><input id="epi-signature-confirm" type="checkbox" required /> Confirmo que esta assinatura é minha e valida este termo.</label></section>
+                    <div class="form-actions"><button type="submit">Validar assinatura e continuar</button><span id="epi-process-form-message" class="muted"></span></div>
+                  </form>
+                  <section id="epi-selfie-step" class="epi-step-card hidden"><div class="step-number">2</div><div><h3>Selfie do momento</h3><p class="muted">A foto precisa ser tirada agora. A galeria não é aceita.</p></div><button id="epi-open-selfie-camera" type="button">Abrir câmera</button><div id="epi-selfie-camera" class="hidden"><video id="epi-selfie-video" autoplay playsinline muted></video><div class="form-actions"><button id="epi-take-selfie" type="button">Tirar selfie</button><button id="epi-cancel-selfie" type="button" class="secondary">Cancelar</button></div></div><p id="epi-selfie-message" class="muted" aria-live="polite"></p></section>
+                  <section id="epi-photos-step" class="epi-step-card hidden"><div class="step-number">3</div><div><h3>Fotos dos EPIs</h3><p class="muted">Tire até cinco fotos pela câmera para concluir o processo.</p></div><button id="epi-open-photo-camera" type="button">Abrir câmera</button><div id="epi-photo-camera" class="hidden"><video id="epi-photo-video" autoplay playsinline muted></video><div class="form-actions"><button id="epi-take-photo" type="button">Capturar foto</button><button id="epi-cancel-photo" type="button" class="secondary">Cancelar</button></div></div><div id="epi-photo-previews" class="epi-photo-previews"></div><div class="form-actions"><button id="epi-send-photos" type="button" disabled>Enviar fotos e concluir</button></div><p id="epi-photos-message" class="muted" aria-live="polite"></p></section>
+                </div>
+                <div class="epi-process-history"><div class="subheading"><h3>Processos recentes</h3></div><div id="epi-process-list" class="epi-process-list"><p class="muted">Nenhum processo cadastrado.</p></div><div id="epi-process-detail" class="hidden"></div></div>
+                <div class="epi-term-history"><div class="subheading"><h3>Termos de EPI</h3><button id="refresh-epi-terms" type="button" class="secondary small-button">Atualizar</button></div><div id="terms-list" class="terms-list"><p class="muted">Nenhum termo cadastrado.</p></div><div id="term-detail" class="term-detail hidden"></div></div>
+              </section>
+            </section>
+
+            <section id="vehicles-view" class="app-section hidden">
+              <section class="card module-card">
+                <div class="section-heading"><div><div class="eyebrow">CHECKLIST · VEÍCULOS</div><h2>Vistoria de veículo</h2></div></div>
+                <div id="vehicle-tech-panel" class="vehicle-tech-panel hidden">
+                  <form id="vehicle-checklist-form" class="term-form">
+                    <div class="form-grid vehicle-meta-grid"><label>Placa<input id="vehicle-plate" required placeholder="ABC1D23" maxlength="8" /></label><label>Modelo<input id="vehicle-model" required placeholder="Modelo do veículo" /></label><label>Ano<input id="vehicle-year" type="number" min="1900" max="2200" placeholder="2025" /></label><label>KM<input id="vehicle-mileage" type="number" min="0" placeholder="Quilometragem" /></label></div>
+                    <div class="checklist-legend"><span><b>Antes</b> = retirada do veículo</span><span><b>Depois</b> = devolução do veículo</span><span><i class="legend-ok"></i> OK</span><span><i class="legend-problem"></i> Defeito / Quebrado</span></div>
+                    <div class="vehicle-checklist-table"><table><thead><tr><th>Equipamento do veículo</th><th>Antes</th><th>Depois</th></tr></thead><tbody id="vehicle-items-editor"></tbody></table></div>
+                    <div class="vehicle-signature-entry"><div class="subheading"><h3>Assinatura do responsável</h3></div><div id="vehicle-signature-preview" class="epi-signature-preview"><p class="muted">Carregando assinatura padrão...</p></div><label class="consent-check"><input id="vehicle-signature-confirm" type="checkbox" required /> Confirmo que esta é minha assinatura padrão e autorizo seu uso neste checklist.</label><input id="vehicle-typed-name" type="hidden" /><div class="signature-actions"><button id="vehicle-capture-location" type="button" class="secondary">Capturar localização</button></div><p id="vehicle-signature-message" class="muted">A assinatura cadastrada no primeiro acesso será usada. A localização é opcional, mas recomendada.</p></div>
+                    <div class="vehicle-photo-entry"><div class="subheading"><h3>Fotos do veículo</h3></div><p class="muted">Tire de uma a dez fotos agora pela câmera. Não é permitido escolher imagens da galeria.</p><button id="vehicle-open-photo-camera" type="button">Abrir câmera</button><div id="vehicle-photo-camera" class="hidden"><video id="vehicle-photo-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-take-photo" type="button">Capturar foto</button><button id="vehicle-cancel-photo" type="button" class="secondary">Cancelar</button></div></div><div id="vehicle-photo-previews" class="epi-photo-previews"></div><p id="vehicle-photo-message" class="muted" aria-live="polite">Nenhuma foto capturada.</p></div>
+                    <div class="form-actions"><button type="submit">Enviar para validação</button><span id="vehicle-form-message" class="muted"></span></div>
+                  </form>
+                  <div class="vehicle-history"><div class="subheading"><h3>Meus checklists recentes</h3><button id="refresh-vehicle-checklists" type="button" class="secondary small-button">Atualizar</button></div><div id="vehicle-tech-list" class="terms-list"><p class="muted">Nenhum checklist realizado.</p></div><div id="vehicle-tech-detail" class="vehicle-detail hidden"></div></div>
+                </div>
+                <div id="vehicle-admin-panel" class="hidden"><div id="vehicle-admin-list" class="terms-list"></div><div id="vehicle-admin-detail" class="vehicle-detail hidden"></div></div>
+              </section>
+            </section>
+
+            <section id="validation-view" class="app-section hidden"><section class="card module-card"><div class="section-heading"><div><div class="eyebrow">VISTORIADOR</div><h2>Validação de vistorias</h2></div><button id="refresh-validation" type="button" class="secondary">Atualizar</button></div><div id="validation-list" class="validation-list"><p class="muted">Nenhuma vistoria pendente.</p></div><div id="validation-detail" class="validation-detail hidden"></div></section></section>
+
+            <section id="stock-view" class="app-section hidden"><div class="page-intro"><div><div class="eyebrow">ADMINISTRAÇÃO</div><h2>Estoque</h2></div><button id="refresh-stock" type="button" class="secondary">Atualizar</button></div><div class="stock-grid"><section class="card stock-panel"><div class="section-heading"><div><div class="eyebrow">FROTA</div><h2>Cadastro de veículos</h2></div></div><form id="stock-vehicle-form" class="stock-form"><input id="stock-vehicle-plate" placeholder="Placa" maxlength="8" required /><input id="stock-vehicle-model" placeholder="Modelo" required /><input id="stock-vehicle-year" type="number" min="1900" max="2200" placeholder="Ano" /><input id="stock-vehicle-color" placeholder="Cor" /><button type="submit">Salvar veículo</button></form><p id="stock-vehicle-message" class="muted"></p><div class="table-wrap"><table><thead><tr><th>Placa</th><th>Modelo</th><th>Ano</th><th>Cor</th><th>Último responsável</th><th>Status</th></tr></thead><tbody id="stock-vehicles-table"></tbody></table></div></section><section class="card stock-panel"><div class="section-heading"><div><div class="eyebrow">PROTEÇÃO</div><h2>Catálogo de EPIs</h2></div></div><form id="stock-ppe-form" class="stock-form"><input id="stock-ppe-id" type="hidden" /><input id="stock-ppe-code" type="hidden" /><input id="stock-ppe-name" placeholder="Nome do EPI" required /><input id="stock-ppe-ca" placeholder="CA" required /><input id="stock-ppe-category" placeholder="Categoria" /><input id="stock-ppe-quantity" type="number" min="0" placeholder="Quantidade" required /><button type="submit">Salvar EPI</button><button id="stock-ppe-cancel" type="button" class="secondary hidden">Cancelar edição</button></form><p id="stock-ppe-message" class="muted"></p><div class="table-wrap"><table><thead><tr><th>EPI</th><th>CA</th><th>Qtd.</th><th>Com</th><th>Status</th><th>Ações</th></tr></thead><tbody id="stock-ppes-table"></tbody></table></div></section></div></section>
+
+            <section id="settings-view" class="app-section hidden">
+              <div class="settings-tabs" role="tablist" aria-label="Configurações">
+                <button id="settings-tab-company" class="settings-tab-button active" type="button" role="tab" aria-selected="true" data-settings-tab="company">Empresa</button>
+                <button id="settings-tab-security" class="settings-tab-button" type="button" role="tab" aria-selected="false" data-settings-tab="security">Segurança</button>
+                <button id="settings-tab-users" class="settings-tab-button" type="button" role="tab" aria-selected="false" data-settings-tab="users">Contas e perfis</button>
+              </div>
+              <section id="company-settings-card" class="card profile-card settings-panel" data-settings-panel="company" role="tabpanel">
+                <div class="section-heading"><div><div class="eyebrow">EMPRESA</div><h2>Dados da empresa</h2></div></div>
+                <form id="company-settings-form" class="company-form"><div class="company-form-grid"><label>Nome fantasia<input id="company-settings-trade-name" required /></label><label>Razão social<input id="company-settings-legal-name" required /></label><label>CNPJ<input id="company-settings-cnpj" inputmode="numeric" required /></label><label>Telefone de contato<input id="company-settings-phone" type="tel" required /></label><label>E-mail da empresa<input id="company-settings-email" type="email" required /></label><label>Nome do responsável<input id="company-settings-responsible-name" required /></label><label>Site<input id="company-settings-website" type="url" placeholder="https://" /></label><label>Endereço<input id="company-settings-address" /></label><label>Cidade<input id="company-settings-city" /></label><label>Estado<input id="company-settings-state" maxlength="80" /></label><label>CEP<input id="company-settings-zip-code" inputmode="numeric" /></label><label class="company-logo-field">Logo da empresa (opcional)<input id="company-settings-logo" type="file" accept="image/jpeg,image/png" /><small class="muted">Escolha uma nova imagem para substituir a logo atual.</small><img id="company-settings-logo-preview" class="company-logo-preview hidden" alt="Pré-visualização da logo da empresa" /></label></div><div class="form-actions"><button type="submit">Salvar dados da empresa</button><span id="company-settings-message" class="muted" aria-live="polite"></span></div></form>
+              </section>
+              <section id="security-settings-panel" class="card profile-card settings-panel hidden" data-settings-panel="security" role="tabpanel"><div class="section-heading"><div><div class="eyebrow">SEGURANÇA</div><h2>Alterar minha senha</h2></div></div><form id="password-form" class="password-form"><input id="current-password" type="password" placeholder="Senha atual" minlength="10" required /><input id="new-password" type="password" placeholder="Nova senha (10+ caracteres)" minlength="10" required /><input id="confirm-password" type="password" placeholder="Repita a nova senha" minlength="10" required /><button type="submit">Atualizar senha</button></form><p id="password-message" class="muted"></p></section>
+              <section id="admin-panel" class="card admin-panel settings-panel hidden" data-settings-panel="users" role="tabpanel"><div class="section-heading"><div><div class="eyebrow">ADMINISTRAÇÃO</div><h2>Contas e perfis</h2></div></div><form id="user-form" class="user-form"><input id="user-name-input" placeholder="Nome completo" required /><input id="user-email-input" type="email" placeholder="E-mail" required /><select id="user-role-input"><option value="tecnico">Técnico</option><option value="vistoriador">Vistoriador</option><option value="admin">Administrador</option></select><input id="user-password-input" type="password" placeholder="Senha (10+ caracteres)" minlength="10" required /><button type="submit">Criar usuário</button></form><p id="user-form-message" class="muted"></p><div class="table-wrap"><table><thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Status</th><th></th></tr></thead><tbody id="users-table"></tbody></table></div><div id="technician-detail" class="technician-detail hidden"></div><section class="admin-notification-panel"><div class="section-heading"><div><div class="eyebrow">COMUNICAÇÃO</div><h3>Enviar notificação</h3></div></div><form id="admin-notification-form" class="admin-notification-form"><div class="admin-notification-grid"><label>Destinatários<select id="admin-notification-recipient-mode"><option value="all">Todos os outros usuários</option><option value="selected">Usuários específicos</option></select></label><label id="admin-notification-users-field" class="hidden">Escolha os usuários<select id="admin-notification-users" multiple size="5"></select></label></div><label>Título<input id="admin-notification-title" maxlength="120" placeholder="Ex.: Teste de notificações" required /></label><label>Mensagem<textarea id="admin-notification-message" maxlength="1000" rows="4" placeholder="Digite a mensagem que será enviada." required></textarea></label><div class="form-actions"><button type="submit">Enviar notificação</button><span id="admin-notification-status" class="muted" aria-live="polite"></span></div></form></section></section>
+            </section>
+
+            <section id="audit-view" class="app-section hidden"><section class="card admin-panel"><div class="section-heading"><div><div class="eyebrow">ADMINISTRAÇÃO</div><h2>Logs de auditoria</h2></div><button id="refresh-audit" type="button" class="secondary">Atualizar</button></div><div class="table-wrap"><table><thead><tr><th>Quando</th><th>Evento</th><th>Usuário</th><th>IP</th><th>Navegador</th><th>Coordenadas</th><th>Registro</th></tr></thead><tbody id="audit-table"></tbody></table></div></section></section>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script src="/app.js?v=photo-limits-20261015-1"></script>
+  </body>
+</html>
