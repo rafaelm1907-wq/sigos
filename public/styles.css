@@ -484,11 +484,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .epi-photo-previews img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 10px; border: 1px solid rgba(148, 163, 184, .18); }
 .epi-process-history { margin-top: 22px; padding-top: 20px; border-top: 1px solid rgba(148, 163, 184, .16); }
 .epi-term-history { margin-top: 22px; padding-top: 20px; border-top: 1px solid rgba(148, 163, 184, .16); }
-.epi-process-list { display: grid; gap: 8px; }
-.epi-process-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px; border: 1px solid rgba(148, 163, 184, .14); border-radius: 11px; background: rgba(30, 58, 95, .22); }
+.epi-process-list { display: grid; width: 100%; max-width: 100%; min-width: 0; gap: 8px; }
+.epi-process-row { display: flex; width: 100%; max-width: 100%; min-width: 0; justify-content: space-between; align-items: center; gap: 12px; padding: 12px; border: 1px solid rgba(148, 163, 184, .14); border-radius: 11px; background: rgba(30, 58, 95, .22); }
 .epi-process-row > div:first-child { display: grid; gap: 4px; min-width: 0; }
 .epi-process-row small { color: #9aa8c2; }
-.epi-process-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.epi-process-actions { display: flex; min-width: 0; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .epi-process-detail-card { margin-top: 16px; padding: 16px; border-radius: 12px; background: rgba(7, 15, 31, .3); }
 .epi-process-detail-card .paper-table { margin-top: 12px; }
 .epi-process-media { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
@@ -515,8 +515,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .wizard-navigation > .muted, .wizard-navigation > .error { grid-column: 1 / -1; grid-row: 1; }
   .wizard-navigation button { width: 100%; }
   .epi-process-row { align-items: flex-start; flex-direction: column; }
-  .epi-process-actions { justify-content: flex-start; width: 100%; }
-  .epi-process-actions button { width: 100%; }
+  .epi-process-actions { align-self: stretch; justify-content: flex-start; width: 100%; }
+  .epi-process-actions button { flex: 0 1 auto; width: 100%; }
   .epi-photo-previews { grid-template-columns: repeat(3, 1fr); }
 }
 
