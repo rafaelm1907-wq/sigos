@@ -222,8 +222,11 @@ textarea { width: 100%; min-height: 68px; resize: vertical; border: 1px solid #3
 .vehicle-list-item small { color: #9aa8c2; font-size: .76rem; }
 .vehicle-list-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .status-pendente_validacao { background: #713f12; color: #fde68a; }
+.status-attention { background: #7c2d12; color: #fed7aa; }
 .status-validado { background: #14532d; color: #bbf7d0; }
 .status-reprovado { background: #7f1d1d; color: #fecaca; }
+.epi-attention-flag { display: grid; gap: 8px; margin: 12px 0 16px; padding: 12px 14px; border: 1px solid rgba(251, 146, 60, .55); border-radius: 10px; background: rgba(124, 45, 18, .24); color: #fed7aa; }
+.epi-attention-flag > div { display: grid; gap: 4px; color: #ffedd5; font-size: .88rem; }
 .vehicle-detail { margin-top: 16px; }
 .vehicle-detail-card { padding: 18px; border: 1px solid rgba(148, 163, 184, .14); border-radius: 12px; background: rgba(7, 15, 31, .3); }
 .vehicle-detail-card h3 { margin: 0 0 6px; }

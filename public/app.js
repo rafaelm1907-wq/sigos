@@ -79,6 +79,7 @@ const eventLabels = {
   epi_process_photos_uploaded: 'Fotos dos EPIs registradas',
   epi_process_validated: 'Processo EPI validado',
   epi_replacement_requested: 'Solicitação de troca de EPI',
+  epi_process_attention: 'Checklist EPI requer atenção',
   epi_transfer_started: 'Transferência de EPI iniciada',
   push_device_registered: 'Dispositivo de notificações registrado',
   compliance_alert_justified: 'Alerta de conformidade justificado',
@@ -949,10 +950,17 @@ function epiProcessStatusLabel(status) {
   return ({ aguarda_selfie: 'Aguardando selfie', aguarda_fotos: 'Aguardando fotos', pendente_validacao: 'Pendente de validação', validado: 'Validado', reprovado: 'Reprovado' }[status] || status);
 }
 
+function epiAttentionReasonLabel(reason) {
+  if (reason?.type === 'replacement_request') return `Solicitação de troca: ${reason.equipmentName || 'EPI'}`;
+  if (reason?.type === 'negative_inspection') return `Resposta “Não” na inspeção: ${reason.equipmentName || 'item'}`;
+  return 'Resposta que requer atenção';
+}
+
 function renderEpiProcessRow(process) {
   const target = process.targetName ? ` · destino: ${process.targetName}` : '';
   const action = `<button type="button" class="secondary small-button epi-process-open" data-process-id="${process.id}">Abrir</button>`;
-  return `<div class="epi-process-row"><div><strong>${escapeHtml(process.processTitle)}</strong><small>${escapeHtml(process.createdBy.name)}${escapeHtml(target)} · ${escapeHtml(formatDate(process.createdAt))}</small></div><div class="epi-process-actions"><span class="status status-${escapeHtml(process.status)}">${escapeHtml(epiProcessStatusLabel(process.status))}</span>${action}</div></div>`;
+  const attention = process.adminAttentionRequired ? '<span class="status status-attention">⚠️ Requer atenção</span>' : '';
+  return `<div class="epi-process-row"><div><strong>${escapeHtml(process.processTitle)}</strong><small>${escapeHtml(process.createdBy.name)}${escapeHtml(target)} · ${escapeHtml(formatDate(process.createdAt))}</small></div><div class="epi-process-actions">${attention}<span class="status status-${escapeHtml(process.status)}">${escapeHtml(epiProcessStatusLabel(process.status))}</span>${action}</div></div>`;
 }
 
 async function loadEpiProcesses() {
@@ -997,8 +1005,9 @@ async function openEpiProcess(id) {
     const media = process.media.map((item) => { const itemDefinition = epiDailyChecklistItems.find((entry) => entry.key === item.itemKey); const label = item.kind === 'selfie' ? 'Selfie' : itemDefinition ? `Foto · ${itemDefinition.label}` : 'Foto do EPI'; return `<figure class="epi-process-media-item"><img src="/api/epi/processes/${process.id}/media/${item.id}" alt="${escapeHtml(label)}" loading="lazy" /><figcaption><strong>${escapeHtml(label)}</strong><span>Data/hora: ${escapeHtml(formatDate(item.createdAt))}</span><span>IP: ${escapeHtml(item.ipAddress || 'Não informado')}</span><span>Navegador: ${escapeHtml(browserLabel(item.userAgent || item.deviceInfo))}</span><span>Dispositivo: ${escapeHtml(deviceLabel(item.userAgent || item.deviceInfo))}</span><span>Cidade: ${escapeHtml(formatMediaLocation(item))}</span><span>Coordenadas: ${escapeHtml(formatMediaCoordinates(item))}</span></figcaption></figure>`; }).join('');
     const responsibilityTerm = process.processType === 'checklist_diario' ? renderEpiDailyResponsibilityTerm(process) : renderEpiGenericTerm(process);
     const canValidate = currentUser.role === 'admin' || String(process.validatorUserId || '') === String(currentUser.id);
+    const attention = process.adminAttentionRequired ? `<div class="epi-attention-flag"><strong>⚠️ Checklist requer atenção do Admin</strong><div>${(process.adminAttentionReasons || []).map((reason) => `<span>${escapeHtml(epiAttentionReasonLabel(reason))}</span>`).join('')}</div></div>` : '';
     const validation = process.status === 'pendente_validacao' && canValidate ? `<div class="epi-review-actions"><textarea id="epi-validation-notes" maxlength="500" placeholder="Observação da validação (opcional)"></textarea><div class="form-actions"><button type="button" data-epi-validate="validado">Validar processo</button><button type="button" class="secondary" data-epi-validate="reprovado">Reprovar</button></div></div>` : '';
-    panel.innerHTML = `<div class="epi-process-detail-card"><div class="section-heading"><div><div class="eyebrow">${escapeHtml(process.processTitle)}</div><h3>Processo #${escapeHtml(process.id)}</h3><p class="muted">${escapeHtml(epiProcessStatusLabel(process.status))} · ${escapeHtml(formatDate(process.createdAt))}</p></div><button id="close-epi-process-detail" type="button" class="secondary small-button">Fechar</button></div>${responsibilityTerm}<p class="audit-note">Responsável: ${escapeHtml(process.createdBy.name)} · Validador: ${escapeHtml(process.validatorName || 'Administradores')} · Assinatura SHA-256: ${escapeHtml(process.signatureHash || '–')}</p>${media ? `<div class="epi-process-media">${media}</div>` : '<p class="muted">Nenhuma imagem registrada.</p>'}${validation}</div>`;
+    panel.innerHTML = `<div class="epi-process-detail-card"><div class="section-heading"><div><div class="eyebrow">${escapeHtml(process.processTitle)}</div><h3>Processo #${escapeHtml(process.id)}</h3><p class="muted">${escapeHtml(epiProcessStatusLabel(process.status))} · ${escapeHtml(formatDate(process.createdAt))}</p></div><button id="close-epi-process-detail" type="button" class="secondary small-button">Fechar</button></div>${attention}${responsibilityTerm}<p class="audit-note">Responsável: ${escapeHtml(process.createdBy.name)} · Validador: ${escapeHtml(process.validatorName || 'Administradores')} · Assinatura SHA-256: ${escapeHtml(process.signatureHash || '–')}</p>${media ? `<div class="epi-process-media">${media}</div>` : '<p class="muted">Nenhuma imagem registrada.</p>'}${validation}</div>`;
     panel.querySelector('.epi-process-detail-card > .section-heading')?.insertAdjacentHTML('beforeend', '<button id="download-epi-process-pdf" type="button" class="secondary small-button">Baixar PDF</button>');
     $('#close-epi-process-detail').addEventListener('click', () => panel.classList.add('hidden'));
     $('#download-epi-process-pdf')?.addEventListener('click', () => {

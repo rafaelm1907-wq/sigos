@@ -1021,6 +1021,8 @@ async function initSchema() {
       signature_document_hash TEXT,
       signature_hash TEXT,
       submitted_at TIMESTAMPTZ,
+      admin_attention_required BOOLEAN NOT NULL DEFAULT FALSE,
+      admin_attention_reasons JSONB NOT NULL DEFAULT '[]'::jsonb,
       validated_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
       validated_at TIMESTAMPTZ,
       validation_notes TEXT,
@@ -1047,6 +1049,8 @@ async function initSchema() {
     ALTER TABLE epi_process_items ADD COLUMN IF NOT EXISTS replacement_requested BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS company_logo_data TEXT;
     ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS company_logo_mime_type TEXT;
+    ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS admin_attention_required BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS admin_attention_reasons JSONB NOT NULL DEFAULT '[]'::jsonb;
 
     CREATE TABLE IF NOT EXISTS epi_process_media (
       id BIGSERIAL PRIMARY KEY,
@@ -2182,6 +2186,8 @@ function publicEpiProcess(row, includeSignatureData = false) {
     signatureHash: row.signature_hash,
     signatureData: includeSignatureData ? row.creator_signature_data : undefined,
     submittedAt: row.submitted_at,
+    adminAttentionRequired: Boolean(row.admin_attention_required),
+    adminAttentionReasons: Array.isArray(row.admin_attention_reasons) ? row.admin_attention_reasons : [],
     validatedBy: row.validated_by,
     validatedByName: row.validated_by_name || null,
     validatedAt: row.validated_at,
@@ -2491,39 +2497,66 @@ app.post('/api/epi/processes/:id/photos', auth, uploadRateLimit, async (req, res
   const replacementItems = row.process_type === 'checklist_diario'
     ? (row.items || []).filter((item) => item.section === 'verificacao' && item.replacementRequested === true)
     : [];
-  if (replacementItems.length) {
-    const requestedItems = replacementItems.map((item) => ({
-      itemKey: item.itemKey,
-      equipmentName: item.equipmentName,
-      ppeItemId: item.ppeItemId || null,
-      quantity: item.quantity,
-    }));
-    const itemSummary = requestedItems.map((item) => `${item.equipmentName}${item.quantity > 1 ? ` (${item.quantity})` : ''}`).join(', ');
+  const negativeInspectionItems = row.process_type === 'checklist_diario'
+    ? (row.items || []).filter((item) => item.section === 'inspecao' && String(item.condition || '').toLowerCase() === 'nao')
+    : [];
+  const replacementReasons = replacementItems.map((item) => ({
+    type: 'replacement_request',
+    itemKey: item.itemKey,
+    equipmentName: item.equipmentName,
+    ppeItemId: item.ppeItemId || null,
+    quantity: item.quantity,
+  }));
+  const negativeReasons = negativeInspectionItems.map((item) => ({
+    type: 'negative_inspection',
+    itemKey: item.itemKey,
+    equipmentName: item.equipmentName,
+    observation: item.observation || null,
+  }));
+  const attentionReasons = [...replacementReasons, ...negativeReasons];
+  if (attentionReasons.length) {
+    await pool.query(
+      `UPDATE epi_processes
+       SET admin_attention_required = TRUE, admin_attention_reasons = $2::jsonb
+       WHERE id = $1`,
+      [row.id, JSON.stringify(attentionReasons)],
+    );
+    const replacementSummary = replacementItems.length
+      ? `solicitação de troca: ${replacementItems.map((item) => `${item.equipmentName}${item.quantity > 1 ? ` (${item.quantity})` : ''}`).join(', ')}`
+      : '';
+    const negativeSummary = negativeInspectionItems.length
+      ? `resposta “Não” na inspeção: ${negativeInspectionItems.map((item) => item.equipmentName).join(', ')}`
+      : '';
+    const attentionSummary = [replacementSummary, negativeSummary].filter(Boolean).join('; ');
     await notifyRoles({
       roles: ['admin'],
-      notificationType: 'epi_replacement_requested',
-      title: 'Solicitação de troca de EPI',
-      message: `${req.user.name} reportou avaria e solicitou troca de: ${itemSummary}.`,
+      notificationType: 'epi_process_attention',
+      title: 'Checklist de EPI requer atenção',
+      message: `${req.user.name} concluiu um checklist com ${attentionSummary}. Verifique o processo.`,
       entityType: 'epi_process',
       entityId: row.id,
-      metadata: { processType: row.process_type, requestedBy: req.user.id, items: requestedItems },
+      metadata: { processType: row.process_type, attentionReasons },
     });
-    await notifyUsers({
-      userIds: [req.user.id],
-      notificationType: 'epi_replacement_requested',
-      title: 'Solicitação de troca registrada',
-      message: `Sua solicitação de troca foi registrada para: ${itemSummary}. Entre em contato com o administrador.`,
-      entityType: 'epi_process',
-      entityId: row.id,
-      metadata: { processType: row.process_type, items: requestedItems },
-    });
+    if (replacementItems.length || negativeInspectionItems.length) {
+      await notifyUsers({
+        userIds: [req.user.id],
+        notificationType: replacementItems.length ? 'epi_replacement_requested' : 'epi_process_attention',
+        title: replacementItems.length ? 'Solicitação de troca registrada' : 'Checklist requer atenção',
+        message: replacementItems.length
+          ? `Sua solicitação de troca foi registrada${negativeInspectionItems.length ? ` e houve resposta “Não” em: ${negativeInspectionItems.map((item) => item.equipmentName).join(', ')}` : ''}. Entre em contato com o administrador.`
+          : `Seu checklist teve resposta “Não” em: ${negativeInspectionItems.map((item) => item.equipmentName).join(', ')}. Entre em contato com o administrador.`,
+        entityType: 'epi_process',
+        entityId: row.id,
+        metadata: { processType: row.process_type, attentionReasons },
+      });
+    }
     await audit({
       req,
       actorUserId: req.user.id,
-      eventType: 'epi_replacement_requested',
+      eventType: 'epi_process_attention',
       entityType: 'epi_process',
       entityId: row.id,
-      metadata: { items: requestedItems },
+      metadata: { attentionReasons },
     });
   }
   const recipientIds = [row.validator_user_id, row.target_user_id].filter((id) => id && String(id) !== String(req.user.id));
@@ -2964,6 +2997,12 @@ function renderEpiProcessPdf(doc, process) {
   }
 
   pdfEnsureSpace(doc, 150);
+  if (process.admin_attention_required) {
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#9a3412').text('CHECKLIST REQUER ATENCAO DO ADMIN');
+    const reasons = Array.isArray(process.admin_attention_reasons) ? process.admin_attention_reasons : [];
+    reasons.forEach((reason) => doc.font('Helvetica').fontSize(8).text(`- ${reason.type === 'replacement_request' ? 'Solicitacao de troca' : 'Resposta "Nao" na inspecao'}: ${reason.equipmentName || 'item'}`));
+    doc.moveDown(.5);
+  }
   doc.font('Helvetica-Bold').fontSize(9).fillColor('#172033').text(`Status: ${process.status || '–'}`);
   const signature = pdfImageBuffer(process.creator_signature_data);
   if (signature) {
