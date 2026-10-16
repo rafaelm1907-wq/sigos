@@ -1051,6 +1051,9 @@ function auditRecordMarkup(item) {
   if (item.entity_type === 'epi_process' && item.entity_id) {
     return `${escapeHtml(label)} <button type="button" class="secondary small-button audit-open-process" data-audit-open-epi="${escapeHtml(item.entity_id)}">Abrir processo</button>`;
   }
+  if (item.entity_type === 'vehicle_checklist' && item.entity_id) {
+    return `${escapeHtml(label)} <button type="button" class="secondary small-button audit-open-vehicle" data-audit-open-vehicle="${escapeHtml(item.entity_id)}">Abrir checklist</button>`;
+  }
   return escapeHtml(label);
 }
 
@@ -1060,6 +1063,20 @@ async function loadAuditLogs() {
   document.querySelectorAll('.audit-open-process').forEach((button) => button.addEventListener('click', async () => {
     setView('epi-view');
     await openEpiProcess(button.dataset.auditOpenEpi);
+  }));
+  document.querySelectorAll('.audit-open-vehicle').forEach((button) => button.addEventListener('click', async () => {
+    const detail = '#vehicle-admin-detail';
+    setView('vehicles-view');
+    try {
+      await openVehicleChecklist(button.dataset.auditOpenVehicle, detail);
+      $(detail)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (error) {
+      const container = $(detail);
+      if (container) {
+        container.classList.remove('hidden');
+        container.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
+      }
+    }
   }));
 }
 
