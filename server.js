@@ -2341,7 +2341,7 @@ app.post('/api/epi/processes', auth, requireRole('tecnico'), async (req, res) =>
       normalizedItems.push({
         ppeItemId: catalog ? Number(catalog.id) : null,
         equipmentName: definition.label,
-        quantity: 1,
+        quantity: item.quantity,
         ca: catalog?.ca || '',
         condition: String(item.condition).toLowerCase(),
         observation: item.observation,

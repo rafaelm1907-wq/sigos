@@ -331,7 +331,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @media (max-width: 900px) {
   .shell { width: min(760px, calc(100% - 24px)); padding-top: 20px; }
   .app-layout { display: block; }
-  .sidebar { position: sticky; top: 10px; z-index: 20; min-height: auto; padding: 12px; border-radius: 15px; box-shadow: 0 15px 35px rgba(0, 0, 0, .24); }
+  .sidebar { position: static; top: auto; z-index: auto; min-height: auto; padding: 12px; border-radius: 15px; box-shadow: 0 15px 35px rgba(0, 0, 0, .24); }
   .brand { padding: 4px 8px 10px; border-bottom: 0; }
   .mobile-menu-toggle { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin-top: 6px; }
   .sidebar-nav { display: none; grid-template-columns: repeat(2, minmax(0, 1fr)); padding-top: 12px; }
@@ -464,6 +464,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .epi-daily-wizard-item .wizard-item-heading { display: grid; grid-template-columns: 1fr auto; align-items: center; }
 .epi-daily-wizard-item .wizard-item-heading .eyebrow, .epi-daily-wizard-item .wizard-item-heading .muted { grid-column: 1 / -1; }
 .epi-daily-question { margin: 0; color: #f4f7fb; font-size: 1.08rem; font-weight: 800; line-height: 1.4; }
+.epi-daily-quantity-field { max-width: 220px; }
 .epi-answer-group { display: flex; flex-wrap: wrap; gap: 9px; margin: 0; padding: 0; border: 0; }
 .epi-answer-group legend { width: 100%; margin-bottom: 1px; color: #9aa8c2; font-size: .82rem; }
 .epi-answer-option { display: flex; align-items: center; gap: 8px; min-width: 100px; padding: 10px 14px; border: 1px solid #33415e; border-radius: 10px; background: #0d162a; color: #dbeafe; cursor: pointer; }
@@ -532,6 +533,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .onboarding-step > :not(.step-number), .epi-step-card > :not(.step-number) { grid-column: 1; }
   .onboarding-step > .step-number, .epi-step-card > .step-number { grid-row: auto; }
   .epi-process-item { padding: 9px; }
+  .epi-daily-quantity-field { max-width: none; }
+  .epi-daily-wizard-item, .epi-daily-wizard-item > *, .epi-daily-photo-entry { min-width: 0; max-width: 100%; }
   .vehicle-wizard-item, .vehicle-selected-card, .vehicle-wizard-progress, .vehicle-selfie-entry, .vehicle-signature-entry, .vehicle-photo-entry { padding: 12px; }
   .epi-process-media { grid-template-columns: repeat(2, 1fr); }
 }
