@@ -2310,7 +2310,14 @@ app.post('/api/epi/processes', auth, requireRole('tecnico'), async (req, res) =>
   })).filter((item) => item.ppeItemId || item.equipmentName);
   if (!EPI_PROCESS_TYPES.includes(processType)) return res.status(400).json({ error: 'Selecione um tipo de processo EPI.' });
   if (!req.user.signature_data || !req.user.signature_hash) return res.status(400).json({ error: 'Cadastre sua assinatura padrão antes de iniciar um processo.' });
-  if (!requestedItems.length || requestedItems.some((item) => !Number.isInteger(item.quantity) || item.quantity < 1)) {
+  const hasInvalidQuantity = requestedItems.some((item) => {
+    if (processType === 'checklist_diario') {
+      const definition = EPI_DAILY_CHECKLIST_BY_KEY.get(item.itemKey);
+      return definition?.section === 'verificacao' && (!Number.isInteger(item.quantity) || item.quantity < 1);
+    }
+    return !Number.isInteger(item.quantity) || item.quantity < 1;
+  });
+  if (!requestedItems.length || hasInvalidQuantity) {
     return res.status(400).json({ error: 'Informe pelo menos um EPI com quantidade válida.' });
   }
   if (processType === 'checklist_diario') {
@@ -2341,10 +2348,10 @@ app.post('/api/epi/processes', auth, requireRole('tecnico'), async (req, res) =>
       normalizedItems.push({
         ppeItemId: catalog ? Number(catalog.id) : null,
         equipmentName: definition.label,
-        quantity: item.quantity,
+        quantity: definition.section === 'verificacao' ? item.quantity : 1,
         ca: catalog?.ca || '',
         condition: String(item.condition).toLowerCase(),
-        observation: item.observation,
+        observation: definition.section === 'verificacao' ? item.observation : null,
         itemKey: definition.key,
         section: definition.section,
       });
@@ -2467,9 +2474,9 @@ app.post('/api/epi/processes/:id/photos', auth, uploadRateLimit, async (req, res
   if ((!photos.length && row.process_type !== 'checklist_diario') || photos.length > 5) return res.status(400).json({ error: 'Envie até cinco fotos capturadas pela câmera.' });
   if (photos.some((photo) => photo?.captureMode !== 'camera')) return res.status(400).json({ error: 'As fotos precisam ser capturadas pela câmera no momento do registro.' });
   if (row.process_type === 'checklist_diario') {
-    const validItemKeys = new Set((row.items || []).map((item) => item.itemKey).filter(Boolean));
+    const validItemKeys = new Set((row.items || []).filter((item) => item.section === 'verificacao').map((item) => item.itemKey).filter(Boolean));
     const submittedItemKeys = photos.map((photo) => String(photo.itemKey || ''));
-    if (submittedItemKeys.some((itemKey) => !validItemKeys.has(itemKey))) return res.status(400).json({ error: 'Cada foto do checklist diário deve estar vinculada a uma etapa válida.' });
+    if (submittedItemKeys.some((itemKey) => !validItemKeys.has(itemKey))) return res.status(400).json({ error: 'Cada foto do checklist diário deve estar vinculada a uma etapa da verificação dos EPIs.' });
     if (new Set(submittedItemKeys).size !== submittedItemKeys.length) return res.status(400).json({ error: 'Use no máximo uma foto por etapa do checklist diário.' });
   }
   const media = [];
