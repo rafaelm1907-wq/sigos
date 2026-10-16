@@ -1044,6 +1044,7 @@ async function initSchema() {
     ALTER TABLE epi_process_items ADD COLUMN IF NOT EXISTS ppe_item_id BIGINT REFERENCES ppe_items(id) ON DELETE SET NULL;
     ALTER TABLE epi_process_items ADD COLUMN IF NOT EXISTS item_key TEXT;
     ALTER TABLE epi_process_items ADD COLUMN IF NOT EXISTS section TEXT;
+    ALTER TABLE epi_process_items ADD COLUMN IF NOT EXISTS replacement_requested BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS company_logo_data TEXT;
     ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS company_logo_mime_type TEXT;
 
@@ -2101,7 +2102,8 @@ const epiProcessQuery = `
         'checkStatus', CASE WHEN p.process_type = 'checklist_diario' THEN i.condition ELSE NULL END,
         'observation', i.observation,
         'itemKey', i.item_key,
-        'section', i.section
+        'section', i.section,
+        'replacementRequested', i.replacement_requested
       ) ORDER BY i.id)
       FROM epi_process_items i WHERE i.process_id = p.id
     ), '[]'::json) AS items,
@@ -2185,7 +2187,7 @@ function publicEpiProcess(row, includeSignatureData = false) {
     validatedAt: row.validated_at,
     validationNotes: row.validation_notes,
     createdAt: row.created_at,
-    items: row.items || [],
+    items: (row.items || []).map((item) => ({ ...item, replacementRequested: Boolean(item.replacementRequested) })),
     media: media.map((item) => ({
       id: item.id,
       kind: item.kind,
@@ -2216,6 +2218,7 @@ function epiProcessSignatureItems(items) {
       observation: item.observation || '',
     };
     if (item.ppeItemId !== null && item.ppeItemId !== undefined) normalized.ppeItemId = String(item.ppeItemId);
+    if (item.replacementRequested === true) normalized.replacementRequested = true;
     return normalized;
   });
 }
@@ -2307,6 +2310,7 @@ app.post('/api/epi/processes', auth, requireRole('tecnico'), async (req, res) =>
     ca: cleanText(item.ca, 80),
     condition: cleanText(item.condition, 40),
     observation: cleanText(item.observation, 180),
+    replacementRequested: item.replacementRequested === true,
   })).filter((item) => item.ppeItemId || item.equipmentName);
   if (!EPI_PROCESS_TYPES.includes(processType)) return res.status(400).json({ error: 'Selecione um tipo de processo EPI.' });
   if (!req.user.signature_data || !req.user.signature_hash) return res.status(400).json({ error: 'Cadastre sua assinatura padrão antes de iniciar um processo.' });
@@ -2352,6 +2356,7 @@ app.post('/api/epi/processes', auth, requireRole('tecnico'), async (req, res) =>
         ca: catalog?.ca || '',
         condition: String(item.condition).toLowerCase(),
         observation: definition.section === 'verificacao' ? item.observation : null,
+        replacementRequested: definition.section === 'verificacao' && item.replacementRequested === true,
         itemKey: definition.key,
         section: definition.section,
       });
@@ -2415,9 +2420,9 @@ app.post('/api/epi/processes', auth, requireRole('tecnico'), async (req, res) =>
     processId = created.rows[0].id;
     for (const item of normalizedItems) {
       await client.query(
-        `INSERT INTO epi_process_items (process_id, ppe_item_id, equipment_name, quantity, ca, condition, observation, item_key, section)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [processId, item.ppeItemId, item.equipmentName, item.quantity, item.ca || null, item.condition || null, item.observation || null, item.itemKey || null, item.section || null],
+        `INSERT INTO epi_process_items (process_id, ppe_item_id, equipment_name, quantity, ca, condition, observation, item_key, section, replacement_requested)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [processId, item.ppeItemId, item.equipmentName, item.quantity, item.ca || null, item.condition || null, item.observation || null, item.itemKey || null, item.section || null, item.replacementRequested === true],
       );
     }
     documentHash = sha256Json({
@@ -2483,6 +2488,44 @@ app.post('/api/epi/processes/:id/photos', auth, uploadRateLimit, async (req, res
   for (const photo of photos) media.push(await storeEpiProcessMedia({ req, processId: row.id, kind: 'epi_photo', itemKey: row.process_type === 'checklist_diario' ? photo.itemKey : null, imageData: photo.imageData, deviceInfo: req.body.deviceInfo, latitude: photo.latitude ?? req.body.latitude, longitude: photo.longitude ?? req.body.longitude }));
   await pool.query(`UPDATE epi_processes SET status = 'pendente_validacao', submitted_at = NOW() WHERE id = $1`, [row.id]);
   await audit({ req, actorUserId: req.user.id, eventType: 'epi_process_photos_uploaded', entityType: 'epi_process', entityId: row.id, metadata: { mediaIds: media.map((item) => item.id), itemKeys: media.map((item) => item.item_key).filter(Boolean), photoCount: media.length, captureMode: 'camera', signatureHash: row.signature_hash, documentHash: row.signature_document_hash, termVersion: row.term_version, coordinates: media.map((item) => ({ mediaId: item.id, itemKey: item.item_key, latitude: item.latitude, longitude: item.longitude, locationLabel: item.location_label })) } });
+  const replacementItems = row.process_type === 'checklist_diario'
+    ? (row.items || []).filter((item) => item.section === 'verificacao' && item.replacementRequested === true)
+    : [];
+  if (replacementItems.length) {
+    const requestedItems = replacementItems.map((item) => ({
+      itemKey: item.itemKey,
+      equipmentName: item.equipmentName,
+      ppeItemId: item.ppeItemId || null,
+      quantity: item.quantity,
+    }));
+    const itemSummary = requestedItems.map((item) => `${item.equipmentName}${item.quantity > 1 ? ` (${item.quantity})` : ''}`).join(', ');
+    await notifyRoles({
+      roles: ['admin'],
+      notificationType: 'epi_replacement_requested',
+      title: 'Solicitação de troca de EPI',
+      message: `${req.user.name} reportou avaria e solicitou troca de: ${itemSummary}.`,
+      entityType: 'epi_process',
+      entityId: row.id,
+      metadata: { processType: row.process_type, requestedBy: req.user.id, items: requestedItems },
+    });
+    await notifyUsers({
+      userIds: [req.user.id],
+      notificationType: 'epi_replacement_requested',
+      title: 'Solicitação de troca registrada',
+      message: `Sua solicitação de troca foi registrada para: ${itemSummary}. Entre em contato com o administrador.`,
+      entityType: 'epi_process',
+      entityId: row.id,
+      metadata: { processType: row.process_type, items: requestedItems },
+    });
+    await audit({
+      req,
+      actorUserId: req.user.id,
+      eventType: 'epi_replacement_requested',
+      entityType: 'epi_process',
+      entityId: row.id,
+      metadata: { items: requestedItems },
+    });
+  }
   const recipientIds = [row.validator_user_id, row.target_user_id].filter((id) => id && String(id) !== String(req.user.id));
   if (recipientIds.length) await notifyUsers({ userIds: recipientIds, notificationType: 'epi_process_pending_validation', title: `${epiProcessTitle(row.process_type)} aguardando validação`, message: `${req.user.name} enviou um processo de EPI para sua validação.`, entityType: 'epi_process', entityId: row.id, metadata: { processType: row.process_type } });
   await notifyRoles({ roles: ['admin'], notificationType: 'epi_process_pending_validation', title: 'Processo de EPI aguardando validação', message: `${req.user.name} concluiu um processo de EPI e aguarda validação.`, entityType: 'epi_process', entityId: row.id, metadata: { processType: row.process_type, createdBy: req.user.id } });
@@ -2891,7 +2934,7 @@ function renderEpiProcessPdf(doc, process) {
       number: dailyItems.indexOf(item) + 1,
       item: item.equipmentName || '–',
       response: epiDailyResponseLabel(item.checkStatus || item.condition),
-      observation: item.observation || '–',
+      observation: [item.replacementRequested ? 'SOLICITAÇÃO DE TROCA' : '', item.observation || ''].filter(Boolean).join(' · ') || '–',
     })));
     if (hasSections) {
       dailyGroups.forEach((group) => {

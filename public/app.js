@@ -78,6 +78,7 @@ const eventLabels = {
   epi_process_selfie_uploaded: 'Selfie do processo EPI registrada',
   epi_process_photos_uploaded: 'Fotos dos EPIs registradas',
   epi_process_validated: 'Processo EPI validado',
+  epi_replacement_requested: 'Solicitação de troca de EPI',
   epi_transfer_started: 'Transferência de EPI iniciada',
   push_device_registered: 'Dispositivo de notificações registrado',
   compliance_alert_justified: 'Alerta de conformidade justificado',
@@ -710,6 +711,7 @@ function normalizeEpiWizardItem(item) {
     quantity: item.quantity ?? item[1] ?? 1,
     condition: item.condition ?? item[3] ?? 'novo',
     observation: item.observation ?? item[4] ?? '',
+    replacementRequested: item.replacementRequested === true,
   };
 }
 
@@ -717,9 +719,9 @@ function renderEpiProcessItems(items = null) {
   const daily = selectedEpiProcessType === 'checklist_diario';
   const selectedItems = items === null
     ? (daily
-      ? (epiWizardItems.length && epiWizardItems.every((item) => item.itemKey) ? epiWizardItems : epiDailyChecklistItems.map((item) => ({ itemKey: item.key, section: item.section, label: item.label, ppeItemId: '', quantity: 1, condition: 'sim', observation: '' })))
+      ? (epiWizardItems.length && epiWizardItems.every((item) => item.itemKey) ? epiWizardItems : epiDailyChecklistItems.map((item) => ({ itemKey: item.key, section: item.section, label: item.label, ppeItemId: '', quantity: 1, condition: 'sim', observation: '', replacementRequested: false })))
       : (epiCatalog.length ? epiCatalog.map((item) => ({ ppeItemId: item.id, quantity: 1, condition: 'novo', observation: '' })) : [{ ppeItemId: '', quantity: 1, condition: 'novo', observation: '' }]))
-    : (items.length ? items : (daily ? epiDailyChecklistItems.map((item) => ({ itemKey: item.key, section: item.section, label: item.label, ppeItemId: '', quantity: 1, condition: 'sim', observation: '' })) : [{ ppeItemId: '', quantity: 1, condition: 'novo', observation: '' }]));
+    : (items.length ? items : (daily ? epiDailyChecklistItems.map((item) => ({ itemKey: item.key, section: item.section, label: item.label, ppeItemId: '', quantity: 1, condition: 'sim', observation: '', replacementRequested: false })) : [{ ppeItemId: '', quantity: 1, condition: 'novo', observation: '' }]));
   epiWizardItems = selectedItems.map(normalizeEpiWizardItem);
   epiWizardIndex = Math.min(epiWizardIndex, epiWizardItems.length - 1);
   if (!Number.isInteger(epiWizardIndex) || epiWizardIndex < 0) epiWizardIndex = 0;
@@ -781,6 +783,7 @@ function saveEpiWizardItem() {
     item.condition = answer;
     item.quantity = isVerification ? (row.querySelector('[data-field="quantity"]')?.value || item.quantity || 1) : 1;
     item.observation = isVerification ? (row.querySelector('[data-field="observation"]')?.value || '') : '';
+    item.replacementRequested = isVerification ? Boolean(item.replacementRequested) : false;
     item.label = row.querySelector('[data-daily-label]')?.textContent || item.label;
     return;
   }
@@ -827,6 +830,10 @@ function epiDailyResponseLabel(value) {
   return ({ sim: 'Sim', nao: 'Não', na: 'N/A' }[String(value || '').toLowerCase()] || '–');
 }
 
+function epiDailyObservation(item) {
+  return [item.replacementRequested ? '⚠️ Solicitação de troca' : '', item.observation || ''].filter(Boolean).join(' · ') || '–';
+}
+
 function renderEpiDailyWizardItem(container, item) {
   const definition = epiDailyChecklistItems.find((entry) => entry.key === item.itemKey) || item;
   const isVerification = item.section === 'verificacao';
@@ -835,8 +842,9 @@ function renderEpiDailyWizardItem(container, item) {
   const photoCount = Object.keys(epiDailyPhotoDrafts).length;
   const quantityMarkup = isVerification ? `<label class="epi-daily-quantity-field">Quantidade<input data-field="quantity" type="number" min="1" step="1" inputmode="numeric" value="${escapeHtml(item.quantity || 1)}" required /></label>` : '';
   const observationMarkup = isVerification ? `<label>Observação (opcional)<textarea data-field="observation" maxlength="500" placeholder="Descreva rapidamente se necessário">${escapeHtml(item.observation)}</textarea></label>` : '';
+  const replacementMarkup = isVerification ? `<div class="epi-daily-item-actions"><button type="button" class="secondary small-button epi-replacement-toggle ${item.replacementRequested ? 'reported' : ''}" data-action="toggle-replacement" aria-pressed="${item.replacementRequested ? 'true' : 'false'}">${item.replacementRequested ? 'Avaria reportada' : 'Reportar avaria'}</button>${item.replacementRequested ? '<span class="muted">Será solicitada a troca deste item ao finalizar.</span>' : ''}</div>` : '';
   const photoMarkup = isVerification ? `<div class="epi-daily-photo-entry"><div class="subheading"><h4>Foto desta etapa (opcional)</h4><span class="muted">${photoCount}/5 fotos</span></div><button type="button" class="secondary small-button" data-action="open-daily-photo-camera" ${photo || photoCount >= 5 ? 'disabled' : ''}>Tirar foto agora</button><div class="hidden" data-role="daily-photo-camera"><video id="epi-daily-photo-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button type="button" data-action="take-daily-photo">Capturar foto</button><button type="button" class="secondary" data-action="cancel-daily-photo">Cancelar</button></div></div><div class="epi-daily-photo-preview">${photo ? `<img src="${photo.imageData}" alt="Foto da etapa" /><button type="button" class="secondary small-button" data-action="remove-daily-photo">Remover foto</button>` : '<span class="muted">Nenhuma foto capturada para esta etapa.</span>'}</div><p class="muted" data-role="daily-photo-message" aria-live="polite">${photoCount >= 5 && !photo ? 'Limite de cinco fotos atingido.' : ''}</p></div>` : '';
-  container.innerHTML = `<div class="epi-process-item epi-wizard-item epi-daily-wizard-item" data-item-row="${epiWizardIndex}"><div class="wizard-item-heading"><span class="eyebrow">${escapeHtml(sectionTitle)}</span><strong>Etapa ${epiWizardIndex + 1} de ${epiWizardItems.length}</strong><span class="muted">Uma etapa por vez</span></div><p class="epi-daily-question" data-daily-label>${escapeHtml(definition.label || item.label)}</p>${quantityMarkup}<fieldset class="epi-answer-group"><legend>${item.section === 'verificacao' ? 'O técnico está com este EPI/item?' : 'A verificação está conforme?'}</legend><label class="epi-answer-option"><input type="radio" name="epi-daily-answer" data-field="condition" value="sim" ${item.condition === 'sim' ? 'checked' : ''} /><span>Sim</span></label><label class="epi-answer-option"><input type="radio" name="epi-daily-answer" data-field="condition" value="nao" ${item.condition === 'nao' ? 'checked' : ''} /><span>Não</span></label><label class="epi-answer-option"><input type="radio" name="epi-daily-answer" data-field="condition" value="na" ${item.condition === 'na' ? 'checked' : ''} /><span>N/A</span></label></fieldset>${observationMarkup}${photoMarkup}</div>`;
+  container.innerHTML = `<div class="epi-process-item epi-wizard-item epi-daily-wizard-item" data-item-row="${epiWizardIndex}"><div class="wizard-item-heading"><span class="eyebrow">${escapeHtml(sectionTitle)}</span><strong>Etapa ${epiWizardIndex + 1} de ${epiWizardItems.length}</strong><span class="muted">Uma etapa por vez</span></div><p class="epi-daily-question" data-daily-label>${escapeHtml(definition.label || item.label)}</p>${replacementMarkup}${quantityMarkup}<fieldset class="epi-answer-group"><legend>${item.section === 'verificacao' ? 'O técnico está com este EPI/item?' : 'A verificação está conforme?'}</legend><label class="epi-answer-option"><input type="radio" name="epi-daily-answer" data-field="condition" value="sim" ${item.condition === 'sim' ? 'checked' : ''} /><span>Sim</span></label><label class="epi-answer-option"><input type="radio" name="epi-daily-answer" data-field="condition" value="nao" ${item.condition === 'nao' ? 'checked' : ''} /><span>Não</span></label><label class="epi-answer-option"><input type="radio" name="epi-daily-answer" data-field="condition" value="na" ${item.condition === 'na' ? 'checked' : ''} /><span>N/A</span></label></fieldset>${observationMarkup}${photoMarkup}</div>`;
   const signatureStep = $('#epi-signature-step');
   signatureStep?.classList.toggle('hidden', !window.epiWizardSignatureVisible);
   const back = $('#epi-wizard-back');
@@ -847,6 +855,11 @@ function renderEpiDailyWizardItem(container, item) {
   if (next) { next.classList.toggle('hidden', Boolean(window.epiWizardSignatureVisible)); next.textContent = epiWizardIndex === epiWizardItems.length - 1 ? 'Ir para assinatura' : 'Próxima etapa'; }
   container.querySelectorAll('[data-field="condition"]').forEach((field) => field.addEventListener('change', saveEpiWizardItem));
   container.querySelectorAll('[data-field="quantity"], [data-field="observation"]').forEach((field) => field.addEventListener('input', saveEpiWizardItem));
+  container.querySelector('[data-action="toggle-replacement"]')?.addEventListener('click', () => {
+    saveEpiWizardItem();
+    item.replacementRequested = !item.replacementRequested;
+    renderEpiDailyWizardItem(container, epiWizardItems[epiWizardIndex]);
+  });
   container.querySelector('[data-action="open-daily-photo-camera"]')?.addEventListener('click', () => {
     const camera = container.querySelector('[data-role="daily-photo-camera"]');
     camera?.classList.remove('hidden');
@@ -874,7 +887,7 @@ function renderEpiDailyWizardItem(container, item) {
 
 function readEpiProcessItems() {
   saveEpiWizardItem();
-  if (selectedEpiProcessType === 'checklist_diario') return epiWizardItems.map((item) => ({ itemKey: item.itemKey, equipmentName: item.label, quantity: Number(item.quantity), ca: '', condition: item.condition, observation: item.observation || '' }));
+  if (selectedEpiProcessType === 'checklist_diario') return epiWizardItems.map((item) => ({ itemKey: item.itemKey, equipmentName: item.label, quantity: Number(item.quantity), ca: '', condition: item.condition, observation: item.observation || '', replacementRequested: item.section === 'verificacao' && item.replacementRequested === true }));
   return epiWizardItems.map((item) => {
     const catalog = epiCatalog.find((catalogItem) => String(catalogItem.id) === String(item.ppeItemId));
     return { ppeItemId: item.ppeItemId ? Number(item.ppeItemId) : null, equipmentName: catalog?.name || '', quantity: Number(item.quantity), ca: catalog?.ca || '', condition: item.condition, observation: item.observation || '' };
@@ -964,8 +977,8 @@ function renderEpiDailyResponsibilityTerm(process) {
   const rows = hasSections ? groups.map((group) => {
     const items = process.items.filter((item) => item.section === group.section);
     if (!items.length) return '';
-    return `<tr class="daily-section-row"><th colspan="4">${escapeHtml(group.title)}</th></tr>${items.map((item) => `<tr><td>${escapeHtml(process.items.indexOf(item) + 1)}</td><td>${escapeHtml(item.equipmentName)}</td><td>${escapeHtml(epiDailyResponseLabel(item.checkStatus || item.condition))}</td><td>${escapeHtml(item.observation || '–')}</td></tr>`).join('')}`;
-  }).join('') : process.items.map((item, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(item.equipmentName)}</td><td>${escapeHtml(epiDailyResponseLabel(item.checkStatus || item.condition))}</td><td>${escapeHtml(item.observation || '–')}</td></tr>`).join('');
+    return `<tr class="daily-section-row"><th colspan="4">${escapeHtml(group.title)}</th></tr>${items.map((item) => `<tr><td>${escapeHtml(process.items.indexOf(item) + 1)}</td><td>${escapeHtml(item.equipmentName)}</td><td>${escapeHtml(epiDailyResponseLabel(item.checkStatus || item.condition))}</td><td>${escapeHtml(epiDailyObservation(item))}</td></tr>`).join('')}`;
+  }).join('') : process.items.map((item, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(item.equipmentName)}</td><td>${escapeHtml(epiDailyResponseLabel(item.checkStatus || item.condition))}</td><td>${escapeHtml(epiDailyObservation(item))}</td></tr>`).join('');
   return `<section class="epi-responsibility-term"><div class="paper-header"><div class="term-brand">${logo}<div><strong>${escapeHtml(term.companyName)}</strong><span>CNPJ: ${escapeHtml(term.companyCnpj)}</span></div></div><span class="paper-number">TERMO ASSINADO</span></div><h3>${escapeHtml(term.title)}</h3><p>${escapeHtml(term.intro)}</p><ol>${term.clauses.map((clause) => `<li>${escapeHtml(clause)}</li>`).join('')}</ol><div class="recipient-line"><span><b>Funcionário:</b> ${escapeHtml(process.createdBy.name)}</span><span><b>Emissão:</b> ${escapeHtml(formatDate(process.createdAt))}</span></div><table class="paper-table daily-checklist-table"><thead><tr><th>Nº</th><th>EPI / item de segurança</th><th>Resposta</th><th>Observação</th></tr></thead><tbody>${rows}</tbody></table><div class="legal-text"><p>${escapeHtml(term.legalText.clt)}</p><p>${escapeHtml(term.legalText.nr06)}</p><p>${escapeHtml(term.legalText.declaration)}</p></div><div class="signature-block"><img class="saved-signature" src="${signature}" alt="Assinatura eletrônica do técnico" /><div class="signature-line">Ass. do Funcionário · ${escapeHtml(term.signerName)}</div><div class="audit-note">Assinatura validada em ${escapeHtml(formatDate(term.signedAt))} · SHA-256: ${escapeHtml(term.signatureHash || '–')}</div></div><p class="epi-term-attached-note">Este termo assinado faz parte deste checklist diário e foi enviado junto com as fotos registradas.</p></section>`;
 }
 
