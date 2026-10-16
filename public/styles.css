@@ -589,3 +589,23 @@ table { max-width: 100%; }
   .vehicle-list-actions button, .epi-process-actions button, .vehicle-signature-actions button { max-width: 100%; }
   .compliance-alert-heading { min-width: 0; }
 }
+
+/* Mobile containment: action buttons must follow the card width, never the desktop row width. */
+@media (max-width: 760px) {
+  #main-app-layout, #main-app-layout .app-content, #main-app-layout .app-section,
+  #epi-view, #epi-module, #epi-technician-form, #epi-process-form,
+  #epi-process-items, #epi-process-list { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
+  .epi-process-row { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; max-width: 100%; overflow: hidden; }
+  .epi-process-row > div, .epi-process-actions { width: 100%; max-width: 100%; min-width: 0; }
+  .epi-process-actions { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: stretch; align-items: stretch; }
+  .epi-process-actions .status { justify-self: start; }
+  .epi-process-actions button, #epi-process-form .form-actions > button {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  #epi-process-form .form-actions { width: 100%; max-width: 100%; min-width: 0; }
+}
