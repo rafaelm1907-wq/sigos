@@ -32,6 +32,18 @@ const vehicleDailyItems = [
   ['interna', 'PARTE INTERNA'],
 ];
 
+// No Checklist geral, estes itens são verificados por funcionamento e não
+// precisam de comprovação fotográfica obrigatória. A captura continua
+// disponível para o usuário quando ele quiser registrar uma evidência.
+const vehicleOptionalPhotoItemKeys = new Set([
+  'vidro_eletrico', 'trava_eletrica', 'ar_condicionado', 'buzina',
+  'lanterna', 'luz_alta', 'luz_auxiliar', 'pisca_alerta',
+  'seta_dianteira_esquerda', 'seta_dianteira_direita',
+  'seta_traseira_esquerda', 'seta_traseira_direita',
+  'luz_freio', 'luz_re', 'limpador_parabrisa', 'painel', 'luz_painel',
+  'alarme', 'chave', 'freio_mao', 'som', 'volante_freio', 'cambio',
+]);
+
 let epiDailyChecklistItems = [
   { key: 'ppe_capacete_jugular', section: 'verificacao', label: 'Capacete de segurança com jugular' },
   { key: 'ppe_oculos_seguranca', section: 'verificacao', label: 'Óculos de segurança' },
@@ -2429,6 +2441,12 @@ function vehicleChecklistDefinition() {
   return [...vehicleDailyItems.map(([itemKey, itemName]) => [itemKey, itemName, 'daily_photo', null]), ...equipmentItems];
 }
 
+function vehicleChecklistItemRequiresPhoto(itemKey, itemKind) {
+  if (itemKind === 'vehicle_equipment') return false;
+  if (selectedVehicleChecklistType === 'diario') return true;
+  return !vehicleOptionalPhotoItemKeys.has(itemKey);
+}
+
 function vehicleChecklistTypeLabel(type = selectedVehicleChecklistType) {
   return ({ diario: 'Checklist diário', geral: 'Checklist geral', quinzenal: 'Checklist quinzenal', transferencia: 'Transferência de veículo', recebimento: 'Recebimento de veículo', entrega: 'Entrega de veículo', devolucao: 'Devolução de veículo' }[type] || 'Checklist de veículo');
 }
@@ -2565,7 +2583,7 @@ function startVehicleChecklist() {
     return;
   }
   vehicleWizardIndex = 0;
-  vehicleWizardDraft = vehicleChecklistDefinition().map(([itemKey, itemName, itemKind = 'vehicle_item', expectedQuantity = null]) => ({ itemKey, itemName, itemKind, expectedQuantity, requiresPhoto: itemKind !== 'vehicle_equipment', beforeStatus: 'ok', beforeDescription: '', afterStatus: 'ok', afterDescription: '' }));
+  vehicleWizardDraft = vehicleChecklistDefinition().map(([itemKey, itemName, itemKind = 'vehicle_item', expectedQuantity = null]) => ({ itemKey, itemName, itemKind, expectedQuantity, requiresPhoto: vehicleChecklistItemRequiresPhoto(itemKey, itemKind), beforeStatus: 'ok', beforeDescription: '', afterStatus: 'ok', afterDescription: '' }));
   vehiclePhotoDrafts = [];
   vehicleSelfieDraft = null;
   vehiclePhotoCaptureItemKey = null;
@@ -2577,7 +2595,7 @@ function startVehicleChecklist() {
   $('#vehicle-mileage-field').classList.toggle('hidden', selectedVehicleChecklistType === 'diario');
   $('#vehicle-wizard-instruction').textContent = selectedVehicleChecklistType === 'diario'
     ? (vehicleWizardDraft.some((item) => item.itemKind === 'vehicle_equipment') ? 'Etapa 1: confirme os pontos do veículo com fotos. Etapa 2: confirme se cada equipamento cadastrado está presente.' : 'Marque OK ou Não OK, registre uma observação se quiser e capture a foto.')
-    : 'Confira antes e depois, registre a descrição quando necessário e capture a foto.';
+    : 'Confira antes e depois. As fotos são obrigatórias nos itens visuais e opcionais nos itens funcionais, como buzina, ar-condicionado e alarme.';
   $('#vehicle-start-step').classList.add('hidden');
   $('#vehicle-final-step').classList.add('hidden');
   $('#vehicle-checklist-step').classList.remove('hidden');
@@ -2684,8 +2702,9 @@ function renderVehicleWizardItem() {
   const fields = isDaily
     ? `<label>${isEquipment ? 'Está no veículo?' : 'Status'}<select data-side="daily-status"><option value="ok" ${item.beforeStatus === 'ok' ? 'selected' : ''}>${isEquipment ? 'Sim' : 'OK'}</option><option value="defeito" ${item.beforeStatus === 'defeito' ? 'selected' : ''}>${isEquipment ? 'Não' : 'Não OK'}</option></select></label>${isEquipment ? `<p class="muted vehicle-equipment-expected">Quantidade cadastrada: <strong>${escapeHtml(item.expectedQuantity || 0)}</strong></p>` : ''}<label>Observação (opcional)<textarea data-side="daily-description" maxlength="500" placeholder="${isEquipment ? 'Informe se faltou ou houve alguma divergência.' : 'Descreva uma irregularidade, se quiser'}">${escapeHtml(item.beforeDescription)}</textarea></label>`
     : `<label>Antes<select data-side="before-status"><option value="ok" ${item.beforeStatus === 'ok' ? 'selected' : ''}>OK</option><option value="defeito" ${item.beforeStatus === 'defeito' ? 'selected' : ''}>Com defeito</option><option value="quebrado" ${item.beforeStatus === 'quebrado' ? 'selected' : ''}>Quebrado</option></select></label><label>Depois<select data-side="after-status"><option value="ok" ${item.afterStatus === 'ok' ? 'selected' : ''}>OK</option><option value="defeito" ${item.afterStatus === 'defeito' ? 'selected' : ''}>Com defeito</option><option value="quebrado" ${item.afterStatus === 'quebrado' ? 'selected' : ''}>Quebrado</option></select></label><label data-description-wrap="before" class="hidden">Descrição antes<textarea data-side="before-description" maxlength="500">${escapeHtml(item.beforeDescription)}</textarea></label><label data-description-wrap="after" class="hidden">Descrição depois<textarea data-side="after-description" maxlength="500">${escapeHtml(item.afterDescription)}</textarea></label>`;
-  const photoBlock = item.requiresPhoto
-    ? `<button id="vehicle-item-photo-button" type="button" class="secondary">${photoCount ? 'Refazer foto deste item' : 'Capturar foto deste item'}</button><div id="vehicle-item-camera" class="hidden"><video id="vehicle-item-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-item-take-photo" type="button">Capturar foto</button><button id="vehicle-item-cancel-photo" type="button" class="secondary">Cancelar</button></div></div><p id="vehicle-item-photo-message" class="muted" aria-live="polite">${photoCount ? 'Foto deste item preparada.' : 'A foto deste item é obrigatória.'}</p>`
+  const canCapturePhoto = !isEquipment;
+  const photoBlock = canCapturePhoto
+    ? `<button id="vehicle-item-photo-button" type="button" class="secondary">${photoCount ? 'Refazer foto deste item' : 'Capturar foto deste item'}</button><div id="vehicle-item-camera" class="hidden"><video id="vehicle-item-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-item-take-photo" type="button">Capturar foto</button><button id="vehicle-item-cancel-photo" type="button" class="secondary">Cancelar</button></div></div><p id="vehicle-item-photo-message" class="muted" aria-live="polite">${photoCount ? 'Foto deste item preparada.' : item.requiresPhoto ? 'A foto deste item é obrigatória.' : 'Foto deste item opcional.'}</p>`
     : '<p class="muted vehicle-equipment-photo-note">Este item é conferido na segunda etapa e não exige foto individual.</p>';
   container.innerHTML = `<div class="vehicle-wizard-item"><div class="wizard-item-heading"><div><span class="eyebrow">${stageLabel}</span><strong>${escapeHtml(item.itemName)}</strong></div><span class="muted">Item ${vehicleWizardIndex + 1} de ${vehicleWizardDraft.length}</span></div><div class="vehicle-wizard-fields">${fields}</div>${photoBlock}</div>`;
   if (isDaily) {
@@ -2695,7 +2714,7 @@ function renderVehicleWizardItem() {
     const updateDescription = (side) => { const status = container.querySelector(`[data-side="${side}-status"]`); container.querySelector(`[data-description-wrap="${side}"]`).classList.toggle('hidden', status.value === 'ok'); };
     ['before', 'after'].forEach((side) => { container.querySelector(`[data-side="${side}-status"]`).addEventListener('change', () => { updateDescription(side); saveVehicleWizardItem(); }); updateDescription(side); });
   }
-  if (item.requiresPhoto) {
+  if (canCapturePhoto) {
     container.querySelector('#vehicle-item-photo-button').addEventListener('click', () => { vehiclePhotoCaptureItemKey = item.itemKey; container.querySelector('#vehicle-item-camera').classList.remove('hidden'); openEpiCamera('#vehicle-item-video', '#vehicle-item-photo-message', 'environment'); });
     container.querySelector('#vehicle-item-cancel-photo').addEventListener('click', () => { stopEpiCamera('#vehicle-item-video'); container.querySelector('#vehicle-item-camera').classList.add('hidden'); });
     container.querySelector('#vehicle-item-take-photo').addEventListener('click', () => { const imageData = captureVideoFrame('#vehicle-item-video'); if (!imageData) { container.querySelector('#vehicle-item-photo-message').textContent = 'A câmera ainda não está pronta.'; return; } const existingIndex = vehiclePhotoDrafts.findIndex((photo) => photo.itemKey === vehiclePhotoCaptureItemKey); const photo = { imageData, itemKey: vehiclePhotoCaptureItemKey }; if (existingIndex >= 0) vehiclePhotoDrafts[existingIndex] = photo; else vehiclePhotoDrafts.push(photo); stopEpiCamera('#vehicle-item-video'); renderVehicleWizardItem(); renderVehiclePhotoDrafts(); });

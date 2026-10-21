@@ -269,6 +269,17 @@ const VEHICLE_DAILY_CHECKLIST_ITEMS = [
   ['interna', 'PARTE INTERNA'],
 ];
 
+// Fotos continuam obrigatórias para os itens visuais. Estes itens funcionais
+// podem ser fotografados como evidência, mas não bloqueiam o envio do geral.
+const VEHICLE_OPTIONAL_PHOTO_ITEM_KEYS = new Set([
+  'vidro_eletrico', 'trava_eletrica', 'ar_condicionado', 'buzina',
+  'lanterna', 'luz_alta', 'luz_auxiliar', 'pisca_alerta',
+  'seta_dianteira_esquerda', 'seta_dianteira_direita',
+  'seta_traseira_esquerda', 'seta_traseira_direita',
+  'luz_freio', 'luz_re', 'limpador_parabrisa', 'painel', 'luz_painel',
+  'alarme', 'chave', 'freio_mao', 'som', 'volante_freio', 'cambio',
+]);
+
 if (!process.env.DATABASE_URL || !jwtSecret) {
   throw new Error('DATABASE_URL e JWT_SECRET são obrigatórios.');
 }
@@ -5028,16 +5039,19 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
   if (mileage !== null && (!Number.isInteger(mileage) || mileage < 0)) return res.status(400).json({ error: 'Quilometragem inválida.' });
   if (signatureRequest.error) return res.status(400).json({ error: signatureRequest.error });
   if (!submittedSelfie || submittedSelfie.captureMode !== 'camera' || !submittedSelfie.imageData) return res.status(400).json({ error: 'Capture uma selfie pela câmera antes de enviar o checklist.' });
-  const expectedPhotoKeys = new Set(checklistDefinition.filter(([, , itemKind]) => itemKind !== 'vehicle_equipment').map(([itemKey]) => itemKey));
+  const allowedPhotoKeys = new Set(checklistDefinition.filter(([, , itemKind]) => itemKind !== 'vehicle_equipment').map(([itemKey]) => itemKey));
+  const expectedPhotoKeys = new Set(checklistDefinition
+    .filter(([itemKey, , itemKind]) => itemKind !== 'vehicle_equipment' && (checklistType === 'diario' || !VEHICLE_OPTIONAL_PHOTO_ITEM_KEYS.has(itemKey)))
+    .map(([itemKey]) => itemKey));
   const itemPhotos = submittedPhotos.filter((photo) => photo?.itemKey);
   const extraPhotos = submittedPhotos.filter((photo) => !photo?.itemKey);
   const itemPhotoKeys = itemPhotos.map((photo) => String(photo.itemKey));
-  const invalidPhotoKey = itemPhotoKeys.find((itemKey) => !expectedPhotoKeys.has(itemKey));
+  const invalidPhotoKey = itemPhotoKeys.find((itemKey) => !allowedPhotoKeys.has(itemKey));
   const duplicatePhotoKey = itemPhotoKeys.find((itemKey, index) => itemPhotoKeys.indexOf(itemKey) !== index);
   const missingPhotoKey = [...expectedPhotoKeys].find((itemKey) => !itemPhotoKeys.includes(itemKey));
   if (invalidPhotoKey || duplicatePhotoKey || missingPhotoKey) return res.status(400).json({ error: 'Envie exatamente uma foto capturada pela câmera para cada item do checklist.' });
   if (extraPhotos.length > 2) return res.status(400).json({ error: 'Envie no máximo duas fotos extras do veículo.' });
-  if (!submittedPhotos.length) return res.status(400).json({ error: 'Capture as fotos obrigatórias do checklist.' });
+  if (expectedPhotoKeys.size > 0 && !submittedPhotos.length) return res.status(400).json({ error: 'Capture as fotos obrigatórias do checklist.' });
   if (submittedPhotos.some((photo) => photo?.captureMode !== 'camera' || !photo?.imageData)) return res.status(400).json({ error: 'As fotos do veículo precisam ser capturadas pela câmera no momento do registro.' });
   try {
     parseCapturedImage(submittedSelfie.imageData);
