@@ -115,6 +115,7 @@ tar -czf "${backup_file}" -C "${APP_DIR}" \
   --exclude='./storage' \
   --exclude='./releases' \
   --exclude='./.update' \
+  --exclude='./backups' \
   --exclude='./.git' \
   .
 
@@ -126,6 +127,7 @@ rsync -a --delete \
   --exclude 'storage' \
   --exclude 'releases' \
   --exclude '.update' \
+  --exclude 'backups' \
   --exclude '.git' \
   "${work_dir}/source/" "${APP_DIR}/"
 chown -R "${APP_USER}:${APP_GROUP}" "${APP_DIR}"
