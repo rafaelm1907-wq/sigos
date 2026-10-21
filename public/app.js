@@ -2140,14 +2140,59 @@ function stockProcessLabel(movement) {
   return 'Ajuste manual';
 }
 
+function vehicleIntegrityItemHasIssue(item) {
+  return [item.afterStatus, item.beforeStatus].some((status) => status && status !== 'ok');
+}
+
+function renderVehicleIntegrityItems(vehicle) {
+  const items = vehicle.integrityItems || [];
+  return items.map((item) => {
+    const hasIssue = vehicleIntegrityItemHasIssue(item);
+    const warning = hasIssue ? '<span class="vehicle-integrity-item-warning" title="Item com avaria ou irregularidade" aria-label="Item com avaria ou irregularidade">!</span>' : '';
+    return `<div class="vehicle-integrity-item${hasIssue ? ' has-integrity-issue' : ''}"><div class="vehicle-integrity-item-heading"><strong>${escapeHtml(item.itemName)}</strong>${warning}</div><span>Estado: ${escapeHtml(vehicleStatusLabel(item.afterStatus || item.beforeStatus))}</span>${item.beforeStatus !== item.afterStatus ? `<small>Antes: ${escapeHtml(vehicleStatusLabel(item.beforeStatus))} · Depois: ${escapeHtml(vehicleStatusLabel(item.afterStatus))}</small>` : ''}${item.afterDescription || item.beforeDescription ? `<small>Descrição: ${escapeHtml(item.afterDescription || item.beforeDescription)}</small>` : ''}</div>`;
+  }).join('');
+}
+
+function openVehicleIntegrityModal(vehicle) {
+  const modal = $('#vehicle-integrity-modal');
+  if (!modal || !vehicle) return;
+  const items = vehicle.integrityItems || [];
+  const hasIntegrityIssue = items.some(vehicleIntegrityItemHasIssue);
+  const title = modal.querySelector('#vehicle-integrity-modal-title');
+  const subtitle = modal.querySelector('#vehicle-integrity-modal-subtitle');
+  const content = modal.querySelector('#vehicle-integrity-modal-content');
+  if (title) title.textContent = `Integridade · ${vehicle.plate || 'Veículo'}`;
+  if (subtitle) subtitle.textContent = vehicle.lastChecklistId
+    ? `${vehicle.lastChecklistType === 'diario' ? 'Checklist diário' : 'Checklist quinzenal'} · ${formatDate(vehicle.lastChecklistAt)}`
+    : 'Nenhum checklist lançado para este veículo.';
+  if (content) {
+    content.innerHTML = vehicle.lastChecklistId && items.length
+      ? `${hasIntegrityIssue ? '<p class="vehicle-integrity-modal-alert">Os itens marcados com <b>!</b> geraram a sinalização de avaria ou irregularidade.</p>' : '<p class="muted">Nenhum item com avaria ou irregularidade foi identificado.</p>'}<div class="vehicle-integrity-list">${renderVehicleIntegrityItems(vehicle)}</div>`
+      : '<p class="muted">Nenhum checklist lançado para este veículo.</p>';
+  }
+  modal.classList.remove('hidden');
+  modal.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('vehicle-integrity-modal-open');
+  modal.querySelector('[data-vehicle-integrity-close]')?.focus();
+}
+
+function closeVehicleIntegrityModal() {
+  const modal = $('#vehicle-integrity-modal');
+  if (!modal) return;
+  modal.classList.add('hidden');
+  modal.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('vehicle-integrity-modal-open');
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeVehicleIntegrityModal();
+});
+
 function renderStockVehicleIntegrity(vehicle) {
   const items = vehicle.integrityItems || [];
-  const hasIntegrityIssue = items.some((item) => [item.afterStatus, item.beforeStatus].some((status) => status && status !== 'ok'));
-  const content = vehicle.lastChecklistId && items.length
-    ? `<small class="table-subtext">${escapeHtml(vehicle.lastChecklistType === 'diario' ? 'Checklist diário' : 'Checklist quinzenal')} · ${escapeHtml(formatDate(vehicle.lastChecklistAt))}</small><div class="vehicle-integrity-list">${items.map((item) => `<div class="vehicle-integrity-item"><strong>${escapeHtml(item.itemName)}</strong><span>Estado: ${escapeHtml(vehicleStatusLabel(item.afterStatus || item.beforeStatus))}</span>${item.beforeStatus !== item.afterStatus ? `<small>Antes: ${escapeHtml(vehicleStatusLabel(item.beforeStatus))} · Depois: ${escapeHtml(vehicleStatusLabel(item.afterStatus))}</small>` : ''}${item.afterDescription || item.beforeDescription ? `<small>Descrição: ${escapeHtml(item.afterDescription || item.beforeDescription)}</small>` : ''}</div>`).join('')}</div>`
-    : '<span class="muted">Nenhum checklist lançado para este veículo.</span>';
+  const hasIntegrityIssue = items.some(vehicleIntegrityItemHasIssue);
   const warning = hasIntegrityIssue ? '<span class="vehicle-integrity-warning" title="Há item com avaria ou irregularidade" aria-label="Há item com avaria ou irregularidade">!</span>' : '';
-  return `<details class="vehicle-integrity-details"><summary>Integridade ${warning}</summary><div class="vehicle-integrity-content">${content}</div></details>`;
+  return `<button type="button" class="vehicle-integrity-open-button${hasIntegrityIssue ? ' has-integrity-issue' : ''}" data-vehicle-integrity="${escapeHtml(vehicle.id)}" aria-label="Abrir integridade do veículo ${escapeHtml(vehicle.plate || '')}"><span>Integridade</span>${warning}</button>`;
 }
 
 async function loadStock() {
@@ -2165,6 +2210,8 @@ async function loadStock() {
   if (inventoryLabel) inventoryLabel.textContent = 'INVENTÁRIO';
   if (inventoryHeading) inventoryHeading.textContent = 'Itens cadastrados em cada veículo';
   $('#stock-vehicles-table').innerHTML = stockVehicles.length ? stockVehicles.map((vehicle) => { const count = (vehicle.equipmentItems || []).length; return `<tr><td><strong>${escapeHtml(vehicle.plate)}</strong></td><td>${escapeHtml(vehicle.model || '–')}</td><td>${escapeHtml(vehicle.year || '–')}</td><td>${escapeHtml(vehicle.color || '–')}</td><td>${escapeHtml(vehicle.lastDriver || 'Sem checklist')}${vehicle.lastChecklistAt ? `<small class="table-subtext">${escapeHtml(formatDate(vehicle.lastChecklistAt))}</small>` : ''}</td><td>${escapeHtml(vehicle.status === 'ativo' ? 'Ativo' : 'Inativo')}</td><td><button type="button" class="secondary small-button" data-vehicle-inventory="${escapeHtml(vehicle.id)}">${count} ${count === 1 ? 'item' : 'itens'}</button></td><td>${renderStockVehicleIntegrity(vehicle)}</td><td><div class="table-actions"><button type="button" class="secondary small-button" data-vehicle-edit="${escapeHtml(vehicle.id)}">Editar</button><button type="button" class="secondary small-button" data-vehicle-delete="${escapeHtml(vehicle.id)}">Excluir</button></div></td></tr>`; }).join('') : '<tr><td colspan="9" class="muted">Nenhum veículo cadastrado.</td></tr>';
+  document.querySelectorAll('[data-vehicle-integrity]').forEach((button) => button.addEventListener('click', () => openVehicleIntegrityModal(stockVehicles.find((vehicle) => String(vehicle.id) === String(button.dataset.vehicleIntegrity)))));
+  $('#vehicle-integrity-modal')?.querySelectorAll('[data-vehicle-integrity-close]').forEach((button) => { button.onclick = closeVehicleIntegrityModal; });
   document.querySelectorAll('[data-vehicle-inventory]').forEach((button) => button.addEventListener('click', () => { selectedStockVehicleId = String(button.dataset.vehicleInventory); renderStockVehicleEquipment(stockVehicles); document.querySelector('.vehicle-equipment-stock')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); $('#stock-vehicle-equipment-vehicle')?.focus(); }));
   $('#stock-ppes-table').innerHTML = stockPpeCatalog.length ? stockPpeCatalog.map((ppe) => {
     const holders = (ppe.assignedUsers || []).map((holder) => `${holder.name || 'Usuário'} · ${holder.quantity} un.`).join(', ');
