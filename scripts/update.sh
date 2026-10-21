@@ -14,16 +14,20 @@ STATUS_FILE="${SIGOS_UPDATE_STATUS_PATH:-${APP_DIR}/.update/status.json}"
 LOCK_FILE="${SIGOS_UPDATE_LOCK_PATH:-/run/lock/sigos-update.lock}"
 BACKUP_DIR="${SIGOS_UPDATE_BACKUP_DIR:-${APP_DIR}/.update/backups}"
 
-if [[ -f "${ENV_FILE}" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "${ENV_FILE}"
-  set +a
-  REPO_URL="${SIGOS_UPDATE_REPO_URL:-${REPO_URL}}"
-  UPDATE_BRANCH="${SIGOS_UPDATE_BRANCH:-${UPDATE_BRANCH}}"
-  STATUS_FILE="${SIGOS_UPDATE_STATUS_PATH:-${STATUS_FILE}}"
-  BACKUP_DIR="${SIGOS_UPDATE_BACKUP_DIR:-${BACKUP_DIR}}"
-fi
+read_runtime_value() {
+  local key="$1"
+  local fallback="$2"
+  local value=""
+  if [[ -r "${ENV_FILE}" ]]; then
+    value="$(sed -n -E "s/^${key}=(.*)$/\\1/p" "${ENV_FILE}" | tail -n 1)"
+  fi
+  printf '%s' "${value:-${fallback}}"
+}
+
+REPO_URL="$(read_runtime_value SIGOS_UPDATE_REPO_URL "${REPO_URL}")"
+UPDATE_BRANCH="$(read_runtime_value SIGOS_UPDATE_BRANCH "${UPDATE_BRANCH}")"
+STATUS_FILE="$(read_runtime_value SIGOS_UPDATE_STATUS_PATH "${STATUS_FILE}")"
+BACKUP_DIR="$(read_runtime_value SIGOS_UPDATE_BACKUP_DIR "${BACKUP_DIR}")"
 
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "Execute este script como root." >&2
