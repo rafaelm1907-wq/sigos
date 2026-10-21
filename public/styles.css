@@ -720,6 +720,7 @@ table { max-width: 100%; }
 .vehicle-integrity-details, .vehicle-integrity-content { min-width: 0; max-width: 100%; }
 .vehicle-integrity-content { overflow-wrap: anywhere; }
 .vehicle-integrity-item { min-width: 0; }
+.technician-detail, .user-edit-panel, .term-detail, .epi-process-detail, .vehicle-detail, .validation-detail, .stock-form, .vehicle-equipment-stock { scroll-margin-top: 24px; }
 
 @media (max-width: 760px) {
   .topbar, .topbar-actions, .page-intro, .section-heading, .subheading { min-width: 0; }
@@ -733,6 +734,7 @@ table { max-width: 100%; }
   .vehicle-list-item { flex-wrap: nowrap; width: 100%; max-width: 100%; overflow: hidden; }
   .vehicle-list-item > div:first-child, .vehicle-list-actions { width: 100%; max-width: 100%; min-width: 0; }
   .compliance-alert-heading { min-width: 0; }
+  .technician-detail, .user-edit-panel, .term-detail, .epi-process-detail, .vehicle-detail, .validation-detail, .stock-form, .vehicle-equipment-stock { scroll-margin-top: 16px; }
 }
 
 /* Mobile containment: action buttons must follow the card width, never the desktop row width. */

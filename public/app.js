@@ -178,6 +178,18 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[char]));
 }
 
+function scrollToInteraction(target, { focusTarget = null, block = 'start' } = {}) {
+  const element = typeof target === 'string' ? $(target) : target;
+  if (!element) return;
+  const focusElement = typeof focusTarget === 'string'
+    ? (element.matches(focusTarget) ? element : element.querySelector(focusTarget))
+    : focusTarget;
+  window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+    element.scrollIntoView({ behavior: 'smooth', block, inline: 'nearest' });
+    if (focusElement && typeof focusElement.focus === 'function') focusElement.focus({ preventScroll: true });
+  }));
+}
+
 function activateSubtab(group, tab) {
   const buttons = [...document.querySelectorAll('[data-subtab-button]')].filter((button) => button.dataset.subtabGroup === group);
   const panels = [...document.querySelectorAll('[data-subtab-panel]')].filter((panel) => panel.dataset.subtabPanel === group);
@@ -1450,7 +1462,7 @@ function renderEpiProcessItems(items = null) {
       $('#epi-add-process-item')?.classList.add('hidden');
       $('#epi-signature-step')?.classList.remove('hidden');
       renderEpiWizardItem();
-      $('#epi-signature-step')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      scrollToInteraction('#epi-signature-step');
     });
   }
   renderEpiWizardItem();
@@ -1632,7 +1644,7 @@ async function resumeDailyChecklist(process) {
   $('#epi-selfie-message').textContent = process.status === 'aguarda_selfie' ? 'Continue este checklist registrando a selfie.' : '';
   $('#epi-photos-message').textContent = process.status === 'aguarda_fotos' ? 'Continue este checklist enviando as fotos pendentes.' : '';
   if (shouldUseMobileEpiChecklist('checklist_diario')) openMobileEpiChecklist();
-  document.querySelector('#epi-selfie-step:not(.hidden), #epi-photos-step:not(.hidden)')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  scrollToInteraction(document.querySelector('#epi-selfie-step:not(.hidden), #epi-photos-step:not(.hidden)'));
 }
 
 function renderDailyChecklistGuard(process) {
@@ -1928,6 +1940,7 @@ async function openEpiProcess(id) {
   const panel = $('#epi-process-detail');
   panel.classList.remove('hidden');
   panel.innerHTML = '<p class="muted">Carregando processo...</p>';
+  scrollToInteraction(panel);
   epiAttentionSelfieDraft = null;
   validationSelfieDraft = null;
   epiProcessLocation = { latitude: null, longitude: null };
@@ -1953,7 +1966,7 @@ async function openEpiProcess(id) {
     $('#close-epi-process-detail').addEventListener('click', () => { panel.classList.add('hidden'); activateSubtab('epi-main', 'processes'); });
     $('#download-epi-process-pdf')?.addEventListener('click', (event) => downloadPdfFile(`/api/epi/processes/${process.id}/pdf`, `processo-epi-${process.id}.pdf`, event.currentTarget));
     $('#print-epi-process')?.addEventListener('click', () => window.print());
-    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    scrollToInteraction(panel);
     $('#epi-attention-send-back')?.addEventListener('click', async () => {
       const message = $('#epi-attention-message');
       const button = $('#epi-attention-send-back');
@@ -2053,7 +2066,7 @@ function startUserEdit(userId, users) {
   $('#user-edit-password').value = '';
   $('#user-edit-message').textContent = '';
   panel.classList.remove('hidden');
-  panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  scrollToInteraction(panel, { focusTarget: '#user-edit-name' });
 }
 
 function renderAdminNotificationRecipients(users) {
@@ -2082,6 +2095,7 @@ async function loadTechnicianSummary(userId) {
   const panel = $('#technician-detail');
   panel.classList.remove('hidden');
   panel.innerHTML = '<p class="muted">Carregando dados do técnico...</p>';
+  scrollToInteraction(panel);
   try {
     const data = await api(`/api/users/${userId}/technician-summary`);
     technicianCalendarDays = data.dailyChecklistDays || [];
@@ -2089,6 +2103,7 @@ async function loadTechnicianSummary(userId) {
     panel.innerHTML = `<div class="technician-detail-heading"><div><div class="eyebrow">DETALHE DO TÉCNICO · ${escapeHtml(data.period.toUpperCase())}</div><h3>${escapeHtml(data.technician.name)}</h3><p class="muted">${escapeHtml(data.technician.email)} · ${data.technician.active ? 'Conta ativa' : 'Conta desativada'}</p></div><button id="close-technician-detail" type="button" class="secondary small-button">Fechar</button></div><div class="technician-stats"><div><strong>${escapeHtml(data.stats.checklistEvents)}</strong><span>eventos de checklist</span></div><div><strong>${escapeHtml(data.stats.episToday)}</strong><span>EPIs registrados hoje</span></div><div><strong>${escapeHtml(data.stats.pending)}</strong><span>pendências</span></div></div><section class="technician-calendar-section"><h4>Calendário de checklist diário</h4><div id="technician-calendar"></div></section><div class="technician-detail-grid"><section><h4>EPIs com o técnico hoje</h4>${data.epis.length ? `<div class="table-wrap"><table><thead><tr><th>EPI</th><th>Qtd.</th><th>CA</th><th>Condição</th><th>Registrado</th></tr></thead><tbody>${data.epis.map((item) => `<tr><td>${escapeHtml(item.equipment_name)}</td><td>${escapeHtml(item.quantity)}</td><td>${escapeHtml(item.ca || '–')}</td><td>${escapeHtml(item.condition || '–')}</td><td>${escapeHtml(formatDate(item.signed_at))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhum EPI registrado hoje.</p>'}</section><section><h4>Pendências</h4>${data.pending.length ? `<div class="pending-list">${data.pending.map((item) => `<div class="pending-item"><strong>${escapeHtml(item.type === 'vehicle_checklist' ? 'Checklist de veículo' : item.type === 'epi_process' ? 'Processo de EPI' : 'Termo de EPI')}</strong><span>${escapeHtml(item.label)} · ${escapeHtml(item.status)}</span></div>`).join('')}</div>` : '<p class="muted">Nenhuma pendência encontrada.</p>'}</section></div><section><h4>Logs de checklist</h4>${data.logs.length ? `<div class="table-wrap"><table><thead><tr><th>Quando</th><th>Evento</th><th>Registro</th><th>IP</th></tr></thead><tbody>${data.logs.map((item) => `<tr><td>${escapeHtml(formatDate(item.created_at))}</td><td>${escapeHtml(eventLabel(item.event_type))}</td><td>${escapeHtml(item.entity_type ? `${item.entity_type} #${item.entity_id || '–'}` : '–')}</td><td>${escapeHtml(item.ip_address || '–')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhum log de checklist encontrado.</p>'}</section>`;
     renderTechnicianCalendar();
     $('#close-technician-detail').addEventListener('click', () => panel.classList.add('hidden'));
+    scrollToInteraction(panel);
   } catch (error) {
     panel.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
   }
@@ -2117,7 +2132,7 @@ async function loadAuditLogs() {
     setView('vehicles-view');
     try {
       await openVehicleChecklist(button.dataset.auditOpenVehicle, detail);
-      $(detail)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      scrollToInteraction(detail);
     } catch (error) {
       const container = $(detail);
       if (container) {
@@ -2289,7 +2304,7 @@ async function loadStock() {
   $('#stock-vehicles-table').innerHTML = stockVehicles.length ? stockVehicles.map((vehicle) => { const count = (vehicle.equipmentItems || []).length; return `<tr><td><strong>${escapeHtml(vehicle.plate)}</strong></td><td>${escapeHtml(vehicle.model || '–')}</td><td>${escapeHtml(vehicle.year || '–')}</td><td>${escapeHtml(vehicle.color || '–')}</td><td>${escapeHtml(vehicle.lastDriver || 'Sem checklist')}${vehicle.lastChecklistAt ? `<small class="table-subtext">${escapeHtml(formatDate(vehicle.lastChecklistAt))}</small>` : ''}</td><td>${escapeHtml(vehicle.status === 'ativo' ? 'Ativo' : 'Inativo')}</td><td><button type="button" class="secondary small-button" data-vehicle-inventory="${escapeHtml(vehicle.id)}">${count} ${count === 1 ? 'item' : 'itens'}</button></td><td>${renderStockVehicleIntegrity(vehicle)}</td><td><div class="table-actions"><button type="button" class="secondary small-button" data-vehicle-edit="${escapeHtml(vehicle.id)}">Editar</button><button type="button" class="secondary small-button" data-vehicle-delete="${escapeHtml(vehicle.id)}">Excluir</button></div></td></tr>`; }).join('') : '<tr><td colspan="9" class="muted">Nenhum veículo cadastrado.</td></tr>';
   document.querySelectorAll('[data-vehicle-integrity]').forEach((button) => button.addEventListener('click', () => { void openVehicleIntegrityModal(stockVehicles.find((vehicle) => String(vehicle.id) === String(button.dataset.vehicleIntegrity))); }));
   $('#vehicle-integrity-modal')?.querySelectorAll('[data-vehicle-integrity-close]').forEach((button) => { button.onclick = closeVehicleIntegrityModal; });
-  document.querySelectorAll('[data-vehicle-inventory]').forEach((button) => button.addEventListener('click', () => { selectedStockVehicleId = String(button.dataset.vehicleInventory); renderStockVehicleEquipment(stockVehicles); document.querySelector('.vehicle-equipment-stock')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); $('#stock-vehicle-equipment-vehicle')?.focus(); }));
+  document.querySelectorAll('[data-vehicle-inventory]').forEach((button) => button.addEventListener('click', () => { selectedStockVehicleId = String(button.dataset.vehicleInventory); renderStockVehicleEquipment(stockVehicles); scrollToInteraction('.vehicle-equipment-stock', { focusTarget: '#stock-vehicle-equipment-vehicle' }); }));
   $('#stock-ppes-table').innerHTML = stockPpeCatalog.length ? stockPpeCatalog.map((ppe) => {
     const holders = (ppe.assignedUsers || []).map((holder) => `${holder.name || 'Usuário'} · ${holder.quantity} un.`).join(', ');
     return `<tr><td><strong>${escapeHtml(ppe.name)}</strong><small class="table-subtext">${escapeHtml(ppe.category || 'Sem categoria')}</small></td><td>${escapeHtml(ppe.ca)}</td><td>${escapeHtml(ppe.stockQuantity)}</td><td><strong>${escapeHtml(ppe.availableQuantity)}</strong></td><td>${escapeHtml(holders || 'Ninguém')}${ppe.assignedQuantity ? `<small class="table-subtext">Total em posse: ${escapeHtml(ppe.assignedQuantity)}</small>` : ''}</td><td><span class="stock-state stock-state-${escapeHtml(ppe.stockStatus || 'normal')}">${escapeHtml(stockStatusLabel(ppe.stockStatus))}</span><small class="table-subtext">${escapeHtml(ppe.active ? 'Ativo' : 'Inativo')}</small></td><td><div class="table-actions"><button type="button" class="secondary small-button" data-ppe-edit="${escapeHtml(ppe.id)}">Editar</button><button type="button" class="secondary small-button" data-ppe-toggle="${escapeHtml(ppe.id)}" data-ppe-next-active="${ppe.active ? 'false' : 'true'}">${ppe.active ? 'Desativar' : 'Ativar'}</button></div></td></tr>`;
@@ -2308,7 +2323,7 @@ async function loadStock() {
     $('#stock-vehicle-color').value = vehicle.color || '';
     $('#stock-vehicle-cancel').classList.remove('hidden');
     $('#stock-vehicle-message').textContent = 'Editando veículo do cadastro.';
-    $('#stock-vehicle-plate').focus();
+    scrollToInteraction('#stock-vehicle-form', { focusTarget: '#stock-vehicle-plate' });
   }));
   document.querySelectorAll('[data-vehicle-delete]').forEach((button) => button.addEventListener('click', async () => {
     const vehicle = stockVehicles.find((item) => String(item.id) === String(button.dataset.vehicleDelete));
@@ -2326,7 +2341,7 @@ async function loadStock() {
     $('#stock-ppe-quantity').value = ppe.stockQuantity ?? 0;
     $('#stock-ppe-cancel').classList.remove('hidden');
     $('#stock-ppe-message').textContent = 'Editando EPI do catálogo.';
-    $('#stock-ppe-name').focus();
+    scrollToInteraction('#stock-ppe-form', { focusTarget: '#stock-ppe-name' });
   }));
   document.querySelectorAll('[data-ppe-toggle]').forEach((button) => button.addEventListener('click', async () => {
     try { await api(`/api/stock/ppes/${button.dataset.ppeToggle}/status`, { method: 'PATCH', body: JSON.stringify({ active: button.dataset.ppeNextActive === 'true' }) }); await loadStock(); } catch (error) { $('#stock-ppe-message').textContent = error.message; }
@@ -2371,6 +2386,7 @@ function renderStockVehicleEquipment(vehicles) {
     $('#stock-vehicle-equipment-quantity').value = item.quantity || 1;
     $('#stock-vehicle-equipment-cancel').classList.remove('hidden');
     $('#stock-vehicle-equipment-message').textContent = 'Editando equipamento do veículo.';
+    scrollToInteraction('#stock-vehicle-equipment-form', { focusTarget: '#stock-vehicle-equipment-name' });
     $('#stock-vehicle-equipment-name').focus();
   }));
   table.querySelectorAll('[data-vehicle-equipment-delete]').forEach((button) => button.addEventListener('click', async () => {
@@ -2481,13 +2497,13 @@ function initializeVehicleWizardDom() {
     $('#vehicle-final-step').classList.remove('hidden');
     configureVehicleFinalFields();
     $('#vehicle-item-message').textContent = '';
-    $('#vehicle-final-step').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    scrollToInteraction('#vehicle-final-step');
   });
   $('#vehicle-return-to-items').addEventListener('click', () => {
     $('#vehicle-final-step').classList.add('hidden');
     $('#vehicle-checklist-step').classList.remove('hidden');
     renderVehicleWizardItem();
-    $('#vehicle-checklist-step').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    scrollToInteraction('#vehicle-checklist-step');
   });
   $('#vehicle-open-selfie-camera').addEventListener('click', () => { $('#vehicle-selfie-camera').classList.remove('hidden'); openEpiCamera('#vehicle-selfie-video', '#vehicle-selfie-message', 'user'); });
   $('#vehicle-cancel-selfie').addEventListener('click', () => { stopEpiCamera('#vehicle-selfie-video'); $('#vehicle-selfie-camera').classList.add('hidden'); });
@@ -2570,7 +2586,7 @@ function startVehicleChecklist() {
   renderVehicleWizardItem();
   renderVehiclePhotoDrafts();
   if (shouldUseMobileVehicleChecklist()) openMobileVehicleChecklist();
-  $('#vehicle-checklist-step').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  scrollToInteraction('#vehicle-checklist-step');
 }
 
 function populateVehicleCatalog() {
@@ -2811,6 +2827,7 @@ function renderVehicleDetail(checklist, containerSelector, canValidate) {
         }
         const updated = await api(`/api/vehicles/checklists/${checklist.id}/validate`, { method: 'POST', body: JSON.stringify({ decision, notes: $('#validation-notes').value, signatureConfirmed: true, latitude: validationLocation.latitude, longitude: validationLocation.longitude, deviceInfo: navigator.userAgent, validationSelfie: vehicleValidationSelfie }) });
         renderVehicleDetail(updated.checklist, containerSelector, true);
+        scrollToInteraction(containerSelector);
         await loadValidationQueue();
         await loadOverview();
       } catch (error) { message.textContent = error.message; }
@@ -2824,8 +2841,12 @@ async function openVehicleChecklist(id, containerSelector, validationQueue = fal
   if (containerSelector === '#vehicle-tech-detail') activateSubtab('vehicles-tech', 'history');
   if (containerSelector === '#vehicle-admin-detail') { activateSubtab('vehicles-main', 'management'); activateSubtab('vehicles-admin', 'detail'); }
   if (containerSelector === '#validation-detail') activateSubtab('validation-main', 'detail');
+  const container = $(containerSelector);
+  container?.classList.remove('hidden');
+  scrollToInteraction(container);
   const data = await api(`/api/vehicles/checklists/${id}${validationQueue ? '?queue=1' : ''}`);
   renderVehicleDetail(data.checklist, containerSelector, isChecklistValidatorRole());
+  scrollToInteraction(containerSelector);
 }
 
 function renderEpiPendingSummary(process) {
@@ -2980,7 +3001,7 @@ function renderTermDetail(term) {
   document.querySelectorAll('#terms-list [data-term-id]').forEach((button) => button.classList.toggle('selected', String(button.dataset.termId) === String(term.id)));
 }
 
-async function openTerm(id) { activateSubtab('epi-main', 'terms'); const data = await api(`/api/epi/terms/${id}`); renderTermDetail(data.term); $('#term-detail').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+async function openTerm(id) { activateSubtab('epi-main', 'terms'); const detail = $('#term-detail'); detail?.classList.remove('hidden'); scrollToInteraction(detail); const data = await api(`/api/epi/terms/${id}`); renderTermDetail(data.term); scrollToInteraction('#term-detail'); }
 
 $('#login-form').addEventListener('submit', async (event) => { event.preventDefault(); $('#login-error').textContent = ''; try { const data = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: $('#login-email').value, password: $('#login-password').value }) }); showApp(data.user); } catch (error) { $('#login-error').textContent = error.message; } });
 $('#logout').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); window.location.reload(); });
@@ -3192,7 +3213,7 @@ async function submitEpiProcessPhotos(photos, messageElement) {
   await loadEpiProcesses();
   await loadNotifications();
   await loadOverview();
-  if (returnToMobileChecklistList) $('#epi-process-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (returnToMobileChecklistList) scrollToInteraction('#epi-process-list');
 }
 
 function renderEpiPhotoDrafts() {
