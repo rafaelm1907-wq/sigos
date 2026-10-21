@@ -86,6 +86,8 @@ const eventLabels = {
   vehicle_transfer_accepted: 'Transferência de veículo aceita',
   vehicle_transfer_ready_for_admin: 'Transferência pronta para validação do Admin',
   vehicle_delivery_accepted: 'Entrega de veículo aceita pelo técnico',
+  vehicle_integrity_assigned: 'Pendência de integridade enviada',
+  vehicle_integrity_corrected: 'Avaria de veículo marcada como corrigida',
   selfie_uploaded: 'Selfie registrada',
   user_signature_registered: 'Assinatura padrão cadastrada',
   user_data_consent_registered: 'Consentimento registrado',
@@ -378,6 +380,7 @@ function auditCoordinates(item) {
 
 function notificationEntityLabel(notification) {
   if (notification.entityType === 'vehicle_checklist') return 'Abrir checklist de veículo';
+  if (notification.entityType === 'vehicle_integrity_action') return isAdminRole() ? 'Abrir integridade dos veículos' : 'Pendência de integridade de veículo';
   if (notification.entityType === 'epi_term') return 'Abrir termo de EPI';
   if (notification.entityType === 'epi_process') return 'Abrir processo de EPI';
   if (notification.entityType === 'compliance_alert') return isAdminRole() ? 'Abrir alertas de conformidade' : 'Fazer checklist diário';
@@ -530,6 +533,8 @@ async function openNotification(notificationId, notifications) {
       setView('vehicles-view'); await loadVehicleChecklists();
     } else if (notification.entityType === 'compliance_pending_task') {
       setView('pending-view'); await loadPendingTasks();
+    } else if (notification.entityType === 'vehicle_integrity_action' && isAdminRole()) {
+      setView('stock-view'); await loadStock();
     }
   } catch (error) {
     $('#notifications-panel').classList.remove('hidden');
@@ -2141,23 +2146,94 @@ function stockProcessLabel(movement) {
 }
 
 function vehicleIntegrityItemHasIssue(item) {
+  if (item.integrityActionStatus === 'corrigida') return false;
   return [item.afterStatus, item.beforeStatus].some((status) => status && status !== 'ok');
 }
 
-function renderVehicleIntegrityItems(vehicle) {
+async function loadVehicleIntegrityAssignableUsers() {
+  if (!complianceAssignableUsers.length) {
+    const data = await api('/api/users');
+    complianceAssignableUsers = data.users || [];
+  }
+  return complianceAssignableUsers.filter((user) => user.active && String(user.id) !== String(currentUser?.id));
+}
+
+function renderVehicleIntegrityActionMeta(item) {
+  if (item.integrityActionStatus === 'corrigida') {
+    const correction = item.integrityCorrectedAt ? ` · ${formatDate(item.integrityCorrectedAt)}` : '';
+    const note = item.integrityCorrectionNote ? ` · ${escapeHtml(item.integrityCorrectionNote)}` : '';
+    return `<small class="vehicle-integrity-action-meta is-resolved">Correção marcada${correction}${note}</small>`;
+  }
+  if (item.integrityActionStatus === 'pendente') {
+    const recipient = item.integrityAssignedToName ? `Enviado para: ${escapeHtml(item.integrityAssignedToName)}` : 'Correção pendente';
+    const instruction = item.integrityInstruction ? ` · ${escapeHtml(item.integrityInstruction)}` : '';
+    return `<small class="vehicle-integrity-action-meta">${recipient}${instruction}</small>`;
+  }
+  return '';
+}
+
+function renderVehicleIntegrityActions(vehicle, item, users) {
+  if (!isAdminRole() || !vehicle.lastChecklistId || !vehicleIntegrityItemHasIssue(item)) return '';
+  const options = users.length
+    ? `<option value="">Selecione um usuário</option>${users.map((user) => `<option value="${escapeHtml(user.id)}">${escapeHtml(user.name)} · ${escapeHtml(roleLabels[user.role] || user.role)}</option>`).join('')}`
+    : '<option value="">Nenhum usuário disponível</option>';
+  return `<div class="vehicle-integrity-actions" data-integrity-action-container><button type="button" class="small-button" data-integrity-action="correct" data-vehicle-id="${escapeHtml(vehicle.id)}" data-checklist-id="${escapeHtml(vehicle.lastChecklistId)}" data-item-key="${escapeHtml(item.itemKey)}">Marcar como corrigido</button><div class="vehicle-integrity-assignment"><label>Enviar para<select data-integrity-assignee ${users.length ? '' : 'disabled'}>${options}</select></label><input type="text" maxlength="500" data-integrity-instruction placeholder="Orientação opcional" /><button type="button" class="secondary small-button" data-integrity-action="assign" data-vehicle-id="${escapeHtml(vehicle.id)}" data-checklist-id="${escapeHtml(vehicle.lastChecklistId)}" data-item-key="${escapeHtml(item.itemKey)}" ${users.length ? '' : 'disabled'}>Enviar para</button></div><small class="vehicle-integrity-action-status" data-integrity-action-status aria-live="polite"></small></div>`;
+}
+
+function renderVehicleIntegrityItems(vehicle, users = []) {
   const items = vehicle.integrityItems || [];
   return items.map((item) => {
     const hasIssue = vehicleIntegrityItemHasIssue(item);
     const warning = hasIssue ? '<span class="vehicle-integrity-item-warning" title="Item com avaria ou irregularidade" aria-label="Item com avaria ou irregularidade">!</span>' : '';
-    return `<div class="vehicle-integrity-item${hasIssue ? ' has-integrity-issue' : ''}"><div class="vehicle-integrity-item-heading"><strong>${escapeHtml(item.itemName)}</strong>${warning}</div><span>Estado: ${escapeHtml(vehicleStatusLabel(item.afterStatus || item.beforeStatus))}</span>${item.beforeStatus !== item.afterStatus ? `<small>Antes: ${escapeHtml(vehicleStatusLabel(item.beforeStatus))} · Depois: ${escapeHtml(vehicleStatusLabel(item.afterStatus))}</small>` : ''}${item.afterDescription || item.beforeDescription ? `<small>Descrição: ${escapeHtml(item.afterDescription || item.beforeDescription)}</small>` : ''}</div>`;
+    const resolved = item.integrityActionStatus === 'corrigida';
+    const reportedBy = item.reportedBy || 'Usuário não identificado';
+    const reportedAt = item.reportedAt ? ` · ${formatDate(item.reportedAt)}` : '';
+    return `<div class="vehicle-integrity-item${hasIssue ? ' has-integrity-issue' : ''}${resolved ? ' is-resolved' : ''}"><div class="vehicle-integrity-item-heading"><strong>${escapeHtml(item.itemName)}</strong>${warning}</div><span>Estado: ${escapeHtml(vehicleStatusLabel(item.afterStatus || item.beforeStatus))}</span>${item.beforeStatus !== item.afterStatus ? `<small>Antes: ${escapeHtml(vehicleStatusLabel(item.beforeStatus))} · Depois: ${escapeHtml(vehicleStatusLabel(item.afterStatus))}</small>` : ''}${item.afterDescription || item.beforeDescription ? `<small>Descrição: ${escapeHtml(item.afterDescription || item.beforeDescription)}</small>` : ''}<small class="vehicle-integrity-reporter">Reportado por: ${escapeHtml(reportedBy)}${escapeHtml(reportedAt)}</small>${renderVehicleIntegrityActionMeta(item)}${renderVehicleIntegrityActions(vehicle, item, users)}</div>`;
   }).join('');
 }
 
-function openVehicleIntegrityModal(vehicle) {
+function bindVehicleIntegrityActions(vehicle) {
+  const modal = $('#vehicle-integrity-modal');
+  const content = modal?.querySelector('#vehicle-integrity-modal-content');
+  if (!modal || !content) return;
+  content.querySelectorAll('[data-integrity-action]').forEach((button) => button.addEventListener('click', async () => {
+    const container = button.closest('[data-integrity-action-container]');
+    const status = container?.querySelector('[data-integrity-action-status]');
+    const payload = {
+      vehicleId: Number(button.dataset.vehicleId),
+      checklistId: Number(button.dataset.checklistId),
+      itemKey: button.dataset.itemKey,
+    };
+    try {
+      button.disabled = true;
+      if (button.dataset.integrityAction === 'correct') {
+        const note = window.prompt('Observação da correção (opcional):', '') || '';
+        await api('/api/stock/vehicle-integrity/resolve', { method: 'POST', body: JSON.stringify({ ...payload, note }) });
+      } else {
+        const assignee = container?.querySelector('[data-integrity-assignee]')?.value;
+        if (!assignee) throw new Error('Selecione o usuário que receberá a pendência.');
+        const instruction = container?.querySelector('[data-integrity-instruction]')?.value.trim() || '';
+        await api('/api/stock/vehicle-integrity/assign', { method: 'POST', body: JSON.stringify({ ...payload, assignedTo: Number(assignee), instruction }) });
+      }
+      closeVehicleIntegrityModal();
+      await loadStock();
+      await loadNotifications();
+    } catch (error) {
+      if (status) status.textContent = error.message;
+      button.disabled = false;
+    }
+  }));
+}
+
+async function openVehicleIntegrityModal(vehicle) {
   const modal = $('#vehicle-integrity-modal');
   if (!modal || !vehicle) return;
   const items = vehicle.integrityItems || [];
   const hasIntegrityIssue = items.some(vehicleIntegrityItemHasIssue);
+  let assignableUsers = [];
+  if (isAdminRole() && hasIntegrityIssue) {
+    try { assignableUsers = await loadVehicleIntegrityAssignableUsers(); } catch { assignableUsers = []; }
+  }
   const title = modal.querySelector('#vehicle-integrity-modal-title');
   const subtitle = modal.querySelector('#vehicle-integrity-modal-subtitle');
   const content = modal.querySelector('#vehicle-integrity-modal-content');
@@ -2167,13 +2243,14 @@ function openVehicleIntegrityModal(vehicle) {
     : 'Nenhum checklist lançado para este veículo.';
   if (content) {
     content.innerHTML = vehicle.lastChecklistId && items.length
-      ? `${hasIntegrityIssue ? '<p class="vehicle-integrity-modal-alert">Os itens marcados com <b>!</b> geraram a sinalização de avaria ou irregularidade.</p>' : '<p class="muted">Nenhum item com avaria ou irregularidade foi identificado.</p>'}<div class="vehicle-integrity-list">${renderVehicleIntegrityItems(vehicle)}</div>`
+      ? `${hasIntegrityIssue ? '<p class="vehicle-integrity-modal-alert">Os itens marcados com <b>!</b> geraram a sinalização de avaria ou irregularidade.</p>' : '<p class="muted">Nenhum item com avaria ou irregularidade está pendente. Os registros corrigidos permanecem no histórico.</p>'}<div class="vehicle-integrity-list">${renderVehicleIntegrityItems(vehicle, assignableUsers)}</div>`
       : '<p class="muted">Nenhum checklist lançado para este veículo.</p>';
   }
   modal.classList.remove('hidden');
   modal.setAttribute('aria-hidden', 'false');
   document.body.classList.add('vehicle-integrity-modal-open');
   modal.querySelector('[data-vehicle-integrity-close]')?.focus();
+  bindVehicleIntegrityActions(vehicle);
 }
 
 function closeVehicleIntegrityModal() {
@@ -2210,7 +2287,7 @@ async function loadStock() {
   if (inventoryLabel) inventoryLabel.textContent = 'INVENTÁRIO';
   if (inventoryHeading) inventoryHeading.textContent = 'Itens cadastrados em cada veículo';
   $('#stock-vehicles-table').innerHTML = stockVehicles.length ? stockVehicles.map((vehicle) => { const count = (vehicle.equipmentItems || []).length; return `<tr><td><strong>${escapeHtml(vehicle.plate)}</strong></td><td>${escapeHtml(vehicle.model || '–')}</td><td>${escapeHtml(vehicle.year || '–')}</td><td>${escapeHtml(vehicle.color || '–')}</td><td>${escapeHtml(vehicle.lastDriver || 'Sem checklist')}${vehicle.lastChecklistAt ? `<small class="table-subtext">${escapeHtml(formatDate(vehicle.lastChecklistAt))}</small>` : ''}</td><td>${escapeHtml(vehicle.status === 'ativo' ? 'Ativo' : 'Inativo')}</td><td><button type="button" class="secondary small-button" data-vehicle-inventory="${escapeHtml(vehicle.id)}">${count} ${count === 1 ? 'item' : 'itens'}</button></td><td>${renderStockVehicleIntegrity(vehicle)}</td><td><div class="table-actions"><button type="button" class="secondary small-button" data-vehicle-edit="${escapeHtml(vehicle.id)}">Editar</button><button type="button" class="secondary small-button" data-vehicle-delete="${escapeHtml(vehicle.id)}">Excluir</button></div></td></tr>`; }).join('') : '<tr><td colspan="9" class="muted">Nenhum veículo cadastrado.</td></tr>';
-  document.querySelectorAll('[data-vehicle-integrity]').forEach((button) => button.addEventListener('click', () => openVehicleIntegrityModal(stockVehicles.find((vehicle) => String(vehicle.id) === String(button.dataset.vehicleIntegrity)))));
+  document.querySelectorAll('[data-vehicle-integrity]').forEach((button) => button.addEventListener('click', () => { void openVehicleIntegrityModal(stockVehicles.find((vehicle) => String(vehicle.id) === String(button.dataset.vehicleIntegrity))); }));
   $('#vehicle-integrity-modal')?.querySelectorAll('[data-vehicle-integrity-close]').forEach((button) => { button.onclick = closeVehicleIntegrityModal; });
   document.querySelectorAll('[data-vehicle-inventory]').forEach((button) => button.addEventListener('click', () => { selectedStockVehicleId = String(button.dataset.vehicleInventory); renderStockVehicleEquipment(stockVehicles); document.querySelector('.vehicle-equipment-stock')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); $('#stock-vehicle-equipment-vehicle')?.focus(); }));
   $('#stock-ppes-table').innerHTML = stockPpeCatalog.length ? stockPpeCatalog.map((ppe) => {

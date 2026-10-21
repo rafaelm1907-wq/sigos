@@ -321,6 +321,19 @@ textarea { width: 100%; min-height: 68px; resize: vertical; border: 1px solid #3
 .vehicle-integrity-item { display: grid; gap: 2px; padding: 7px 9px; border-radius: 8px; background: rgba(30, 58, 95, .28); }
 .vehicle-integrity-item span { color: #e2e8f0; font-size: .78rem; }
 .vehicle-integrity-item small { color: #9aa8c2; font-size: .7rem; }
+.vehicle-integrity-item.is-resolved { border: 1px solid rgba(52, 211, 153, .35); background: rgba(6, 78, 59, .2); }
+.vehicle-integrity-item.is-resolved strong { color: #a7f3d0; }
+.vehicle-integrity-reporter { color: #cbd5e1 !important; }
+.vehicle-integrity-action-meta { color: #fbbf24 !important; font-weight: 700; }
+.vehicle-integrity-action-meta.is-resolved { color: #86efac !important; }
+.vehicle-integrity-actions { display: grid; gap: 8px; margin-top: 8px; padding-top: 9px; border-top: 1px solid rgba(148, 163, 184, .16); }
+.vehicle-integrity-actions button { width: fit-content; }
+.vehicle-integrity-assignment { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
+.vehicle-integrity-assignment label { display: grid; gap: 4px; color: #cbd5e1; font-size: .72rem; font-weight: 700; }
+.vehicle-integrity-assignment select, .vehicle-integrity-assignment input { width: 100%; min-width: 0; padding: 8px 9px; font-size: .78rem; }
+.vehicle-integrity-assignment input { grid-column: 1 / -1; }
+.vehicle-integrity-assignment button { align-self: end; }
+.vehicle-integrity-action-status { min-height: 1em; color: #fca5a5 !important; }
 .vehicle-integrity-open-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 8px 10px; border: 1px solid rgba(110, 231, 183, .28); border-radius: 9px; background: rgba(30, 58, 95, .3); color: #a7f3d0; font-size: .78rem; white-space: nowrap; }
 .vehicle-integrity-open-button.has-integrity-issue { border-color: rgba(248, 113, 113, .72); background: rgba(127, 29, 29, .28); color: #fecaca; }
 .vehicle-integrity-item-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }

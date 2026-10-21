@@ -1651,6 +1651,25 @@ async function initSchema() {
     CREATE INDEX IF NOT EXISTS vehicle_checklists_driver_idx ON vehicle_checklists (driver_user_id);
     CREATE INDEX IF NOT EXISTS vehicle_checklists_daily_period_idx ON vehicle_checklists (vehicle_id, driver_user_id, daily_period, submitted_at DESC);
     CREATE INDEX IF NOT EXISTS vehicle_checklist_items_checklist_idx ON vehicle_checklist_items (checklist_id);
+
+    CREATE TABLE IF NOT EXISTS vehicle_integrity_actions (
+      id BIGSERIAL PRIMARY KEY,
+      vehicle_id BIGINT REFERENCES vehicles(id) ON DELETE SET NULL,
+      checklist_id BIGINT NOT NULL REFERENCES vehicle_checklists(id) ON DELETE CASCADE,
+      item_key TEXT NOT NULL,
+      item_name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'corrigida', 'cancelada')),
+      assigned_to BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      assigned_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      instruction TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      corrected_at TIMESTAMPTZ,
+      corrected_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      correction_note TEXT
+    );
+    CREATE INDEX IF NOT EXISTS vehicle_integrity_actions_checklist_idx ON vehicle_integrity_actions (checklist_id, item_key, created_at DESC);
+    CREATE INDEX IF NOT EXISTS vehicle_integrity_actions_assignee_idx ON vehicle_integrity_actions (assigned_to, status, created_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS vehicle_integrity_actions_open_item_idx ON vehicle_integrity_actions (checklist_id, item_key) WHERE status = 'pendente';
   `);
 }
 
@@ -5523,17 +5542,36 @@ app.get('/api/stock', auth, requireRole('admin'), async (_req, res) => {
              ) AS equipment_items
       FROM vehicles v
       LEFT JOIN LATERAL (
-        SELECT vc.id, vc.status, vc.checklist_type, vc.created_at, u.name AS driver_name,
+        SELECT vc.id, vc.status, vc.checklist_type, vc.created_at, vc.driver_user_id, u.name AS driver_name,
                COALESCE(
-                 (SELECT json_agg(json_build_object(
+                  (SELECT json_agg(json_build_object(
                     'itemKey', i.item_key,
                     'itemName', i.item_name,
                     'beforeStatus', i.before_status,
                     'beforeDescription', i.before_description,
                     'afterStatus', i.after_status,
-                    'afterDescription', i.after_description
+                     'afterDescription', i.after_description,
+                     'reportedByUserId', vc.driver_user_id,
+                     'reportedBy', u.name,
+                     'reportedAt', vc.created_at,
+                     'integrityActionId', integrity_action.id,
+                     'integrityActionStatus', integrity_action.status,
+                     'integrityAssignedTo', integrity_action.assigned_to,
+                     'integrityAssignedToName', integrity_action.assigned_to_name,
+                     'integrityInstruction', integrity_action.instruction,
+                     'integrityCorrectedAt', integrity_action.corrected_at,
+                     'integrityCorrectionNote', integrity_action.correction_note
                   ) ORDER BY i.id)
                   FROM vehicle_checklist_items i
+                   LEFT JOIN LATERAL (
+                     SELECT action.id, action.status, action.assigned_to, action.instruction, action.corrected_at, action.correction_note,
+                            assignee.name AS assigned_to_name
+                     FROM vehicle_integrity_actions action
+                     LEFT JOIN users assignee ON assignee.id = action.assigned_to
+                     WHERE action.checklist_id = vc.id AND action.item_key = i.item_key
+                     ORDER BY action.created_at DESC, action.id DESC
+                     LIMIT 1
+                   ) integrity_action ON TRUE
                   WHERE i.checklist_id = vc.id),
                  '[]'::json
                ) AS integrity_items
@@ -5602,6 +5640,144 @@ app.get('/api/stock', auth, requireRole('admin'), async (_req, res) => {
      LIMIT 100`,
   );
   res.json({ vehicles: vehicles.rows.map(publicStockVehicle), ppes: ppes.rows.map(publicStockPpe), movements: movements.rows.map(publicStockMovement) });
+});
+
+async function findVehicleIntegrityIssue({ vehicleId, checklistId, itemKey }) {
+  const result = await pool.query(
+    `SELECT c.id AS checklist_id, c.vehicle_id, c.plate, c.driver_user_id,
+            driver.name AS reported_by, i.item_key, i.item_name,
+            i.before_status, i.before_description,
+            i.after_status, i.after_description
+     FROM vehicle_checklists c
+     JOIN vehicles v ON v.id = $1
+       AND (c.vehicle_id = v.id OR c.plate = v.plate)
+     JOIN vehicle_checklist_items i ON i.checklist_id = c.id AND i.item_key = $3
+     LEFT JOIN users driver ON driver.id = c.driver_user_id
+     WHERE c.id = $2
+     LIMIT 1`,
+    [vehicleId, checklistId, itemKey],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  if (![row.before_status, row.after_status].some((status) => status && status !== 'ok')) return null;
+  return row;
+}
+
+function publicVehicleIntegrityAction(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    status: row.status,
+    vehicleId: row.vehicle_id,
+    checklistId: row.checklist_id,
+    itemKey: row.item_key,
+    itemName: row.item_name,
+    assignedTo: row.assigned_to || null,
+    assignedToName: row.assigned_to_name || null,
+    assignedBy: row.assigned_by || null,
+    instruction: row.instruction || null,
+    createdAt: row.created_at,
+    correctedAt: row.corrected_at || null,
+    correctedBy: row.corrected_by || null,
+    correctionNote: row.correction_note || null,
+  };
+}
+
+app.post('/api/stock/vehicle-integrity/resolve', auth, requireRole('admin'), async (req, res) => {
+  const vehicleId = Number(req.body.vehicleId);
+  const checklistId = Number(req.body.checklistId);
+  const itemKey = cleanText(req.body.itemKey, 180);
+  const correctionNote = cleanText(req.body.note, 500) || null;
+  if (!Number.isInteger(vehicleId) || vehicleId < 1 || !Number.isInteger(checklistId) || checklistId < 1 || !itemKey) {
+    return res.status(400).json({ error: 'Informe o veículo, o checklist e o item da integridade.' });
+  }
+  const issue = await findVehicleIntegrityIssue({ vehicleId, checklistId, itemKey });
+  if (!issue) return res.status(404).json({ error: 'A avaria informada não foi encontrada ou já não está pendente.' });
+  const existing = await pool.query(
+    `SELECT action.*, assignee.name AS assigned_to_name
+     FROM vehicle_integrity_actions action
+     LEFT JOIN users assignee ON assignee.id = action.assigned_to
+     WHERE action.checklist_id = $1 AND action.item_key = $2
+     ORDER BY action.created_at DESC, action.id DESC
+     LIMIT 1`,
+    [checklistId, itemKey],
+  );
+  if (existing.rows[0]?.status === 'corrigida') return res.status(409).json({ error: 'Este item já foi marcado como corrigido.' });
+  const result = existing.rows[0]
+    ? await pool.query(
+      `UPDATE vehicle_integrity_actions
+       SET status = 'corrigida', corrected_at = NOW(), corrected_by = $2,
+           correction_note = $3
+       WHERE id = $1
+       RETURNING *`,
+      [existing.rows[0].id, req.user.id, correctionNote],
+    )
+    : await pool.query(
+      `INSERT INTO vehicle_integrity_actions
+        (vehicle_id, checklist_id, item_key, item_name, status, assigned_by, corrected_at, corrected_by, correction_note)
+       VALUES ($1, $2, $3, $4, 'corrigida', $5, NOW(), $5, $6)
+       RETURNING *`,
+      [vehicleId, checklistId, itemKey, issue.item_name, req.user.id, correctionNote],
+    );
+  const action = result.rows[0];
+  const recipientIds = [issue.driver_user_id, existing.rows[0]?.assigned_to].filter((id) => Number(id) !== Number(req.user.id));
+  await notifyUsers({
+    userIds: recipientIds,
+    notificationType: 'vehicle_integrity_corrected',
+    title: 'Avaria de veículo marcada como corrigida',
+    message: `${issue.item_name} do veículo ${issue.plate} foi marcada como corrigida por ${req.user.name}.`,
+    entityType: 'vehicle_integrity_action',
+    entityId: action.id,
+    metadata: { vehicleId, checklistId, itemKey, itemName: issue.item_name, reportedBy: issue.reported_by || null, correctedBy: req.user.name, correctionNote },
+  });
+  await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_integrity_corrected', entityType: 'vehicle_integrity_action', entityId: action.id, metadata: { vehicleId, checklistId, itemKey, itemName: issue.item_name, reportedBy: issue.reported_by || null, correctionNote } });
+  res.json({ action: publicVehicleIntegrityAction({ ...action, vehicle_id: vehicleId, checklist_id: checklistId, item_key: itemKey, item_name: issue.item_name }) });
+});
+
+app.post('/api/stock/vehicle-integrity/assign', auth, requireRole('admin'), async (req, res) => {
+  const vehicleId = Number(req.body.vehicleId);
+  const checklistId = Number(req.body.checklistId);
+  const itemKey = cleanText(req.body.itemKey, 180);
+  const assignedTo = Number(req.body.assignedTo);
+  const instruction = cleanText(req.body.instruction, 500) || null;
+  if (!Number.isInteger(vehicleId) || vehicleId < 1 || !Number.isInteger(checklistId) || checklistId < 1 || !itemKey || !Number.isInteger(assignedTo) || assignedTo < 1) {
+    return res.status(400).json({ error: 'Informe o veículo, o checklist, o item e o usuário responsável.' });
+  }
+  if (assignedTo === Number(req.user.id)) return res.status(400).json({ error: 'Selecione outro usuário para receber esta pendência.' });
+  const issue = await findVehicleIntegrityIssue({ vehicleId, checklistId, itemKey });
+  if (!issue) return res.status(404).json({ error: 'A avaria informada não foi encontrada ou já não está pendente.' });
+  const assignee = await pool.query('SELECT id, name, role FROM users WHERE id = $1 AND active = TRUE', [assignedTo]);
+  if (!assignee.rows[0]) return res.status(404).json({ error: 'Usuário responsável não encontrado ou inativo.' });
+  const latest = await pool.query(
+    `SELECT status FROM vehicle_integrity_actions
+     WHERE checklist_id = $1 AND item_key = $2
+     ORDER BY created_at DESC, id DESC
+     LIMIT 1`,
+    [checklistId, itemKey],
+  );
+  if (latest.rows[0]?.status === 'corrigida') return res.status(409).json({ error: 'Este item já foi marcado como corrigido.' });
+  const result = await pool.query(
+    `INSERT INTO vehicle_integrity_actions
+      (vehicle_id, checklist_id, item_key, item_name, status, assigned_to, assigned_by, instruction)
+     VALUES ($1, $2, $3, $4, 'pendente', $5, $6, $7)
+     ON CONFLICT (checklist_id, item_key) WHERE status = 'pendente'
+     DO UPDATE SET assigned_to = EXCLUDED.assigned_to, assigned_by = EXCLUDED.assigned_by,
+                   instruction = EXCLUDED.instruction, created_at = NOW()
+     RETURNING *`,
+    [vehicleId, checklistId, itemKey, issue.item_name, assignedTo, req.user.id, instruction],
+  );
+  const action = result.rows[0];
+  await notifyUsers({
+    userIds: [assignedTo],
+    notificationType: 'vehicle_integrity_assigned',
+    title: 'Pendência de integridade de veículo',
+    message: `${req.user.name} enviou para você a correção de ${issue.item_name} do veículo ${issue.plate}.`,
+    entityType: 'vehicle_integrity_action',
+    entityId: action.id,
+    metadata: { vehicleId, checklistId, itemKey, itemName: issue.item_name, reportedBy: issue.reported_by || null, assignedBy: req.user.name, instruction },
+  });
+  await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_integrity_assigned', entityType: 'vehicle_integrity_action', entityId: action.id, metadata: { vehicleId, checklistId, itemKey, itemName: issue.item_name, reportedBy: issue.reported_by || null, assignedTo, instruction } });
+  res.status(201).json({ action: publicVehicleIntegrityAction({ ...action, vehicle_id: vehicleId, checklist_id: checklistId, item_key: itemKey, item_name: issue.item_name, assigned_to_name: assignee.rows[0].name }) });
 });
 
 app.post('/api/stock/vehicles', auth, requireRole('admin'), async (req, res) => {
