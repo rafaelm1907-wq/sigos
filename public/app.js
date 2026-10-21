@@ -1091,8 +1091,8 @@ function complianceAlertTypeLabel(type) {
   return ({
     epi_daily_missing: 'Checklist diário de EPI ausente',
     vehicle_daily_missing_end: 'Segundo checklist diário de veículo ausente',
-    vehicle_fortnightly_first: 'Primeiro prazo quinzenal do mês',
-    vehicle_fortnightly_month_end: 'Segundo checklist quinzenal do mês',
+    vehicle_fortnightly_first: 'Primeiro prazo do checklist recorrente',
+    vehicle_fortnightly_month_end: 'Segundo checklist recorrente do mês',
   }[type] || 'Pendência de checklist');
 }
 
@@ -1232,6 +1232,9 @@ function renderReport(data) {
   const stats = data.stats || {};
   const metric = (label, value) => `<article class="stat card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value ?? 0)}</strong></article>`;
   content.innerHTML = `<div class="stats-grid report-stats">${metric('Checklists diários EPI', stats.dailyEpiChecklists)}${metric('Checklists de veículos', stats.vehicleChecklists)}${metric('Termos EPI assinados', stats.signedEpiTerms)}${metric('Técnicos que fizeram', technicians.filter((technician) => technician.completed).length)}${metric('Técnicos que faltaram', missingTechnicians.length)}${metric('Pendências abertas agora', Number(stats.openAlerts || 0) + Number(stats.openTasks || 0))}</div><div class="report-grid"><section class="report-subcard"><div class="section-heading"><div><h3>Checklist diário dos técnicos</h3><p class="muted">Quem realizou e quem não registrou no período.</p></div><span class="badge">${technicians.length} técnico${technicians.length === 1 ? '' : 's'}</span></div>${technicians.length ? `<div class="table-wrap"><table><thead><tr><th>Técnico</th><th>Status</th><th>Checklists</th><th>Com atenção</th><th>Último registro</th></tr></thead><tbody>${technicians.map((technician) => `<tr><td><strong>${escapeHtml(technician.name)}</strong><small class="table-subtext">${escapeHtml(technician.email)}</small></td><td>${reportChecklistStatus(technician)}</td><td>${escapeHtml(technician.checklistCount)}</td><td>${escapeHtml(technician.attentionCount)}</td><td>${escapeHtml(formatDate(technician.lastChecklistAt))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhum técnico elegível no período.</p>'}</section><section class="report-subcard"><div class="section-heading"><div><h3>Veículos</h3><p class="muted">Movimentações e checklists registrados no período.</p></div><span class="badge">${vehicles.length} veículo${vehicles.length === 1 ? '' : 's'}</span></div>${vehicles.length ? `<div class="table-wrap"><table><thead><tr><th>Veículo</th><th>Registros</th><th>Diário</th><th>Quinzenal</th><th>Transf.</th><th>Entrega/recebimento</th><th>Pend. validação</th></tr></thead><tbody>${vehicles.map((vehicle) => `<tr><td><strong>${escapeHtml(vehicle.plate)}</strong><small class="table-subtext">${escapeHtml(vehicle.model || '–')}</small></td><td>${reportVehicleChecklistSummary(vehicle)}</td><td>${escapeHtml(vehicle.dailyCount)}</td><td>${escapeHtml(vehicle.fortnightlyCount)}</td><td>${escapeHtml(vehicle.transferCount)}</td><td>${escapeHtml(vehicle.deliveryCount)}</td><td>${escapeHtml(vehicle.pendingValidationCount)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhum veículo ativo cadastrado.</p>'}</section></div><div class="report-grid"><section class="report-subcard"><div class="section-heading"><div><h3>Pendências do período</h3><p class="muted">Alertas de conformidade gerados na faixa selecionada.</p></div><span class="badge">${alerts.length}</span></div>${alerts.length ? `<div class="report-list">${alerts.map((alert) => `<article class="report-list-item"><div><strong>${escapeHtml(alert.title)}</strong><span>${escapeHtml(alert.subject_label || '–')} · ${escapeHtml(reportAlertStatus(alert.status))}</span></div><p>${escapeHtml(alert.message || '–')}</p><small>${escapeHtml(formatDate(alert.created_at))}</small></article>`).join('')}</div>` : '<p class="muted">Nenhum alerta gerado no período.</p>'}</section><section class="report-subcard"><div class="section-heading"><div><h3>Tarefas pendentes</h3><p class="muted">Pendências atribuídas que ainda aguardam conclusão.</p></div><span class="badge">${openTasks.length}</span></div>${openTasks.length ? `<div class="report-list">${openTasks.map((task) => `<article class="report-list-item"><div><strong>${escapeHtml(task.title)}</strong><span>${escapeHtml(task.subject_label || '–')} · Responsável: ${escapeHtml(task.assigned_to_name || '–')}</span></div><p>${escapeHtml(task.instruction || '–')}</p><small>Enviada em ${escapeHtml(formatDate(task.assigned_at))}</small></article>`).join('')}</div>` : '<p class="muted">Nenhuma tarefa pendente.</p>'}</section></div><section class="report-subcard"><div class="section-heading"><div><h3>Atividades do período</h3><p class="muted">Últimos registros de auditoria relacionados ao intervalo.</p></div><span class="badge">${activity.length}</span></div>${activity.length ? `<div class="table-wrap"><table><thead><tr><th>Quando</th><th>Evento</th><th>Responsável</th><th>Registro</th></tr></thead><tbody>${activity.map((item) => `<tr><td>${escapeHtml(formatDate(item.created_at))}</td><td>${escapeHtml(eventLabel(item.event_type))}</td><td>${escapeHtml(item.actor_name || 'Sistema')}</td><td>${escapeHtml(item.entity_type ? `${item.entity_type} #${item.entity_id || '–'}` : '–')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhuma atividade registrada no período.</p>'}</section>`;
+  content.querySelectorAll('th').forEach((header) => {
+    if (header.textContent.trim() === 'Quinzenal') header.textContent = 'Recorrente';
+  });
 }
 
 async function loadReport() {
@@ -2288,7 +2291,7 @@ async function openVehicleIntegrityModal(vehicle) {
   const content = modal.querySelector('#vehicle-integrity-modal-content');
   if (title) title.textContent = `Integridade · ${vehicle.plate || 'Veículo'}`;
   if (subtitle) subtitle.textContent = vehicle.lastChecklistId
-    ? `${vehicle.lastChecklistType === 'diario' ? 'Checklist diário' : 'Checklist quinzenal'} · ${formatDate(vehicle.lastChecklistAt)}`
+    ? `${vehicleChecklistTypeLabel(vehicle.lastChecklistType)} · ${formatDate(vehicle.lastChecklistAt)}`
     : 'Nenhum checklist lançado para este veículo.';
   if (content) {
     content.innerHTML = vehicle.lastChecklistId && items.length
@@ -2472,7 +2475,7 @@ function vehicleChecklistItemRequiresPhoto(itemKey, itemKind) {
 }
 
 function vehicleChecklistTypeLabel(type = selectedVehicleChecklistType) {
-  return ({ diario: 'Checklist diário', geral: 'Checklist geral', quinzenal: 'Checklist quinzenal', transferencia: 'Transferência de veículo', recebimento: 'Recebimento de veículo', entrega: 'Entrega de veículo', devolucao: 'Devolução de veículo' }[type] || 'Checklist de veículo');
+  return ({ diario: 'Checklist diário', geral: 'Checklist geral', quinzenal: 'Checklist recorrente', transferencia: 'Transferência de veículo', recebimento: 'Recebimento de veículo', entrega: 'Entrega de veículo', devolucao: 'Devolução de veículo' }[type] || 'Checklist de veículo');
 }
 
 function vehicleChecklistDisplayLabel(checklist) {
@@ -2493,6 +2496,24 @@ function setVehicleChecklistType(type) {
   document.querySelectorAll('[data-vehicle-checklist-type]').forEach((button) => button.classList.toggle('active', button.dataset.vehicleChecklistType === type));
   $('#vehicle-start-message').textContent = `${vehicleChecklistTypeLabel()} selecionado. Agora escolha o veículo.`;
   resetVehicleWizard();
+}
+
+function initializeVehicleStartPurpose() {
+  const startStep = $('#vehicle-start-step');
+  const options = startStep?.querySelector('.vehicle-checklist-options');
+  if (!startStep || !options || $('#vehicle-start-purpose-field')) return;
+  options.insertAdjacentHTML('afterend', '<label id="vehicle-start-purpose-field" class="hidden">Finalidade do Checklist geral<select id="vehicle-start-purpose"><option value="">Selecione a finalidade</option><option value="quinzenal">Checklist recorrente</option><option value="transferencia">Transferência</option><option value="recebimento">Recebimento</option><option value="entrega">Entrega</option></select></label>');
+  const intro = startStep.querySelector('.subheading .muted');
+  if (intro) intro.textContent = 'No Checklist geral, escolha a finalidade agora e depois preencha os itens do veículo.';
+  const finalIntro = $('#vehicle-final-step .vehicle-final-heading .muted');
+  if (finalIntro) finalIntro.textContent = 'Confira a finalidade escolhida, a assinatura, a selfie e as fotos antes de enviar.';
+  const finalRecurringOption = $('#vehicle-final-purpose option[value="quinzenal"]');
+  if (finalRecurringOption) finalRecurringOption.textContent = 'Checklist recorrente';
+  $('#vehicle-start-purpose')?.addEventListener('change', (event) => {
+    selectedVehicleChecklistPurpose = event.target.value || null;
+    const message = $('#vehicle-start-message');
+    if (selectedVehicleChecklistPurpose) message.textContent = `${vehicleChecklistTypeLabel(selectedVehicleChecklistPurpose)} selecionado. Agora escolha o veículo.`;
+  });
 }
 
 function initializeVehicleWizardDom() {
@@ -2570,19 +2591,20 @@ function configureVehicleFinalFields() {
   const help = $('#vehicle-final-purpose-help');
   if (!purposeSelect || !targetField || !dailyPeriodField) return;
   const isDaily = selectedVehicleChecklistType === 'diario';
-  purposeField?.classList.toggle('hidden', isDaily);
+  const purpose = isDaily ? 'diario' : (selectedVehicleChecklistPurpose || purposeSelect.value || '');
+  purposeField?.classList.add('hidden');
   dailyPeriodField.classList.toggle('hidden', !isDaily);
-  const purpose = isDaily ? 'diario' : (purposeSelect.value || 'quinzenal');
+  purposeSelect.value = purpose;
   const needsTarget = ['transferencia', 'recebimento', 'entrega'].includes(purpose);
-  purposeSelect.querySelectorAll('option').forEach((option) => {
+  [purposeSelect, $('#vehicle-start-purpose')].filter(Boolean).forEach((select) => select.querySelectorAll('option').forEach((option) => {
     const restricted = ['entrega', 'recebimento'].includes(option.value) && !(isAdminRole() || currentUser?.role === 'vistoriador');
     option.disabled = restricted;
-  });
+  }));
   targetField.classList.toggle('hidden', !needsTarget);
   if (targetSelect) targetSelect.required = needsTarget;
   if (help) {
     help.textContent = purpose === 'quinzenal'
-      ? 'A regra de notificação dos checklists quinzenais continua valendo.'
+      ? 'A regra de notificação dos checklists recorrentes continua valendo.'
       : purpose === 'transferencia'
         ? 'O destinatário deverá assinar e tirar uma selfie; depois o processo seguirá para validação do Admin.'
         : purpose === 'entrega'
@@ -2602,6 +2624,14 @@ function startVehicleChecklist() {
     if (message) message.textContent = 'Escolha o tipo de checklist antes de iniciar.';
     return;
   }
+  const selectedPurpose = selectedVehicleChecklistType === 'geral'
+    ? ($('#vehicle-start-purpose')?.value || '')
+    : selectedVehicleChecklistType;
+  if (selectedVehicleChecklistType === 'geral' && !['quinzenal', 'transferencia', 'recebimento', 'entrega'].includes(selectedPurpose)) {
+    if (message) message.textContent = 'Escolha a finalidade do Checklist geral antes de iniciar.';
+    return;
+  }
+  selectedVehicleChecklistPurpose = selectedPurpose;
   if (!vehicle) {
     if (message) message.textContent = 'Selecione um veículo antes de iniciar.';
     return;
@@ -2680,9 +2710,11 @@ function resetVehicleWizard() {
   $('#vehicle-checklist-step')?.classList.add('hidden');
   $('#vehicle-final-step')?.classList.add('hidden');
   $('#vehicle-wizard-mileage').value = '';
+  if ($('#vehicle-start-purpose')) $('#vehicle-start-purpose').value = '';
   if ($('#vehicle-final-target-user')) $('#vehicle-final-target-user').value = '';
   if ($('#vehicle-final-purpose')) $('#vehicle-final-purpose').value = 'quinzenal';
   if ($('#vehicle-final-daily-period')) $('#vehicle-final-daily-period').value = 'inicio';
+  $('#vehicle-start-purpose-field')?.classList.toggle('hidden', selectedVehicleChecklistType !== 'geral');
   $('#vehicle-item-wizard').innerHTML = '';
   renderVehicleWizardItem();
   renderVehiclePhotoDrafts();
@@ -2692,6 +2724,7 @@ function resetVehicleWizard() {
 
 function renderVehicleEditor() {
   initializeVehicleWizardDom();
+  initializeVehicleStartPurpose();
   configureVehicleChecklistOptions();
   selectedVehicleChecklistType = null;
   selectedVehicleChecklistPurpose = null;
@@ -3301,7 +3334,9 @@ $('#vehicle-checklist-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const message = $('#vehicle-form-message');
   if (!selectedVehicleChecklistType) { message.textContent = 'Escolha o tipo de checklist antes de enviar.'; return; }
-  const finalChecklistType = selectedVehicleChecklistType === 'geral' ? ($('#vehicle-final-purpose')?.value || '') : selectedVehicleChecklistType;
+  const finalChecklistType = selectedVehicleChecklistType === 'geral'
+    ? (selectedVehicleChecklistPurpose || $('#vehicle-start-purpose')?.value || '')
+    : selectedVehicleChecklistType;
   const dailyPeriod = finalChecklistType === 'diario' ? ($('#vehicle-final-daily-period')?.value || '') : null;
   const targetUserId = ['transferencia', 'recebimento', 'entrega'].includes(finalChecklistType) ? ($('#vehicle-final-target-user')?.value || '') : null;
   if (selectedVehicleChecklistType === 'geral' && !['quinzenal', 'transferencia', 'recebimento', 'entrega'].includes(finalChecklistType)) { message.textContent = 'Escolha a finalidade do Checklist geral.'; return; }

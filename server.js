@@ -840,8 +840,8 @@ async function checkDailyChecklistReminders() {
         subjectType: 'veiculo',
         subjectId: row.vehicle_id,
         subjectLabel,
-        title: 'Checklist quinzenal de veículo pendente',
-        message: `O veículo ${subjectLabel} ainda não possui checklist quinzenal neste mês até o dia 16.`,
+        title: 'Checklist recorrente de veículo pendente',
+        message: `O veículo ${subjectLabel} ainda não possui checklist recorrente neste mês até o dia 16.`,
         metadata: { vehicleId: String(row.vehicle_id), plate: row.plate, checklistCount: Number(row.quinzenal_count), deadline: '16' },
       });
     }
@@ -854,8 +854,8 @@ async function checkDailyChecklistReminders() {
         subjectType: 'veiculo',
         subjectId: row.vehicle_id,
         subjectLabel,
-        title: 'Checklist quinzenal de veículo incompleto',
-        message: `O veículo ${subjectLabel} encerrou o mês com ${Number(row.quinzenal_count)} checklist(s) quinzenal(is); eram necessários dois.`,
+        title: 'Checklist recorrente de veículo incompleto',
+        message: `O veículo ${subjectLabel} encerrou o mês com ${Number(row.quinzenal_count)} checklist(s) recorrente(s); eram necessários dois.`,
         metadata: { vehicleId: String(row.vehicle_id), plate: row.plate, checklistCount: Number(row.quinzenal_count), deadline: 'último dia do mês' },
       });
     }
@@ -944,6 +944,21 @@ function publicNotification(row) {
   };
 }
 
+function complianceAlertDisplayTitle(alertType, fallbackTitle) {
+  return alertType === 'vehicle_fortnightly_first'
+    ? 'Checklist recorrente de veículo pendente'
+    : alertType === 'vehicle_fortnightly_month_end'
+      ? 'Checklist recorrente de veículo incompleto'
+      : fallbackTitle;
+}
+
+function complianceAlertDisplayMessage(alertType, fallbackMessage) {
+  if (!['vehicle_fortnightly_first', 'vehicle_fortnightly_month_end'].includes(alertType)) return fallbackMessage;
+  return String(fallbackMessage || '')
+    .replaceAll('checklist(s) quinzenal(is)', 'checklist(s) recorrente(s)')
+    .replaceAll('checklist quinzenal', 'checklist recorrente');
+}
+
 function publicComplianceAlert(row) {
   return {
     alertKey: row.alert_key,
@@ -952,8 +967,8 @@ function publicComplianceAlert(row) {
     subjectType: row.subject_type,
     subjectId: row.subject_id,
     subjectLabel: row.subject_label,
-    title: row.title,
-    message: row.message,
+    title: complianceAlertDisplayTitle(row.alert_type, row.title),
+    message: complianceAlertDisplayMessage(row.alert_type, row.message),
     status: row.status,
     justification: row.justification || null,
     justifiedBy: row.justified_by || null,
@@ -974,8 +989,8 @@ function publicPendingTask(row) {
   return {
     id: row.id,
     alertKey: row.alert_key,
-    title: row.alert_title,
-    message: row.alert_message,
+    title: complianceAlertDisplayTitle(row.alert_type, row.alert_title),
+    message: complianceAlertDisplayMessage(row.alert_type, row.alert_message),
     alertType: row.alert_type,
     periodKey: row.period_key,
     subjectLabel: row.subject_label,
@@ -4303,7 +4318,7 @@ function renderVehicleChecklistPdf(doc, checklist, company) {
 }
 
 function vehicleChecklistTypeLabelForPdf(type) {
-  return ({ diario: 'CHECKLIST DIÁRIO', quinzenal: 'CHECKLIST QUINZENAL', transferencia: 'TRANSFERÊNCIA DE RESPONSABILIDADE', recebimento: 'RECEBIMENTO DE RESPONSABILIDADE', devolucao: 'DEVOLUÇÃO DE RESPONSABILIDADE', entrega: 'ENTREGA DE RESPONSABILIDADE' }[type] || 'RESPONSABILIDADE');
+  return ({ diario: 'CHECKLIST DIÁRIO', quinzenal: 'CHECKLIST RECORRENTE', transferencia: 'TRANSFERÊNCIA DE RESPONSABILIDADE', recebimento: 'RECEBIMENTO DE RESPONSABILIDADE', devolucao: 'DEVOLUÇÃO DE RESPONSABILIDADE', entrega: 'ENTREGA DE RESPONSABILIDADE' }[type] || 'RESPONSABILIDADE');
 }
 
 function vehicleSignatureRoleLabelForPdf(role, context = {}) {
@@ -5192,7 +5207,7 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
         ? `A transferência do veículo ${plate} foi iniciada por ${req.user.name} e aguarda o aceite de ${target.name}.`
         : ['entrega', 'recebimento'].includes(checklistType)
           ? `A entrega do veículo ${plate} foi iniciada por ${req.user.name} e aguarda o aceite do técnico ${target.name}.`
-          : `O ${checklistType === 'diario' ? `checklist diário de ${dailyPeriod === 'inicio' ? 'começo' : 'fim'} do dia` : checklistType === 'devolucao' ? 'termo de devolução' : 'checklist quinzenal'} do veículo ${plate} foi criado e está aguardando validação.`,
+          : `O ${checklistType === 'diario' ? `checklist diário de ${dailyPeriod === 'inicio' ? 'começo' : 'fim'} do dia` : checklistType === 'devolucao' ? 'termo de devolução' : 'checklist recorrente'} do veículo ${plate} foi criado e está aguardando validação.`,
       entityType: 'vehicle_checklist',
       entityId: checklistId,
       metadata: { plate, checklistType, dailyPeriod, createdBy: req.user.id, creatorRole: req.user.role, targetUserId: target?.id || null },
@@ -5215,7 +5230,7 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
         roles: ['admin'],
         notificationType: 'vehicle_checklist_issue',
         title: 'Avaria identificada em veículo',
-        message: `O ${checklistType === 'diario' ? 'checklist diário' : checklistType === 'devolucao' ? 'termo de devolução' : checklistType === 'transferencia' ? 'processo de transferência' : checklistType === 'recebimento' ? 'processo de recebimento' : checklistType === 'entrega' ? 'termo de entrega' : 'checklist quinzenal'} do veículo ${plate} registrou ${problemItems.length} item(ns) com avaria ou irregularidade.`,
+        message: `O ${checklistType === 'diario' ? 'checklist diário' : checklistType === 'devolucao' ? 'termo de devolução' : checklistType === 'transferencia' ? 'processo de transferência' : checklistType === 'recebimento' ? 'processo de recebimento' : checklistType === 'entrega' ? 'termo de entrega' : 'checklist recorrente'} do veículo ${plate} registrou ${problemItems.length} item(ns) com avaria ou irregularidade.`,
         entityType: 'vehicle_checklist',
         entityId: checklistId,
         metadata: {
