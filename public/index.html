@@ -11,7 +11,7 @@
     <link rel="apple-touch-icon" href="/assets/sigos-symbol.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>SIGOS · Gestão operacional</title>
-      <link rel="stylesheet" href="/styles.css?v=mobile-frame-20261021-test" />
+      <link rel="stylesheet" href="/styles.css?v=mobile-frame-20261021-1" />
   </head>
   <body>
     <main class="shell">
@@ -158,14 +158,11 @@
                 <div class="section-heading"><div><div class="eyebrow">CHECKLIST · VEÍCULOS</div><h2>Vistoria de veículo</h2></div></div>
                 <div class="subtabs" role="tablist" aria-label="Áreas de veículos">
                   <button type="button" class="subtab-button active" role="tab" aria-selected="true" data-subtab-button data-subtab-group="vehicles-main" data-subtab="new">Novo checklist</button>
-                  <button id="/app.js?v=vehicle-checklist-tabs-20261021-1" type="button" class="subtab-button" role="tab" aria-selected="false" data-subtab-button data-subtab-group="vehicles-main" data-subtab="management">Validações</button>
+                  <button id="vehicle-main-management-tab" type="button" class="subtab-button" role="tab" aria-selected="false" data-subtab-button data-subtab-group="vehicles-main" data-subtab="management">Validações</button>
+                  <button id="vehicle-main-list-tab" type="button" class="subtab-button" role="tab" aria-selected="false" data-subtab-button data-subtab-group="vehicles-main" data-subtab="list">Lista de checklists</button>
                 </div>
                 <div id="vehicle-tech-panel" class="vehicle-tech-panel hidden" data-subtab-panel="vehicles-main" data-subtab="new">
-                  <div class="subtabs" role="tablist" aria-label="Checklist de veículos">
-                    <button type="button" class="subtab-button active" role="tab" aria-selected="true" data-subtab-button data-subtab-group="vehicles-tech" data-subtab="new">Novo checklist</button>
-                    <button type="button" class="subtab-button" role="tab" aria-selected="false" data-subtab-button data-subtab-group="vehicles-tech" data-subtab="history">Lista de checklists</button>
-                  </div>
-                  <form id="vehicle-checklist-form" class="term-form" data-subtab-panel="vehicles-tech" data-subtab="new">
+                  <form id="vehicle-checklist-form" class="term-form">
                     <div class="form-grid vehicle-meta-grid"><label>Placa<input id="vehicle-plate" required placeholder="ABC1D23" maxlength="8" /></label><label>Modelo<input id="vehicle-model" required placeholder="Modelo do veículo" /></label><label>Ano<input id="vehicle-year" type="number" min="1900" max="2200" placeholder="2025" /></label><label>KM<input id="vehicle-mileage" type="number" min="0" placeholder="Quilometragem" /></label></div>
                     <div class="checklist-legend"><span><b>Antes</b> = retirada do veículo</span><span><b>Depois</b> = devolução do veículo</span><span><i class="legend-ok"></i> OK</span><span><i class="legend-problem"></i> Defeito / Quebrado</span></div>
                     <div class="vehicle-checklist-table"><table><thead><tr><th>Equipamento do veículo</th><th>Antes</th><th>Depois</th></tr></thead><tbody id="vehicle-items-editor"></tbody></table></div>
@@ -173,9 +170,9 @@
                     <div class="vehicle-photo-entry"><div class="subheading"><h3>Fotos extras do veículo</h3></div><p class="muted">Se precisar, tire até duas fotos extras pela câmera. Não é permitido escolher imagens da galeria.</p><button id="vehicle-open-photo-camera" type="button">Abrir câmera</button><div id="vehicle-photo-camera" class="hidden"><video id="vehicle-photo-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-take-photo" type="button">Capturar foto</button><button id="vehicle-cancel-photo" type="button" class="secondary">Cancelar</button></div></div><div id="vehicle-photo-previews" class="epi-photo-previews"></div><p id="vehicle-photo-message" class="muted" aria-live="polite">Nenhuma foto extra capturada.</p></div>
                     <div class="form-actions"><button type="submit">Enviar para validação</button><span id="vehicle-form-message" class="muted"></span></div>
                   </form>
-                  <div class="vehicle-history" data-subtab-panel="vehicles-tech" data-subtab="history"><div class="subheading"><h3>Meus checklists recentes</h3><button id="refresh-vehicle-checklists" type="button" class="secondary small-button">Atualizar</button></div><div id="vehicle-tech-list" class="terms-list"><p class="muted">Nenhum checklist realizado.</p></div><div id="vehicle-tech-detail" class="vehicle-detail hidden"></div></div>
                 </div>
-                <div id="vehicle-admin-panel" class="hidden" data-subtab-panel="vehicles-main" data-subtab="management"><div class="subtabs" role="tablist" aria-label="Lista de checklists de veículos"><button type="button" class="subtab-button active" role="tab" aria-selected="true" data-subtab-button data-subtab-group="vehicles-admin" data-subtab="list">Lista de checklists</button></div><div id="vehicle-admin-list" class="terms-list" data-subtab-panel="vehicles-admin" data-subtab="list"></div><div id="vehicle-admin-detail" class="vehicle-detail hidden" data-subtab-panel="vehicles-admin" data-subtab="detail"></div></div>
+                <div id="vehicle-admin-panel" class="hidden" data-subtab-panel="vehicles-main" data-subtab="management"><div class="subheading"><div><h3>Validações</h3><p class="muted">Abra um checklist para conferir os dados e concluir a validação.</p></div></div><div id="vehicle-admin-list" class="terms-list"></div><div id="vehicle-admin-detail" class="vehicle-detail hidden"></div></div>
+                <div id="vehicle-list-panel" class="vehicle-list-panel hidden" data-subtab-panel="vehicles-main" data-subtab="list"><div class="subheading"><div><h3>Lista de checklists</h3><p class="muted">Consulte os checklists de veículos registrados neste ambiente.</p></div><button id="refresh-vehicle-checklists" type="button" class="secondary small-button">Atualizar</button></div><div id="vehicle-list-list" class="terms-list"><p class="muted">Nenhum checklist realizado.</p></div><div id="vehicle-list-detail" class="vehicle-detail hidden"></div></div>
               </section>
             </section>
 
@@ -227,6 +224,6 @@
         </div>
       </section>
     </main>
-    <script src="/app.js?v=vehicle-transfer-start-20261021-1"></script>
+    <script src="/app.js?v=vehicle-checklist-tabs-20261021-1"></script>
   </body>
 </html>

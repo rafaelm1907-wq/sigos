@@ -258,7 +258,8 @@ textarea { width: 100%; min-height: 68px; resize: vertical; border: 1px solid #3
 .wizard-navigation { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; }
 .wizard-navigation > .muted, .wizard-navigation > .error { min-width: 0; text-align: center; }
 .vehicle-history { padding: 18px; border-radius: 14px; background: rgba(7, 15, 31, .34); }
-.vehicle-tech-panel, .vehicle-history, .vehicle-detail, .vehicle-detail-card { min-width: 0; max-width: 100%; }
+.vehicle-list-panel { display: grid; gap: 20px; }
+.vehicle-tech-panel, .vehicle-list-panel, .vehicle-history, .vehicle-detail, .vehicle-detail-card { min-width: 0; max-width: 100%; }
 .vehicle-detail .table-wrap { min-width: 0; max-width: 100%; overflow-x: auto; }
 .vehicle-list-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid rgba(148, 163, 184, .14); border-radius: 10px; background: rgba(30, 58, 95, .22); }
 .vehicle-list-item + .vehicle-list-item { margin-top: 8px; }

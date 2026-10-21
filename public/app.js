@@ -553,7 +553,7 @@ async function openNotification(notificationId, notifications) {
     if (notification.entityType === 'vehicle_checklist') {
       if (isAdminRole()) { setView('vehicles-view'); await openVehicleChecklist(notification.entityId, '#vehicle-admin-detail'); }
       else if (currentUser.role === 'vistoriador') { setView('validation-view'); await openVehicleChecklist(notification.entityId, '#validation-detail', true); }
-      else { setView('vehicles-view'); await openVehicleChecklist(notification.entityId, '#vehicle-tech-detail'); }
+      else { setView('vehicles-view'); await openVehicleChecklist(notification.entityId, '#vehicle-list-detail'); }
     } else if (notification.entityType === 'epi_term' && (isAdminRole() || currentUser.role === 'tecnico')) {
       setView('epi-view'); await loadTerms(); await openTerm(notification.entityId);
     } else if (notification.entityType === 'epi_process') {
@@ -1040,12 +1040,11 @@ function configureNavigation(user) {
   setSettingsTab(selectedSettingsTab);
   $('#vehicle-tech-panel').classList.toggle('hidden', !['admin', 'superadmin', 'tecnico', 'vistoriador'].includes(user.role));
   $('#vehicle-admin-panel').classList.toggle('hidden', !isAdminRole(user.role));
+  $('#vehicle-list-panel').classList.toggle('hidden', !['admin', 'superadmin', 'tecnico', 'vistoriador'].includes(user.role));
   $('#vehicle-main-management-tab')?.classList.toggle('hidden', !isAdminRole(user.role));
   $('#compliance-alerts-card').classList.toggle('hidden', !isAdminRole(user.role));
   activateSubtab('epi-main', user.role === 'tecnico' ? 'new' : 'processes');
   activateSubtab('vehicles-main', 'new');
-  activateSubtab('vehicles-tech', 'new');
-  activateSubtab('vehicles-admin', 'list');
   activateSubtab('validation-main', 'list');
   activateSubtab('admin-main', 'users');
 }
@@ -2829,9 +2828,9 @@ function renderVehicleSummary(checklist, includeAction = false) {
 
 async function loadVehicleChecklists() {
   const data = await api('/api/vehicles/checklists');
-  if (['tecnico', 'vistoriador'].includes(currentUser.role)) {
-    $('#vehicle-tech-list').innerHTML = data.checklists.length ? data.checklists.map((checklist) => renderVehicleSummary(checklist, true)).join('') : '<p class="muted">Nenhum checklist realizado.</p>';
-    document.querySelectorAll('#vehicle-tech-list .vehicle-open').forEach((button) => button.addEventListener('click', () => openVehicleChecklist(button.dataset.vehicleId, '#vehicle-tech-detail')));
+  if (['admin', 'superadmin', 'tecnico', 'vistoriador'].includes(currentUser.role)) {
+    $('#vehicle-list-list').innerHTML = data.checklists.length ? data.checklists.map((checklist) => renderVehicleSummary(checklist, true)).join('') : '<p class="muted">Nenhum checklist realizado.</p>';
+    document.querySelectorAll('#vehicle-list-list .vehicle-open').forEach((button) => button.addEventListener('click', () => openVehicleChecklist(button.dataset.vehicleId, '#vehicle-list-detail')));
   }
   if (isAdminRole()) {
     $('#vehicle-admin-list').innerHTML = data.checklists.length ? data.checklists.map((checklist) => renderVehicleSummary(checklist, true)).join('') : '<p class="muted">Nenhum checklist cadastrado.</p>';
@@ -2868,7 +2867,7 @@ function renderVehicleDetail(checklist, containerSelector, canValidate) {
   const dailyPeriodLine = isDaily && checklist.dailyPeriod ? `<p class="muted">Período: ${checklist.dailyPeriod === 'inicio' ? 'Começo do dia' : 'Fim do dia'}</p>` : '';
   container.innerHTML = `<div class="vehicle-detail-card"><div class="section-heading"><div><div class="eyebrow">${escapeHtml(vehicleChecklistDisplayLabel(checklist).toUpperCase())} #${checklist.id}</div><h3>${escapeHtml(checklist.plate)} · ${escapeHtml(checklist.model || '')}</h3><p class="muted">Técnico: ${escapeHtml(checklist.driverName || '–')} · ${escapeHtml(formatDate(checklist.createdAt))}</p>${dailyPeriodLine}${targetLine}</div><span class="status status-${escapeHtml(checklist.status)}">${escapeHtml(statusLabel)}</span></div><div class="table-wrap">${table}</div>${checklist.validationNotes ? `<p class="validation-note"><b>Observação do responsável pela validação:</b> ${escapeHtml(checklist.validationNotes)}</p>` : ''}${media ? `<section class="vehicle-checklist-media"><h4>Fotos registradas</h4><div class="epi-process-media">${media}</div></section>` : ''}${renderVehicleSignatures(checklist)}${transferAcceptanceControls}${validationControls}</div>`;
   container.querySelector('.vehicle-detail-card')?.insertAdjacentHTML('afterbegin', '<div class="detail-actions vehicle-detail-toolbar"><button id="close-vehicle-detail" type="button" class="secondary small-button">Fechar</button><button id="download-vehicle-checklist-pdf" type="button" class="secondary small-button">Baixar PDF</button></div>');
-  container.querySelector('#close-vehicle-detail')?.addEventListener('click', () => { container.classList.add('hidden'); if (containerSelector === '#vehicle-tech-detail') activateSubtab('vehicles-tech', 'history'); if (containerSelector === '#vehicle-admin-detail') { activateSubtab('vehicles-admin', 'list'); activateSubtab('vehicles-main', 'management'); } if (containerSelector === '#validation-detail') activateSubtab('validation-main', 'list'); });
+  container.querySelector('#close-vehicle-detail')?.addEventListener('click', () => { container.classList.add('hidden'); if (containerSelector === '#vehicle-list-detail') activateSubtab('vehicles-main', 'list'); if (containerSelector === '#vehicle-admin-detail') activateSubtab('vehicles-main', 'management'); if (containerSelector === '#validation-detail') activateSubtab('validation-main', 'list'); });
   container.querySelector('#download-vehicle-checklist-pdf')?.addEventListener('click', (event) => downloadPdfFile(`/api/vehicles/checklists/${checklist.id}/pdf`, `checklist-veiculo-${checklist.id}.pdf`, event.currentTarget));
 
   if (isRecipientAcceptance) {
@@ -2944,8 +2943,8 @@ function renderVehicleDetail(checklist, containerSelector, canValidate) {
 }
 
 async function openVehicleChecklist(id, containerSelector, validationQueue = false) {
-  if (containerSelector === '#vehicle-tech-detail') activateSubtab('vehicles-tech', 'history');
-  if (containerSelector === '#vehicle-admin-detail') { activateSubtab('vehicles-main', 'management'); activateSubtab('vehicles-admin', 'detail'); }
+  if (containerSelector === '#vehicle-list-detail') activateSubtab('vehicles-main', 'list');
+  if (containerSelector === '#vehicle-admin-detail') activateSubtab('vehicles-main', 'management');
   if (containerSelector === '#validation-detail') activateSubtab('validation-main', 'detail');
   const container = $(containerSelector);
   container?.classList.remove('hidden');
@@ -3388,7 +3387,7 @@ $('#vehicle-checklist-form').addEventListener('submit', async (event) => {
     event.target.reset(); selectedVehicleChecklistType = null; renderVehicleEditor(); setupVehicleTechnicianSignature(); message.textContent = sentMessage; await loadVehicleChecklists(); await loadOverview();
   } catch (error) { message.textContent = error.message; }
 });
-$('#refresh-vehicle-checklists').addEventListener('click', () => loadVehicleChecklists().catch((error) => { $('#vehicle-tech-list').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`; }));
+$('#refresh-vehicle-checklists').addEventListener('click', () => loadVehicleChecklists().catch((error) => { $('#vehicle-list-list').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`; }));
 $('#refresh-validation').addEventListener('click', () => loadValidationQueue().catch((error) => { $('#validation-list').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`; }));
 $('#refresh-stock').addEventListener('click', () => loadStock().catch((error) => { $('#stock-vehicles-table').innerHTML = `<tr><td colspan="8" class="error">${escapeHtml(error.message)}</td></tr>`; }));
 
