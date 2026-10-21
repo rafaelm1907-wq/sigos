@@ -1510,7 +1510,7 @@ function epiDailyResponseLabel(value) {
 }
 
 function epiDailyObservation(item, attentionOpen = true) {
-  return [attentionOpen && item.replacementRequested ? '⚠️ Solicitação de troca' : '', item.observation || ''].filter(Boolean).join(' · ') || '–';
+  return [attentionOpen && item.replacementRequested ? '⚠️ Solicitação de troca' : '', item.finalObservation || item.observation || ''].filter(Boolean).join(' · ') || '–';
 }
 
 function renderEpiDailyWizardItem(container, item) {

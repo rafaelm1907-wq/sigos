@@ -143,6 +143,35 @@ function epiDailyResponseLabel(value) {
   return ({ sim: 'Sim', nao: 'Não', na: 'N/A' }[String(value || '').toLowerCase()] || '–');
 }
 
+function epiProcessTermObservation(process, item) {
+  const baseObservation = String(item?.observation || '').trim();
+  const isFinalValidatedChecklist = process?.process_type === 'checklist_diario'
+    && process?.admin_attention_required === true
+    && process?.attention_status === 'resolved'
+    && process?.status === 'validado';
+  if (!isFinalValidatedChecklist) return baseObservation;
+
+  const reasons = Array.isArray(process.admin_attention_reasons) ? process.admin_attention_reasons : [];
+  const itemReasons = reasons.filter((reason) => (
+    String(reason.itemKey || '') === String(item.itemKey || '')
+    || (!reason.itemKey && String(reason.equipmentName || '') === String(item.equipmentName || ''))
+  ));
+  if (!itemReasons.length) return baseObservation;
+
+  const annotations = [];
+  if (itemReasons.some((reason) => reason.type === 'negative_inspection')) {
+    annotations.push(String(item.condition || '').toLowerCase() === 'sim'
+      ? 'Resposta inicial: Não; problema reportado solucionado após correção.'
+      : 'Resposta inicial: Não; correção registrada no processo.');
+  }
+  if (itemReasons.some((reason) => reason.type === 'replacement_request')) {
+    annotations.push(item.replacementEffective === true && String(item.condition || '').toLowerCase() === 'sim'
+      ? 'Avaria reportada; troca efetivada e problema solucionado.'
+      : 'Avaria reportada; troca registrada no processo.');
+  }
+  return [...new Set([baseObservation, ...annotations].filter(Boolean))].join(' · ');
+}
+
 const EPI_PROCESS_TYPES = Object.keys(EPI_PROCESS_LEGAL_TEXT);
 
 const VEHICLE_TERM_INTRO = 'Declaro estar ciente das regras de uso, conservação e responsabilidade aplicáveis ao veículo da empresa, comprometendo-me a utilizá-lo exclusivamente em serviço e a comunicar imediatamente qualquer dano, avaria ou irregularidade identificada.';
@@ -2992,7 +3021,12 @@ function publicEpiProcess(row, includeSignatureData = false) {
     validationSignatureValidatedAt: row.validation_signature_validated_at,
     validationSignatureData: includeSignatureData ? row.validation_signature_data : undefined,
     createdAt: row.created_at,
-    items: (row.items || []).map((item) => ({ ...item, replacementRequested: Boolean(item.replacementRequested) })),
+    items: (row.items || []).map((item) => ({
+      ...item,
+      replacementRequested: Boolean(item.replacementRequested),
+      replacementEffective: Boolean(item.replacementEffective),
+      finalObservation: epiProcessTermObservation(row, item),
+    })),
     media: media.map((item) => ({
       id: item.id,
       kind: item.kind,
@@ -4085,7 +4119,7 @@ function renderEpiProcessPdf(doc, process) {
       number: dailyItems.indexOf(item) + 1,
       item: item.equipmentName || '–',
       response: epiDailyResponseLabel(item.checkStatus || item.condition),
-      observation: [attentionOpen && item.replacementRequested ? 'SOLICITAÇÃO DE TROCA' : '', item.observation || ''].filter(Boolean).join(' · ') || '–',
+      observation: [attentionOpen && item.replacementRequested ? 'SOLICITAÇÃO DE TROCA' : '', epiProcessTermObservation(process, item)].filter(Boolean).join(' · ') || '–',
     })));
     if (hasSections) {
       dailyGroups.forEach((group) => {
