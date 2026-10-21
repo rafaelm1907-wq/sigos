@@ -1,1 +1,2 @@
 epiapp ALL=(root) NOPASSWD: /usr/local/sbin/sigos-update
+epiapp ALL=(root) NOPASSWD: /usr/bin/systemd-run --unit=sigos-system-update --collect --no-block /usr/local/sbin/sigos-update

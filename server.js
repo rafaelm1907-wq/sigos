@@ -2038,7 +2038,16 @@ app.post('/api/system/update', auth, requireRole('superadmin'), async (req, res)
     return res.status(503).json({ error: 'O atualizador ainda não foi instalado neste servidor.' });
   }
   try {
-    const child = spawn('/usr/bin/sudo', ['-n', systemUpdateCommand], { detached: true, stdio: 'ignore' });
+    // O atualizador precisa ficar fora do cgroup do serviço. Caso contrário,
+    // o systemd encerra o próprio atualizador quando ele reinicia o SIGOS.
+    const child = spawn('/usr/bin/sudo', [
+      '-n',
+      '/usr/bin/systemd-run',
+      '--unit=sigos-system-update',
+      '--collect',
+      '--no-block',
+      systemUpdateCommand,
+    ], { detached: true, stdio: 'ignore' });
     child.unref();
     await audit({ req, actorUserId: req.user.id, eventType: 'system_update_requested', entityType: 'system', metadata: { command: systemUpdateCommand } });
     return res.status(202).json({ status: 'started', message: 'Atualização iniciada. Acompanhe o andamento nesta tela.' });
