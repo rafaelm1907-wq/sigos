@@ -13,7 +13,9 @@ EnvironmentFile=/etc/epi-checklist/runtime.env
 ExecStart=/opt/node-v22.20.0/bin/node /opt/epi-checklist/server.js
 Restart=on-failure
 RestartSec=5
-NoNewPrivileges=true
+# O botão do Superadmin usa sudoers para chamar somente o atualizador fixo.
+# O sudo precisa conseguir elevar privilégios para esse comando específico.
+NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true

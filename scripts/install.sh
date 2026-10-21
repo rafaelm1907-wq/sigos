@@ -24,7 +24,7 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates curl xz-utils
+apt-get install -y --no-install-recommends ca-certificates curl git rsync sudo xz-utils
 
 if [[ ! -x "${NODE_PREFIX}/bin/node" ]]; then
   download_dir="$(mktemp -d)"
@@ -32,7 +32,10 @@ if [[ ! -x "${NODE_PREFIX}/bin/node" ]]; then
   archive="node-v${NODE_VERSION}-linux-x64.tar.xz"
   curl --fail --silent --show-error --location --output "${download_dir}/${archive}" "https://nodejs.org/dist/v${NODE_VERSION}/${archive}"
   curl --fail --silent --show-error --location --output "${download_dir}/SHASUMS256.txt" "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt"
-  grep " ${archive}$" "${download_dir}/SHASUMS256.txt" | sha256sum --check --status
+  (
+    cd "${download_dir}"
+    grep " ${archive}$" SHASUMS256.txt | sha256sum --check --status
+  )
   tar -xJf "${download_dir}/${archive}" -C /opt
   mv -T "/opt/node-v${NODE_VERSION}-linux-x64" "${NODE_PREFIX}"
   chown -R root:root "${NODE_PREFIX}"
@@ -58,6 +61,11 @@ cp -a public/. "${APP_DIR}/public/"
 chown -R "${APP_USER}:${APP_GROUP}" "${APP_DIR}/public"
 
 install -o root -g root -m 0644 deploy/epi-checklist.service "${SERVICE_FILE}"
+install -o root -g root -m 0755 scripts/update.sh /usr/local/sbin/sigos-update
+install -d -o root -g root -m 0755 /etc/sudoers.d
+install -o root -g root -m 0440 deploy/sigos-update.sudoers /etc/sudoers.d/sigos-update
+visudo -cf /etc/sudoers.d/sigos-update
+export PATH="${NODE_PREFIX}/bin:${PATH}"
 "${NODE_PREFIX}/bin/npm" --prefix "${APP_DIR}" ci --omit=dev --ignore-scripts --no-audit --no-fund
 
 systemctl daemon-reload

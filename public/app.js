@@ -59,6 +59,7 @@ let epiDailyChecklistItems = [
 
 const roleLabels = { admin: 'Administrador', superadmin: 'Superadmin', tecnico: 'Técnico', vistoriador: 'Supervisor' };
 function isAdminRole(role = currentUser?.role) { return role === 'admin' || role === 'superadmin'; }
+function isSuperadminRole(role = currentUser?.role) { return role === 'superadmin'; }
 function isChecklistValidatorRole(role = currentUser?.role) { return isAdminRole(role) || role === 'vistoriador'; }
 const eventLabels = {
   login_success: 'Login realizado',
@@ -105,6 +106,7 @@ const eventLabels = {
   compliance_alert_followup_sent: 'Notificação de pendência enviada',
   compliance_pending_assigned: 'Pendência enviada para usuário',
   compliance_pending_completed: 'Pendência concluída',
+  system_update_requested: 'Atualização do sistema solicitada',
 };
 
 let selectedTermId = null;
@@ -124,6 +126,7 @@ let vehicleWizardDraft = [];
 let vehicleSelfieDraft = null;
 let vehiclePhotoCaptureItemKey = null;
 let selectedVehicleChecklistType = null;
+let selectedVehicleChecklistPurpose = null;
 let onboardingSignatureCanvas = null;
 let securitySignatureCanvas = null;
 let onboardingSignatureMode = 'desenhada';
@@ -171,6 +174,86 @@ let complianceAssignableUsers = [];
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[char]));
+}
+
+function activateSubtab(group, tab) {
+  const buttons = [...document.querySelectorAll('[data-subtab-button]')].filter((button) => button.dataset.subtabGroup === group);
+  const panels = [...document.querySelectorAll('[data-subtab-panel]')].filter((panel) => panel.dataset.subtabPanel === group);
+  if (!buttons.length && !panels.length) return;
+  const availableTabs = buttons.map((button) => button.dataset.subtab).filter((value) => value);
+  const selected = availableTabs.includes(tab) ? tab : (availableTabs[0] || tab);
+  buttons.forEach((button) => {
+    const active = button.dataset.subtab === selected;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  panels.forEach((panel) => panel.classList.toggle('hidden', panel.dataset.subtab !== selected));
+}
+
+function createSubtabBar(group, tabs, label) {
+  const bar = document.createElement('div');
+  bar.className = 'subtabs';
+  bar.setAttribute('role', 'tablist');
+  bar.setAttribute('aria-label', label);
+  tabs.forEach(([value, text], index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `subtab-button${index === 0 ? ' active' : ''}`;
+    button.setAttribute('role', 'tab');
+    button.setAttribute('aria-selected', String(index === 0));
+    button.dataset.subtabButton = '';
+    button.dataset.subtabGroup = group;
+    button.dataset.subtab = value;
+    button.textContent = text;
+    bar.appendChild(button);
+  });
+  return bar;
+}
+
+function initializeSubtabs() {
+  const stockView = $('#stock-view');
+  const stockGrid = $('#stock-grid');
+  if (stockView && stockGrid && !stockView.querySelector('[data-subtab-group="stock-main"]')) {
+    stockView.insertBefore(createSubtabBar('stock-main', [['fleet', 'Frota'], ['ppe', 'EPIs'], ['movements', 'Movimentações']], 'Áreas do estoque'), stockGrid);
+    [['stock-fleet-panel', 'fleet'], ['stock-ppe-panel', 'ppe'], ['stock-movements-panel', 'movements']].forEach(([id, tab]) => {
+      const panel = $(`#${id}`);
+      if (!panel) return;
+      panel.dataset.subtabPanel = 'stock-main';
+      panel.dataset.subtab = tab;
+      panel.dataset.stockPanel = tab;
+    });
+  }
+
+  const adminPanel = $('#admin-panel');
+  if (adminPanel && !adminPanel.querySelector('[data-subtab-group="admin-main"]')) {
+    const notificationPanel = adminPanel.querySelector('.admin-notification-panel');
+    const managementSelectors = ['#user-form', '#user-form-message', '.table-wrap', '#user-edit-panel', '#technician-detail'];
+    managementSelectors.forEach((selector) => adminPanel.querySelector(selector)?.setAttribute('data-subtab-panel', 'admin-main'));
+    managementSelectors.forEach((selector) => adminPanel.querySelector(selector)?.setAttribute('data-subtab', 'users'));
+    notificationPanel?.setAttribute('data-subtab-panel', 'admin-main');
+    notificationPanel?.setAttribute('data-subtab', 'notifications');
+    const heading = adminPanel.querySelector('.section-heading');
+    if (heading) heading.insertAdjacentElement('afterend', createSubtabBar('admin-main', [['users', 'Usuários'], ['notifications', 'Notificações']], 'Administração de usuários'));
+  }
+
+  document.querySelectorAll('[data-subtab-button]').forEach((button) => {
+    if (button.dataset.subtabBound === 'true') return;
+    button.dataset.subtabBound = 'true';
+    button.addEventListener('click', () => {
+      activateSubtab(button.dataset.subtabGroup, button.dataset.subtab);
+      if (button.dataset.subtabGroup === 'stock-main') {
+        selectedStockPanel = button.dataset.subtab;
+        const stockGrid = $('#stock-grid');
+        if (stockGrid) stockGrid.dataset.stockPanel = selectedStockPanel;
+        updateNavigationActive();
+      }
+    });
+  });
+  const groups = [...new Set([...document.querySelectorAll('[data-subtab-button]')].map((button) => button.dataset.subtabGroup).filter(Boolean))];
+  groups.forEach((group) => {
+    const active = [...document.querySelectorAll('[data-subtab-button]')].find((button) => button.dataset.subtabGroup === group && button.classList.contains('active'));
+    activateSubtab(group, active?.dataset.subtab);
+  });
 }
 
 function formatDate(value) {
@@ -443,6 +526,8 @@ async function openNotification(notificationId, notifications) {
       setView('home-view'); await loadComplianceAlerts();
     } else if (notification.entityType === 'compliance_alert' && currentUser.role === 'tecnico' && notification.notificationType === 'epi_daily_missing') {
       setView('epi-view'); setEpiProcessType('checklist_diario');
+    } else if (notification.entityType === 'compliance_alert' && ['tecnico', 'vistoriador'].includes(currentUser.role) && notification.notificationType === 'vehicle_daily_missing_end') {
+      setView('vehicles-view'); await loadVehicleChecklists();
     } else if (notification.entityType === 'compliance_pending_task') {
       setView('pending-view'); await loadPendingTasks();
     }
@@ -671,6 +756,50 @@ function ensureApplicationsSettingsPanel() {
   return panel;
 }
 
+let systemUpdatePollTimer = null;
+
+function renderSystemUpdateStatus(status = {}) {
+  const message = $('#system-update-status');
+  const button = $('#system-update-button');
+  if (!message || !button) return;
+  const labels = { running: 'Atualização em andamento...', success: status.message || 'Sistema atualizado.', failed: status.message || 'A atualização falhou.', not_configured: status.message || 'O atualizador ainda não foi configurado neste servidor.' };
+  message.textContent = labels[status.status] || status.message || 'Status do atualizador indisponível.';
+  message.classList.toggle('error', status.status === 'failed' || status.status === 'not_configured');
+  message.classList.toggle('success-message', status.status === 'success');
+  button.disabled = status.status === 'running' || status.status === 'not_configured';
+  if (systemUpdatePollTimer) { clearTimeout(systemUpdatePollTimer); systemUpdatePollTimer = null; }
+  if (status.status === 'running') systemUpdatePollTimer = setTimeout(loadSystemUpdateStatus, 3000);
+}
+
+async function loadSystemUpdateStatus() {
+  if (!isSuperadminRole()) return;
+  try {
+    renderSystemUpdateStatus(await api('/api/system/update'));
+  } catch (error) {
+    const message = $('#system-update-status');
+    if (message) { message.textContent = error.message; message.classList.add('error'); }
+    const button = $('#system-update-button');
+    if (button) button.disabled = false;
+  }
+}
+
+async function startSystemUpdate() {
+  const button = $('#system-update-button');
+  const message = $('#system-update-status');
+  if (!button || !message || !isSuperadminRole()) return;
+  button.disabled = true;
+  message.classList.remove('error', 'success-message');
+  message.textContent = 'Solicitando a atualização...';
+  try {
+    await api('/api/system/update', { method: 'POST' });
+    await loadSystemUpdateStatus();
+  } catch (error) {
+    message.textContent = error.message;
+    message.classList.add('error');
+    button.disabled = false;
+  }
+}
+
 async function setupPwaFeatures() {
   ensureApplicationsSettingsPanel();
   $('#pwa-install-android')?.remove();
@@ -783,15 +912,16 @@ function setSettingsTab(tab) {
   document.querySelectorAll('[data-settings-panel]').forEach((panel) => panel.classList.toggle('hidden', panel.dataset.settingsPanel !== selectedTab));
   if (selectedTab === 'company' && isAdminRole()) loadCompanySettings();
   if (selectedTab === 'users' && isAdminRole()) loadUsers();
-  if (selectedTab === 'applications') updatePwaInstallControls();
+  if (selectedTab === 'applications') { updatePwaInstallControls(); loadSystemUpdateStatus(); }
   updateNavigationActive();
 }
 
 function setStockPanel(panel) {
-  selectedStockPanel = ['fleet', 'ppe'].includes(panel) ? panel : 'fleet';
+  selectedStockPanel = ['fleet', 'ppe', 'movements'].includes(panel) ? panel : 'fleet';
   document.querySelectorAll('#stock-view .stock-panel').forEach((element) => element.classList.toggle('hidden', element.dataset.stockPanel !== selectedStockPanel));
   const stockGrid = $('#stock-grid');
   if (stockGrid) stockGrid.dataset.stockPanel = selectedStockPanel;
+  activateSubtab('stock-main', selectedStockPanel);
   updateNavigationActive();
 }
 
@@ -848,6 +978,7 @@ function configureCadastroHeading() {
 }
 
 function configureNavigation(user) {
+  initializeSubtabs();
   $('#sidebar-role').textContent = roleLabels[user.role] || user.role;
   $('#user-role').textContent = roleLabels[user.role] || user.role;
   $('#nav-epi').classList.remove('hidden');
@@ -860,16 +991,25 @@ function configureNavigation(user) {
   $('#nav-admin-security').classList.remove('hidden');
   $('#nav-audit').classList.toggle('hidden', !isAdminRole(user.role));
   $('#nav-pending').classList.remove('hidden');
+  $('#system-update-section')?.classList.toggle('hidden', !isSuperadminRole(user.role));
   configureCadastroHeading();
   $('#epi-technician-form').classList.toggle('hidden', user.role !== 'tecnico');
   $('#admin-panel').classList.toggle('hidden', !isAdminRole(user.role));
+  $('#epi-new-process-tab')?.classList.toggle('hidden', user.role !== 'tecnico');
   $('#company-settings-card').classList.toggle('hidden', !isAdminRole(user.role));
   $('#settings-tab-company').classList.toggle('hidden', !isAdminRole(user.role));
   $('#settings-tab-users').classList.toggle('hidden', !isAdminRole(user.role));
   setSettingsTab(selectedSettingsTab);
   $('#vehicle-tech-panel').classList.toggle('hidden', !['admin', 'superadmin', 'tecnico', 'vistoriador'].includes(user.role));
   $('#vehicle-admin-panel').classList.toggle('hidden', !isAdminRole(user.role));
+  $('#vehicle-main-management-tab')?.classList.toggle('hidden', !isAdminRole(user.role));
   $('#compliance-alerts-card').classList.toggle('hidden', !isAdminRole(user.role));
+  activateSubtab('epi-main', user.role === 'tecnico' ? 'new' : 'processes');
+  activateSubtab('vehicles-main', 'new');
+  activateSubtab('vehicles-tech', 'new');
+  activateSubtab('vehicles-admin', 'list');
+  activateSubtab('validation-main', 'list');
+  activateSubtab('admin-main', 'users');
 }
 
 function showApp(user) {
@@ -896,6 +1036,7 @@ function showApp(user) {
   }
   $('#onboarding-gate').classList.add('hidden');
   $('#main-app-layout').classList.remove('hidden');
+  initializeSubtabs();
   configureNavigation(user);
   if (['admin', 'superadmin', 'tecnico', 'vistoriador'].includes(user.role)) { renderVehicleEditor(); setupVehicleTechnicianSignature(); }
   if (['admin', 'superadmin', 'tecnico', 'vistoriador'].includes(user.role)) loadVehicleCatalog();
@@ -911,6 +1052,7 @@ function showApp(user) {
 function complianceAlertTypeLabel(type) {
   return ({
     epi_daily_missing: 'Checklist diário de EPI ausente',
+    vehicle_daily_missing_end: 'Segundo checklist diário de veículo ausente',
     vehicle_fortnightly_first: 'Primeiro prazo quinzenal do mês',
     vehicle_fortnightly_month_end: 'Segundo checklist quinzenal do mês',
   }[type] || 'Pendência de checklist');
@@ -1051,7 +1193,7 @@ function renderReport(data) {
   const activity = data.activity || [];
   const stats = data.stats || {};
   const metric = (label, value) => `<article class="stat card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value ?? 0)}</strong></article>`;
-  content.innerHTML = `<div class="stats-grid report-stats">${metric('Checklists diários EPI', stats.dailyEpiChecklists)}${metric('Checklists de veículos', stats.vehicleChecklists)}${metric('Termos EPI assinados', stats.signedEpiTerms)}${metric('Técnicos que fizeram', technicians.filter((technician) => technician.completed).length)}${metric('Técnicos que faltaram', missingTechnicians.length)}${metric('Pendências abertas agora', Number(stats.openAlerts || 0) + Number(stats.openTasks || 0))}</div><div class="report-grid"><section class="report-subcard"><div class="section-heading"><div><h3>Checklist diário dos técnicos</h3><p class="muted">Quem realizou e quem não registrou no período.</p></div><span class="badge">${technicians.length} técnico${technicians.length === 1 ? '' : 's'}</span></div>${technicians.length ? `<div class="table-wrap"><table><thead><tr><th>Técnico</th><th>Status</th><th>Checklists</th><th>Com atenção</th><th>Último registro</th></tr></thead><tbody>${technicians.map((technician) => `<tr><td><strong>${escapeHtml(technician.name)}</strong><small class="table-subtext">${escapeHtml(technician.email)}</small></td><td>${reportChecklistStatus(technician)}</td><td>${escapeHtml(technician.checklistCount)}</td><td>${escapeHtml(technician.attentionCount)}</td><td>${escapeHtml(formatDate(technician.lastChecklistAt))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhum técnico elegível no período.</p>'}</section><section class="report-subcard"><div class="section-heading"><div><h3>Veículos</h3><p class="muted">Movimentações e checklists registrados no período.</p></div><span class="badge">${vehicles.length} veículo${vehicles.length === 1 ? '' : 's'}</span></div>${vehicles.length ? `<div class="table-wrap"><table><thead><tr><th>Veículo</th><th>Registros</th><th>Diário</th><th>Quinzenal</th><th>Transf.</th><th>Entrega/devolução</th><th>Pend. validação</th></tr></thead><tbody>${vehicles.map((vehicle) => `<tr><td><strong>${escapeHtml(vehicle.plate)}</strong><small class="table-subtext">${escapeHtml(vehicle.model || '–')}</small></td><td>${reportVehicleChecklistSummary(vehicle)}</td><td>${escapeHtml(vehicle.dailyCount)}</td><td>${escapeHtml(vehicle.fortnightlyCount)}</td><td>${escapeHtml(vehicle.transferCount)}</td><td>${escapeHtml(vehicle.deliveryCount)}</td><td>${escapeHtml(vehicle.pendingValidationCount)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhum veículo ativo cadastrado.</p>'}</section></div><div class="report-grid"><section class="report-subcard"><div class="section-heading"><div><h3>Pendências do período</h3><p class="muted">Alertas de conformidade gerados na faixa selecionada.</p></div><span class="badge">${alerts.length}</span></div>${alerts.length ? `<div class="report-list">${alerts.map((alert) => `<article class="report-list-item"><div><strong>${escapeHtml(alert.title)}</strong><span>${escapeHtml(alert.subject_label || '–')} · ${escapeHtml(reportAlertStatus(alert.status))}</span></div><p>${escapeHtml(alert.message || '–')}</p><small>${escapeHtml(formatDate(alert.created_at))}</small></article>`).join('')}</div>` : '<p class="muted">Nenhum alerta gerado no período.</p>'}</section><section class="report-subcard"><div class="section-heading"><div><h3>Tarefas pendentes</h3><p class="muted">Pendências atribuídas que ainda aguardam conclusão.</p></div><span class="badge">${openTasks.length}</span></div>${openTasks.length ? `<div class="report-list">${openTasks.map((task) => `<article class="report-list-item"><div><strong>${escapeHtml(task.title)}</strong><span>${escapeHtml(task.subject_label || '–')} · Responsável: ${escapeHtml(task.assigned_to_name || '–')}</span></div><p>${escapeHtml(task.instruction || '–')}</p><small>Enviada em ${escapeHtml(formatDate(task.assigned_at))}</small></article>`).join('')}</div>` : '<p class="muted">Nenhuma tarefa pendente.</p>'}</section></div><section class="report-subcard"><div class="section-heading"><div><h3>Atividades do período</h3><p class="muted">Últimos registros de auditoria relacionados ao intervalo.</p></div><span class="badge">${activity.length}</span></div>${activity.length ? `<div class="table-wrap"><table><thead><tr><th>Quando</th><th>Evento</th><th>Responsável</th><th>Registro</th></tr></thead><tbody>${activity.map((item) => `<tr><td>${escapeHtml(formatDate(item.created_at))}</td><td>${escapeHtml(eventLabel(item.event_type))}</td><td>${escapeHtml(item.actor_name || 'Sistema')}</td><td>${escapeHtml(item.entity_type ? `${item.entity_type} #${item.entity_id || '–'}` : '–')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhuma atividade registrada no período.</p>'}</section>`;
+  content.innerHTML = `<div class="stats-grid report-stats">${metric('Checklists diários EPI', stats.dailyEpiChecklists)}${metric('Checklists de veículos', stats.vehicleChecklists)}${metric('Termos EPI assinados', stats.signedEpiTerms)}${metric('Técnicos que fizeram', technicians.filter((technician) => technician.completed).length)}${metric('Técnicos que faltaram', missingTechnicians.length)}${metric('Pendências abertas agora', Number(stats.openAlerts || 0) + Number(stats.openTasks || 0))}</div><div class="report-grid"><section class="report-subcard"><div class="section-heading"><div><h3>Checklist diário dos técnicos</h3><p class="muted">Quem realizou e quem não registrou no período.</p></div><span class="badge">${technicians.length} técnico${technicians.length === 1 ? '' : 's'}</span></div>${technicians.length ? `<div class="table-wrap"><table><thead><tr><th>Técnico</th><th>Status</th><th>Checklists</th><th>Com atenção</th><th>Último registro</th></tr></thead><tbody>${technicians.map((technician) => `<tr><td><strong>${escapeHtml(technician.name)}</strong><small class="table-subtext">${escapeHtml(technician.email)}</small></td><td>${reportChecklistStatus(technician)}</td><td>${escapeHtml(technician.checklistCount)}</td><td>${escapeHtml(technician.attentionCount)}</td><td>${escapeHtml(formatDate(technician.lastChecklistAt))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhum técnico elegível no período.</p>'}</section><section class="report-subcard"><div class="section-heading"><div><h3>Veículos</h3><p class="muted">Movimentações e checklists registrados no período.</p></div><span class="badge">${vehicles.length} veículo${vehicles.length === 1 ? '' : 's'}</span></div>${vehicles.length ? `<div class="table-wrap"><table><thead><tr><th>Veículo</th><th>Registros</th><th>Diário</th><th>Quinzenal</th><th>Transf.</th><th>Entrega/recebimento</th><th>Pend. validação</th></tr></thead><tbody>${vehicles.map((vehicle) => `<tr><td><strong>${escapeHtml(vehicle.plate)}</strong><small class="table-subtext">${escapeHtml(vehicle.model || '–')}</small></td><td>${reportVehicleChecklistSummary(vehicle)}</td><td>${escapeHtml(vehicle.dailyCount)}</td><td>${escapeHtml(vehicle.fortnightlyCount)}</td><td>${escapeHtml(vehicle.transferCount)}</td><td>${escapeHtml(vehicle.deliveryCount)}</td><td>${escapeHtml(vehicle.pendingValidationCount)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhum veículo ativo cadastrado.</p>'}</section></div><div class="report-grid"><section class="report-subcard"><div class="section-heading"><div><h3>Pendências do período</h3><p class="muted">Alertas de conformidade gerados na faixa selecionada.</p></div><span class="badge">${alerts.length}</span></div>${alerts.length ? `<div class="report-list">${alerts.map((alert) => `<article class="report-list-item"><div><strong>${escapeHtml(alert.title)}</strong><span>${escapeHtml(alert.subject_label || '–')} · ${escapeHtml(reportAlertStatus(alert.status))}</span></div><p>${escapeHtml(alert.message || '–')}</p><small>${escapeHtml(formatDate(alert.created_at))}</small></article>`).join('')}</div>` : '<p class="muted">Nenhum alerta gerado no período.</p>'}</section><section class="report-subcard"><div class="section-heading"><div><h3>Tarefas pendentes</h3><p class="muted">Pendências atribuídas que ainda aguardam conclusão.</p></div><span class="badge">${openTasks.length}</span></div>${openTasks.length ? `<div class="report-list">${openTasks.map((task) => `<article class="report-list-item"><div><strong>${escapeHtml(task.title)}</strong><span>${escapeHtml(task.subject_label || '–')} · Responsável: ${escapeHtml(task.assigned_to_name || '–')}</span></div><p>${escapeHtml(task.instruction || '–')}</p><small>Enviada em ${escapeHtml(formatDate(task.assigned_at))}</small></article>`).join('')}</div>` : '<p class="muted">Nenhuma tarefa pendente.</p>'}</section></div><section class="report-subcard"><div class="section-heading"><div><h3>Atividades do período</h3><p class="muted">Últimos registros de auditoria relacionados ao intervalo.</p></div><span class="badge">${activity.length}</span></div>${activity.length ? `<div class="table-wrap"><table><thead><tr><th>Quando</th><th>Evento</th><th>Responsável</th><th>Registro</th></tr></thead><tbody>${activity.map((item) => `<tr><td>${escapeHtml(formatDate(item.created_at))}</td><td>${escapeHtml(eventLabel(item.event_type))}</td><td>${escapeHtml(item.actor_name || 'Sistema')}</td><td>${escapeHtml(item.entity_type ? `${item.entity_type} #${item.entity_id || '–'}` : '–')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhuma atividade registrada no período.</p>'}</section>`;
 }
 
 async function loadReport() {
@@ -1777,6 +1919,7 @@ function renderEpiAttentionWorkflow(process) {
 }
 
 async function openEpiProcess(id) {
+  activateSubtab('epi-main', 'processes');
   const panel = $('#epi-process-detail');
   panel.classList.remove('hidden');
   panel.innerHTML = '<p class="muted">Carregando processo...</p>';
@@ -1802,7 +1945,7 @@ async function openEpiProcess(id) {
     const adminValidationSignature = renderEpiAdminValidationSignature(process);
     panel.innerHTML = `<div class="epi-process-detail-card"><div class="section-heading"><div><div class="eyebrow">${escapeHtml(process.processTitle)}</div><h3>Processo #${escapeHtml(process.id)}</h3><p class="muted">${escapeHtml(epiProcessStatusLabel(process.status))} · ${escapeHtml(formatDate(process.createdAt))}</p></div><button id="close-epi-process-detail" type="button" class="secondary small-button">Fechar</button></div>${attention}${attentionWorkflow}${responsibilityTerm}<p class="audit-note">Responsável: ${escapeHtml(process.createdBy.name)} · Validador: ${escapeHtml(process.validatorName || 'Administradores')} · Assinatura SHA-256: ${escapeHtml(process.signatureHash || '–')}</p>${adminValidationSignature}${media ? `<div class="epi-process-media">${media}</div>` : '<p class="muted">Nenhuma imagem registrada.</p>'}${validation}</div>`;
     panel.querySelector('.epi-process-detail-card > .section-heading')?.insertAdjacentHTML('beforeend', '<button id="download-epi-process-pdf" type="button" class="secondary small-button">Baixar PDF</button>');
-    $('#close-epi-process-detail').addEventListener('click', () => panel.classList.add('hidden'));
+    $('#close-epi-process-detail').addEventListener('click', () => { panel.classList.add('hidden'); activateSubtab('epi-main', 'processes'); });
     $('#download-epi-process-pdf')?.addEventListener('click', (event) => downloadPdfFile(`/api/epi/processes/${process.id}/pdf`, `processo-epi-${process.id}.pdf`, event.currentTarget));
     $('#print-epi-process')?.addEventListener('click', () => window.print());
     panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1894,6 +2037,7 @@ async function loadUsers() {
 }
 
 function startUserEdit(userId, users) {
+  activateSubtab('admin-main', 'users');
   const user = users.find((item) => String(item.id) === String(userId));
   const panel = $('#user-edit-panel');
   if (!user || user.systemProtected || !panel) return;
@@ -1929,6 +2073,7 @@ function updateAdminNotificationRecipientMode() {
 }
 
 async function loadTechnicianSummary(userId) {
+  activateSubtab('admin-main', 'users');
   const panel = $('#technician-detail');
   panel.classList.remove('hidden');
   panel.innerHTML = '<p class="muted">Carregando dados do técnico...</p>';
@@ -2145,7 +2290,13 @@ function vehicleChecklistDefinition() {
 }
 
 function vehicleChecklistTypeLabel(type = selectedVehicleChecklistType) {
-  return ({ diario: 'Checklist diário', quinzenal: 'Checklist quinzenal', transferencia: 'Transferência de veículo', entrega: 'Entrega de veículo', devolucao: 'Devolução de veículo' }[type] || 'Checklist de veículo');
+  return ({ diario: 'Checklist diário', geral: 'Checklist geral', quinzenal: 'Checklist quinzenal', transferencia: 'Transferência de veículo', recebimento: 'Recebimento de veículo', entrega: 'Entrega de veículo', devolucao: 'Devolução de veículo' }[type] || 'Checklist de veículo');
+}
+
+function vehicleChecklistDisplayLabel(checklist) {
+  const label = vehicleChecklistTypeLabel(checklist?.checklistType);
+  if (checklist?.checklistType === 'diario' && checklist.dailyPeriod) return `${label} · ${checklist.dailyPeriod === 'inicio' ? 'começo do dia' : 'fim do dia'}`;
+  return label;
 }
 
 function vehicleExtraPhotoCount() {
@@ -2153,18 +2304,13 @@ function vehicleExtraPhotoCount() {
 }
 
 function setVehicleChecklistType(type) {
-  if (!['diario', 'quinzenal', 'transferencia', 'entrega', 'devolucao'].includes(type)) return;
-  if (type === 'entrega' && !(isAdminRole() || currentUser?.role === 'vistoriador')) return;
+  if (!['diario', 'geral', 'quinzenal', 'transferencia', 'recebimento', 'entrega', 'devolucao'].includes(type)) return;
+  if (['entrega', 'recebimento'].includes(type) && !(isAdminRole() || currentUser?.role === 'vistoriador')) return;
   selectedVehicleChecklistType = type;
+  selectedVehicleChecklistPurpose = type === 'geral' ? null : type;
   document.querySelectorAll('[data-vehicle-checklist-type]').forEach((button) => button.classList.toggle('active', button.dataset.vehicleChecklistType === type));
-  const needsTarget = ['transferencia', 'entrega'].includes(type);
-  $('#vehicle-target-field')?.classList.toggle('hidden', !needsTarget);
-  if ($('#vehicle-target-user')) $('#vehicle-target-user').required = needsTarget;
-  populateVehicleTargetUsers();
   $('#vehicle-start-message').textContent = `${vehicleChecklistTypeLabel()} selecionado. Agora escolha o veículo.`;
   resetVehicleWizard();
-  $('#vehicle-target-field')?.classList.toggle('hidden', !needsTarget);
-  if ($('#vehicle-target-user')) $('#vehicle-target-user').required = needsTarget;
 }
 
 function initializeVehicleWizardDom() {
@@ -2176,14 +2322,14 @@ function initializeVehicleWizardDom() {
   const signature = form.querySelector('.vehicle-signature-entry');
   const photo = form.querySelector('.vehicle-photo-entry');
   const submitActions = [...form.children].find((child) => child.classList.contains('form-actions'));
-  form.insertAdjacentHTML('afterbegin', '<div id="vehicle-start-step" class="vehicle-step"><div class="subheading"><h3>Tipo de checklist</h3></div><div class="vehicle-checklist-options" role="tablist" aria-label="Tipo de checklist de veículo"><button type="button" class="vehicle-checklist-option" data-vehicle-checklist-type="diario">Checklist Diário</button><button type="button" class="vehicle-checklist-option" data-vehicle-checklist-type="quinzenal">Checklist Quinzenal</button><button type="button" class="vehicle-checklist-option" data-vehicle-checklist-type="transferencia">Transferência</button><button type="button" class="vehicle-checklist-option" data-vehicle-checklist-type="entrega">Entrega de veículo</button></div><label>Veículo<select id="vehicle-select"><option value="">Carregando veículos...</option></select></label><label id="vehicle-target-field" class="hidden">Técnico que receberá o veículo<select id="vehicle-target-user"><option value="">Carregando usuários...</option></select></label><div class="form-actions"><button id="vehicle-start-checklist" type="button">Iniciar checklist</button><span id="vehicle-start-message" class="muted">Escolha o tipo e o veículo para iniciar.</span></div></div><div id="vehicle-checklist-step" class="vehicle-step hidden"><div class="vehicle-selected-card"><strong id="vehicle-selected-title">Veículo selecionado</strong><span id="vehicle-selected-details" class="muted"></span></div><label id="vehicle-mileage-field">Quilometragem (opcional)<input id="vehicle-wizard-mileage" type="number" min="0" placeholder="Quilometragem atual" /></label><div class="vehicle-wizard-progress"><strong id="vehicle-wizard-counter">Item 1</strong><span id="vehicle-wizard-instruction">Faça a conferência e avance.</span><div class="wizard-progress-track"><span id="vehicle-wizard-progress-bar"></span></div></div><div id="vehicle-item-wizard"></div><div class="wizard-navigation"><button id="vehicle-item-back" type="button" class="secondary small-button">Anterior</button><span id="vehicle-item-message" class="muted"></span><button id="vehicle-item-next" type="button" class="small-button">Próximo item</button></div></div>');
+  form.insertAdjacentHTML('afterbegin', '<div id="vehicle-start-step" class="vehicle-step"><div class="subheading"><h3>Tipo de checklist</h3><p class="muted">O Checklist geral é preenchido uma vez e sua finalidade é escolhida no final.</p></div><div class="vehicle-checklist-options" role="tablist" aria-label="Tipo de checklist de veículo"><button type="button" class="vehicle-checklist-option" data-vehicle-checklist-type="diario">Checklist diário</button><button type="button" class="vehicle-checklist-option" data-vehicle-checklist-type="geral">Checklist geral</button></div><label>Veículo<select id="vehicle-select"><option value="">Carregando veículos...</option></select></label><div class="form-actions"><button id="vehicle-start-checklist" type="button">Iniciar checklist</button><span id="vehicle-start-message" class="muted">Escolha o tipo e o veículo para iniciar.</span></div></div><div id="vehicle-checklist-step" class="vehicle-step hidden"><div class="vehicle-selected-card"><strong id="vehicle-selected-title">Veículo selecionado</strong><span id="vehicle-selected-details" class="muted"></span></div><label id="vehicle-mileage-field">Quilometragem (opcional)<input id="vehicle-wizard-mileage" type="number" min="0" placeholder="Quilometragem atual" /></label><div class="vehicle-wizard-progress"><strong id="vehicle-wizard-counter">Item 1</strong><span id="vehicle-wizard-instruction">Faça a conferência e avance.</span><div class="wizard-progress-track"><span id="vehicle-wizard-progress-bar"></span></div></div><div id="vehicle-item-wizard"></div><div class="wizard-navigation"><button id="vehicle-item-back" type="button" class="secondary small-button">Anterior</button><span id="vehicle-item-message" class="muted"></span><button id="vehicle-item-next" type="button" class="small-button">Próximo item</button></div></div>');
   meta?.classList.add('hidden');
   legend?.classList.add('hidden');
   table?.classList.add('hidden');
   const finalStep = document.createElement('div');
   finalStep.id = 'vehicle-final-step';
   finalStep.className = 'vehicle-step hidden';
-  finalStep.innerHTML = '<div class="vehicle-final-heading"><div><h3>Finalizar checklist</h3><p class="muted">Confira a assinatura, tire a selfie e envie as fotos.</p></div><button id="vehicle-return-to-items" type="button" class="secondary small-button">Voltar aos itens</button></div><div class="vehicle-selfie-entry"><div class="subheading"><h3>Selfie do momento</h3></div><p class="muted">Tire a selfie agora pela câmera. Não é permitido escolher uma imagem da galeria.</p><button id="vehicle-open-selfie-camera" type="button">Abrir câmera</button><div id="vehicle-selfie-camera" class="hidden"><video id="vehicle-selfie-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-take-selfie" type="button">Tirar selfie</button><button id="vehicle-cancel-selfie" type="button" class="secondary">Cancelar</button></div></div><div id="vehicle-selfie-preview" class="epi-photo-previews"></div><p id="vehicle-selfie-message" class="muted" aria-live="polite">Nenhuma selfie capturada.</p></div>';
+  finalStep.innerHTML = '<div class="vehicle-final-heading"><div><h3>Finalizar checklist</h3><p class="muted">Escolha a finalidade, confira a assinatura, tire a selfie e envie as fotos.</p></div><button id="vehicle-return-to-items" type="button" class="secondary small-button">Voltar aos itens</button></div><div class="vehicle-final-purpose"><label id="vehicle-final-purpose-field">Finalidade do Checklist geral<select id="vehicle-final-purpose"><option value="quinzenal">Quinzenal</option><option value="transferencia">Transferência</option><option value="recebimento">Recebimento</option><option value="entrega">Entrega</option></select></label><label id="vehicle-final-target-field" class="hidden">Usuário que receberá o veículo<select id="vehicle-final-target-user"><option value="">Selecione o usuário</option></select></label><label id="vehicle-final-daily-period-field" class="hidden">Período do checklist diário<select id="vehicle-final-daily-period"><option value="inicio">Começo do dia</option><option value="fim">Fim do dia</option></select></label><p id="vehicle-final-purpose-help" class="muted"></p></div><div class="vehicle-selfie-entry"><div class="subheading"><h3>Selfie do momento</h3></div><p class="muted">Tire a selfie agora pela câmera. Não é permitido escolher uma imagem da galeria.</p><button id="vehicle-open-selfie-camera" type="button">Abrir câmera</button><div id="vehicle-selfie-camera" class="hidden"><video id="vehicle-selfie-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-take-selfie" type="button">Tirar selfie</button><button id="vehicle-cancel-selfie" type="button" class="secondary">Cancelar</button></div></div><div id="vehicle-selfie-preview" class="epi-photo-previews"></div><p id="vehicle-selfie-message" class="muted" aria-live="polite">Nenhuma selfie capturada.</p></div>';
   const selfieEntry = finalStep.querySelector('.vehicle-selfie-entry');
   if (signature) finalStep.insertBefore(signature, selfieEntry);
   if (selfieEntry && photo) finalStep.append(photo);
@@ -2192,6 +2338,7 @@ function initializeVehicleWizardDom() {
   const submitButton = submitActions?.querySelector('button[type="submit"]');
   if (submitButton) submitButton.textContent = 'Enviar checklist';
   document.querySelectorAll('[data-vehicle-checklist-type]').forEach((button) => button.addEventListener('click', () => setVehicleChecklistType(button.dataset.vehicleChecklistType)));
+  $('#vehicle-final-purpose').addEventListener('change', configureVehicleFinalFields);
   $('#vehicle-start-checklist').addEventListener('click', startVehicleChecklist);
   $('#vehicle-item-back').addEventListener('click', () => {
     saveVehicleWizardItem();
@@ -2208,6 +2355,7 @@ function initializeVehicleWizardDom() {
     if (vehicleWizardIndex < vehicleWizardDraft.length - 1) { vehicleWizardIndex += 1; renderVehicleWizardItem(); return; }
     $('#vehicle-checklist-step').classList.add('hidden');
     $('#vehicle-final-step').classList.remove('hidden');
+    configureVehicleFinalFields();
     $('#vehicle-item-message').textContent = '';
     $('#vehicle-final-step').scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
@@ -2231,10 +2379,42 @@ function initializeVehicleWizardDom() {
   });
 }
 
+function configureVehicleFinalFields() {
+  const purposeField = $('#vehicle-final-purpose-field');
+  const purposeSelect = $('#vehicle-final-purpose');
+  const targetField = $('#vehicle-final-target-field');
+  const targetSelect = $('#vehicle-final-target-user');
+  const dailyPeriodField = $('#vehicle-final-daily-period-field');
+  const help = $('#vehicle-final-purpose-help');
+  if (!purposeSelect || !targetField || !dailyPeriodField) return;
+  const isDaily = selectedVehicleChecklistType === 'diario';
+  purposeField?.classList.toggle('hidden', isDaily);
+  dailyPeriodField.classList.toggle('hidden', !isDaily);
+  const purpose = isDaily ? 'diario' : (purposeSelect.value || 'quinzenal');
+  const needsTarget = ['transferencia', 'recebimento', 'entrega'].includes(purpose);
+  purposeSelect.querySelectorAll('option').forEach((option) => {
+    const restricted = ['entrega', 'recebimento'].includes(option.value) && !(isAdminRole() || currentUser?.role === 'vistoriador');
+    option.disabled = restricted;
+  });
+  targetField.classList.toggle('hidden', !needsTarget);
+  if (targetSelect) targetSelect.required = needsTarget;
+  if (help) {
+    help.textContent = purpose === 'quinzenal'
+      ? 'A regra de notificação dos checklists quinzenais continua valendo.'
+      : purpose === 'transferencia'
+        ? 'O destinatário deverá assinar e tirar uma selfie; depois o processo seguirá para validação do Admin.'
+        : purpose === 'entrega'
+          ? 'A entrega deve ser iniciada pelo Admin ou Supervisor e aceita pelo técnico destinatário.'
+          : purpose === 'recebimento'
+            ? 'O usuário destinatário deverá assinar e tirar uma selfie para confirmar o recebimento.'
+            : 'Escolha o período correspondente ao momento em que o veículo foi conferido.';
+  }
+  populateVehicleTargetUsers();
+}
+
 function startVehicleChecklist() {
   const selectedId = $('#vehicle-select')?.value;
   const vehicle = vehicleCatalog.find((item) => String(item.id) === String(selectedId));
-  const targetUserId = $('#vehicle-target-user')?.value || '';
   const message = $('#vehicle-start-message');
   if (!selectedVehicleChecklistType) {
     if (message) message.textContent = 'Escolha o tipo de checklist antes de iniciar.';
@@ -2242,10 +2422,6 @@ function startVehicleChecklist() {
   }
   if (!vehicle) {
     if (message) message.textContent = 'Selecione um veículo antes de iniciar.';
-    return;
-  }
-  if (['transferencia', 'entrega'].includes(selectedVehicleChecklistType) && !targetUserId) {
-    if (message) message.textContent = 'Selecione o usuário que receberá o veículo.';
     return;
   }
   vehicleWizardIndex = 0;
@@ -2257,9 +2433,7 @@ function startVehicleChecklist() {
   $('#vehicle-model').value = vehicle.model || '';
   $('#vehicle-year').value = vehicle.year || '';
   $('#vehicle-selected-title').textContent = `${vehicle.plate} · ${vehicle.model || 'Modelo não informado'}`;
-  const targetUsers = selectedVehicleChecklistType === 'entrega' ? vehicleDeliveryTargetUsers : vehicleTargetUsers;
-  const target = targetUsers.find((user) => String(user.id) === String(targetUserId));
-  $('#vehicle-selected-details').textContent = [vehicleChecklistTypeLabel(), vehicle.year, vehicle.color, target ? `Destinatário: ${target.name}` : null].filter(Boolean).join(' · ') || 'Veículo selecionado';
+  $('#vehicle-selected-details').textContent = [vehicleChecklistTypeLabel(), vehicle.year, vehicle.color].filter(Boolean).join(' · ') || 'Veículo selecionado';
   $('#vehicle-mileage-field').classList.toggle('hidden', selectedVehicleChecklistType === 'diario');
   $('#vehicle-wizard-instruction').textContent = selectedVehicleChecklistType === 'diario'
     ? (vehicleWizardDraft.some((item) => item.itemKind === 'vehicle_equipment') ? 'Etapa 1: confirme os pontos do veículo com fotos. Etapa 2: confirme se cada equipamento cadastrado está presente.' : 'Marque OK ou Não OK, registre uma observação se quiser e capture a foto.')
@@ -2268,6 +2442,7 @@ function startVehicleChecklist() {
   $('#vehicle-final-step').classList.add('hidden');
   $('#vehicle-checklist-step').classList.remove('hidden');
   $('#vehicle-start-message').textContent = '';
+  configureVehicleFinalFields();
   renderVehicleWizardItem();
   renderVehiclePhotoDrafts();
   if (shouldUseMobileVehicleChecklist()) openMobileVehicleChecklist();
@@ -2299,18 +2474,17 @@ async function loadVehicleCatalog() {
 }
 
 function populateVehicleTargetUsers() {
-  const targetSelect = $('#vehicle-target-user');
+  const targetSelect = $('#vehicle-final-target-user');
   if (!targetSelect) return;
-  const users = selectedVehicleChecklistType === 'entrega' ? vehicleDeliveryTargetUsers : vehicleTargetUsers;
+  const purpose = $('#vehicle-final-purpose')?.value || selectedVehicleChecklistPurpose;
+  const users = ['entrega', 'recebimento'].includes(purpose) ? vehicleDeliveryTargetUsers : vehicleTargetUsers;
   targetSelect.innerHTML = users.length ? `<option value="">Selecione o usuário</option>${users.map((user) => `<option value="${escapeHtml(user.id)}">${escapeHtml(user.name)} · ${escapeHtml(roleLabels[user.role] || user.role)}</option>`).join('')}` : '<option value="">Nenhum usuário ativo disponível</option>';
 }
 
 function configureVehicleChecklistOptions() {
   document.querySelectorAll('[data-vehicle-checklist-type]').forEach((button) => {
-    const type = button.dataset.vehicleChecklistType;
-    const hidden = (isAdminRole() && type !== 'entrega') || (currentUser?.role === 'tecnico' && type === 'entrega');
-    button.classList.toggle('hidden', hidden);
-    button.disabled = hidden;
+    button.classList.remove('hidden');
+    button.disabled = false;
   });
 }
 
@@ -2324,7 +2498,9 @@ function resetVehicleWizard() {
   $('#vehicle-checklist-step')?.classList.add('hidden');
   $('#vehicle-final-step')?.classList.add('hidden');
   $('#vehicle-wizard-mileage').value = '';
-  if ($('#vehicle-target-user')) $('#vehicle-target-user').value = '';
+  if ($('#vehicle-final-target-user')) $('#vehicle-final-target-user').value = '';
+  if ($('#vehicle-final-purpose')) $('#vehicle-final-purpose').value = 'quinzenal';
+  if ($('#vehicle-final-daily-period')) $('#vehicle-final-daily-period').value = 'inicio';
   $('#vehicle-item-wizard').innerHTML = '';
   renderVehicleWizardItem();
   renderVehiclePhotoDrafts();
@@ -2336,10 +2512,10 @@ function renderVehicleEditor() {
   initializeVehicleWizardDom();
   configureVehicleChecklistOptions();
   selectedVehicleChecklistType = null;
+  selectedVehicleChecklistPurpose = null;
   document.querySelectorAll('[data-vehicle-checklist-type]').forEach((button) => button.classList.remove('active'));
   resetVehicleWizard();
   populateVehicleCatalog();
-  if (isAdminRole()) setVehicleChecklistType('entrega');
 }
 
 function saveVehicleWizardItem() {
@@ -2402,7 +2578,7 @@ function renderVehicleSummary(checklist, includeAction = false) {
   const action = includeAction ? `<button type="button" class="secondary small-button vehicle-open" data-vehicle-id="${checklist.id}">Abrir</button>` : '';
   const statusLabel = { pendente_destinatario: 'Aguardando destinatário', pendente_validacao: 'Aguardando validação', validado: 'Validado', reprovado: 'Reprovado', rascunho: 'Rascunho' }[checklist.status] || checklist.status;
   const target = checklist.targetName ? ` · destinatário: ${checklist.targetName}` : '';
-  return `<div class="vehicle-list-item"><div><strong>${escapeHtml(checklist.plate)} · ${escapeHtml(checklist.model || 'Modelo não informado')}</strong><small>${escapeHtml(vehicleChecklistTypeLabel(checklist.checklistType))} · ${escapeHtml(checklist.driverName || 'Técnico não informado')}${escapeHtml(target)} · ${escapeHtml(formatDate(checklist.createdAt))} · ${problems} ocorrência(s)</small></div><div class="vehicle-list-actions"><span class="status status-${escapeHtml(checklist.status)}">${escapeHtml(statusLabel)}</span>${action}</div></div>`;
+  return `<div class="vehicle-list-item"><div><strong>${escapeHtml(checklist.plate)} · ${escapeHtml(checklist.model || 'Modelo não informado')}</strong><small>${escapeHtml(vehicleChecklistDisplayLabel(checklist))} · ${escapeHtml(checklist.driverName || 'Técnico não informado')}${escapeHtml(target)} · ${escapeHtml(formatDate(checklist.createdAt))} · ${problems} ocorrência(s)</small></div><div class="vehicle-list-actions"><span class="status status-${escapeHtml(checklist.status)}">${escapeHtml(statusLabel)}</span>${action}</div></div>`;
 }
 
 async function loadVehicleChecklists() {
@@ -2431,11 +2607,11 @@ function renderVehicleDetail(checklist, containerSelector, canValidate) {
   const isDaily = checklist.checklistType === 'diario';
   const adminOnlyValidation = ['transferencia', 'devolucao'].includes(checklist.checklistType);
   const canValidateChecklist = canValidate && checklist.status === 'pendente_validacao' && (!adminOnlyValidation || isAdminRole());
-  const isRecipientAcceptance = ['transferencia', 'entrega'].includes(checklist.checklistType) && checklist.status === 'pendente_destinatario' && String(checklist.targetUserId || '') === String(currentUser?.id || '');
+  const isRecipientAcceptance = ['transferencia', 'recebimento', 'entrega'].includes(checklist.checklistType) && checklist.status === 'pendente_destinatario' && String(checklist.targetUserId || '') === String(currentUser?.id || '');
   let vehicleValidationSelfie = null;
   const validationControls = canValidateChecklist ? `<div class="validation-controls"><div class="epi-signature-preview"><img src="${escapeHtml(currentUser?.signatureData || '')}" alt="Assinatura padrão do responsável pela validação" /></div><label class="consent-check"><input id="vehicle-validation-signature-confirm" type="checkbox" /> Confirmo o uso da minha assinatura padrão nesta validação.</label><button id="vehicle-validation-open-selfie" type="button" class="secondary">Capturar selfie do validador</button><div id="vehicle-validation-selfie-camera" class="hidden"><video id="vehicle-validation-selfie-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-validation-take-selfie" type="button">Tirar selfie</button><button id="vehicle-validation-cancel-selfie" type="button" class="secondary">Cancelar</button></div></div><div id="vehicle-validation-selfie-preview" class="epi-photo-previews"></div><p id="vehicle-validation-selfie-status" class="muted" aria-live="polite">Selfie do validador ainda não capturada.</p><div class="signature-actions"><button id="vehicle-validation-capture-location" type="button" class="secondary">Capturar localização</button></div><textarea id="validation-notes" maxlength="700" placeholder="Observação da validação (opcional)"></textarea><div class="signature-actions"><button id="approve-vehicle" type="button">Validar vistoria</button><button id="reject-vehicle" type="button" class="danger-button">Reprovar vistoria</button></div><p id="validation-message" class="muted">A assinatura, a selfie e a localização serão registradas na validação.</p></div>` : '';
-  const isDelivery = checklist.checklistType === 'entrega';
-  const acceptanceLabel = isDelivery ? 'Aceitar entrega' : 'Aceitar transferência';
+  const isDelivery = ['recebimento', 'entrega'].includes(checklist.checklistType);
+  const acceptanceLabel = checklist.checklistType === 'recebimento' ? 'Aceitar recebimento' : isDelivery ? 'Aceitar entrega' : 'Aceitar transferência';
   const transferAcceptanceControls = isRecipientAcceptance ? `<div class="vehicle-transfer-acceptance"><div class="subheading"><h4>${acceptanceLabel}</h4><p class="muted">Confira o veículo e confirme com sua assinatura padrão e uma selfie feita agora.</p></div><div class="epi-signature-preview"><img src="${escapeHtml(currentUser?.signatureData || '')}" alt="Sua assinatura padrão" /></div><label class="consent-check"><input id="vehicle-transfer-signature-confirm" type="checkbox" /> Confirmo minha assinatura e aceito receber este veículo.</label><button id="vehicle-transfer-open-selfie" type="button">Abrir câmera para selfie</button><div id="vehicle-transfer-selfie-camera" class="hidden"><video id="vehicle-transfer-selfie-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-transfer-take-selfie" type="button">Tirar selfie</button><button id="vehicle-transfer-cancel-selfie" type="button" class="secondary">Cancelar</button></div></div><div id="vehicle-transfer-selfie-preview" class="epi-photo-previews"></div><p id="vehicle-transfer-message" class="muted" aria-live="polite">Nenhuma selfie capturada.</p><button id="vehicle-transfer-accept" type="button">${acceptanceLabel}</button></div>` : '';
   const media = (checklist.media || []).map((item) => { const isSelfie = item.kind === 'selfie'; const itemName = [...vehicleItems, ...vehicleDailyItems].find(([key]) => key === item.itemKey)?.[1]; const label = isSelfie ? (item.captureContext === 'validation' ? 'Selfie do validador' : 'Selfie do checklist') : itemName ? `Foto · ${itemName}` : 'Foto extra do veículo'; return `<figure class="epi-process-media-item"><img src="/api/vehicles/checklists/${checklist.id}/media/${item.id}" alt="${escapeHtml(label)}" loading="lazy" /><figcaption><strong>${escapeHtml(label)}</strong><span>Data/hora: ${escapeHtml(formatDate(item.createdAt))}</span><span>IP: ${escapeHtml(item.ipAddress || 'Não informado')}</span><span>Navegador: ${escapeHtml(browserLabel(item.userAgent || item.deviceInfo))}</span><span>Dispositivo: ${escapeHtml(deviceLabel(item.userAgent || item.deviceInfo))}</span><span>Cidade: ${escapeHtml(formatMediaLocation(item))}</span><span>Coordenadas: ${escapeHtml(formatMediaCoordinates(item))}</span></figcaption></figure>`; }).join('');
   const table = isDaily
@@ -2443,9 +2619,10 @@ function renderVehicleDetail(checklist, containerSelector, canValidate) {
     : `<table class="vehicle-detail-table"><thead><tr><th>Item</th><th>Antes</th><th>Descrição</th><th>Depois</th><th>Descrição</th></tr></thead><tbody>${checklist.items.map((item) => `<tr><td>${escapeHtml(item.itemName)}</td><td>${escapeHtml(vehicleStatusLabel(item.beforeStatus))}</td><td>${escapeHtml(item.beforeDescription || '–')}</td><td>${escapeHtml(vehicleStatusLabel(item.afterStatus))}</td><td>${escapeHtml(item.afterDescription || '–')}</td></tr>`).join('')}</tbody></table>`;
   const statusLabel = { pendente_destinatario: 'Aguardando destinatário', pendente_validacao: 'Aguardando validação', validado: 'Validado', reprovado: 'Reprovado' }[checklist.status] || checklist.status;
   const targetLine = checklist.targetName ? `<p class="muted">${isDelivery ? 'Técnico destinatário' : 'Destinatário'}: ${escapeHtml(checklist.targetName)}</p>` : '';
-  container.innerHTML = `<div class="vehicle-detail-card"><div class="section-heading"><div><div class="eyebrow">${escapeHtml(vehicleChecklistTypeLabel(checklist.checklistType).toUpperCase())} #${checklist.id}</div><h3>${escapeHtml(checklist.plate)} · ${escapeHtml(checklist.model || '')}</h3><p class="muted">Técnico: ${escapeHtml(checklist.driverName || '–')} · ${escapeHtml(formatDate(checklist.createdAt))}</p>${targetLine}</div><span class="status status-${escapeHtml(checklist.status)}">${escapeHtml(statusLabel)}</span></div><div class="table-wrap">${table}</div>${checklist.validationNotes ? `<p class="validation-note"><b>Observação do responsável pela validação:</b> ${escapeHtml(checklist.validationNotes)}</p>` : ''}${media ? `<section class="vehicle-checklist-media"><h4>Fotos registradas</h4><div class="epi-process-media">${media}</div></section>` : ''}${renderVehicleSignatures(checklist)}${transferAcceptanceControls}${validationControls}</div>`;
+  const dailyPeriodLine = isDaily && checklist.dailyPeriod ? `<p class="muted">Período: ${checklist.dailyPeriod === 'inicio' ? 'Começo do dia' : 'Fim do dia'}</p>` : '';
+  container.innerHTML = `<div class="vehicle-detail-card"><div class="section-heading"><div><div class="eyebrow">${escapeHtml(vehicleChecklistDisplayLabel(checklist).toUpperCase())} #${checklist.id}</div><h3>${escapeHtml(checklist.plate)} · ${escapeHtml(checklist.model || '')}</h3><p class="muted">Técnico: ${escapeHtml(checklist.driverName || '–')} · ${escapeHtml(formatDate(checklist.createdAt))}</p>${dailyPeriodLine}${targetLine}</div><span class="status status-${escapeHtml(checklist.status)}">${escapeHtml(statusLabel)}</span></div><div class="table-wrap">${table}</div>${checklist.validationNotes ? `<p class="validation-note"><b>Observação do responsável pela validação:</b> ${escapeHtml(checklist.validationNotes)}</p>` : ''}${media ? `<section class="vehicle-checklist-media"><h4>Fotos registradas</h4><div class="epi-process-media">${media}</div></section>` : ''}${renderVehicleSignatures(checklist)}${transferAcceptanceControls}${validationControls}</div>`;
   container.querySelector('.vehicle-detail-card')?.insertAdjacentHTML('afterbegin', '<div class="detail-actions vehicle-detail-toolbar"><button id="close-vehicle-detail" type="button" class="secondary small-button">Fechar</button><button id="download-vehicle-checklist-pdf" type="button" class="secondary small-button">Baixar PDF</button></div>');
-  container.querySelector('#close-vehicle-detail')?.addEventListener('click', () => container.classList.add('hidden'));
+  container.querySelector('#close-vehicle-detail')?.addEventListener('click', () => { container.classList.add('hidden'); if (containerSelector === '#vehicle-tech-detail') activateSubtab('vehicles-tech', 'history'); if (containerSelector === '#vehicle-admin-detail') { activateSubtab('vehicles-admin', 'list'); activateSubtab('vehicles-main', 'management'); } if (containerSelector === '#validation-detail') activateSubtab('validation-main', 'list'); });
   container.querySelector('#download-vehicle-checklist-pdf')?.addEventListener('click', (event) => downloadPdfFile(`/api/vehicles/checklists/${checklist.id}/pdf`, `checklist-veiculo-${checklist.id}.pdf`, event.currentTarget));
 
   if (isRecipientAcceptance) {
@@ -2520,6 +2697,9 @@ function renderVehicleDetail(checklist, containerSelector, canValidate) {
 }
 
 async function openVehicleChecklist(id, containerSelector, validationQueue = false) {
+  if (containerSelector === '#vehicle-tech-detail') activateSubtab('vehicles-tech', 'history');
+  if (containerSelector === '#vehicle-admin-detail') { activateSubtab('vehicles-main', 'management'); activateSubtab('vehicles-admin', 'detail'); }
+  if (containerSelector === '#validation-detail') activateSubtab('validation-main', 'detail');
   const data = await api(`/api/vehicles/checklists/${id}${validationQueue ? '?queue=1' : ''}`);
   renderVehicleDetail(data.checklist, containerSelector, isChecklistValidatorRole());
 }
@@ -2529,6 +2709,7 @@ function renderEpiPendingSummary(process) {
 }
 
 async function loadValidationQueue() {
+  activateSubtab('validation-main', 'list');
   const [vehicleData, epiData] = await Promise.all([api('/api/vehicles/checklists?queue=1'), api('/api/epi/processes')]);
   const vehiclePending = vehicleData.checklists.filter((checklist) => checklist.status === 'pendente_validacao'
     && (!['transferencia', 'devolucao'].includes(checklist.checklistType) || isAdminRole()));
@@ -2675,7 +2856,7 @@ function renderTermDetail(term) {
   document.querySelectorAll('#terms-list [data-term-id]').forEach((button) => button.classList.toggle('selected', String(button.dataset.termId) === String(term.id)));
 }
 
-async function openTerm(id) { const data = await api(`/api/epi/terms/${id}`); renderTermDetail(data.term); $('#term-detail').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+async function openTerm(id) { activateSubtab('epi-main', 'terms'); const data = await api(`/api/epi/terms/${id}`); renderTermDetail(data.term); $('#term-detail').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 
 $('#login-form').addEventListener('submit', async (event) => { event.preventDefault(); $('#login-error').textContent = ''; try { const data = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: $('#login-email').value, password: $('#login-password').value }) }); showApp(data.user); } catch (error) { $('#login-error').textContent = error.message; } });
 $('#logout').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); window.location.reload(); });
@@ -2686,6 +2867,7 @@ $('#pwa-install-ios')?.addEventListener('click', () => {
   updatePwaInstallControls();
 });
 $('#pwa-enable-push')?.addEventListener('click', () => enableWebPushNotifications());
+$('#system-update-button')?.addEventListener('click', () => startSystemUpdate());
 $('#mobile-menu-toggle').addEventListener('click', () => setMobileMenuOpen(!$('.sidebar')?.classList.contains('mobile-open')));
 $('#mobile-menu-close').addEventListener('click', () => closeMobileMenu());
 $('#mobile-menu-backdrop').addEventListener('click', () => closeMobileMenu());
@@ -2931,6 +3113,12 @@ $('#vehicle-checklist-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const message = $('#vehicle-form-message');
   if (!selectedVehicleChecklistType) { message.textContent = 'Escolha o tipo de checklist antes de enviar.'; return; }
+  const finalChecklistType = selectedVehicleChecklistType === 'geral' ? ($('#vehicle-final-purpose')?.value || '') : selectedVehicleChecklistType;
+  const dailyPeriod = finalChecklistType === 'diario' ? ($('#vehicle-final-daily-period')?.value || '') : null;
+  const targetUserId = ['transferencia', 'recebimento', 'entrega'].includes(finalChecklistType) ? ($('#vehicle-final-target-user')?.value || '') : null;
+  if (selectedVehicleChecklistType === 'geral' && !['quinzenal', 'transferencia', 'recebimento', 'entrega'].includes(finalChecklistType)) { message.textContent = 'Escolha a finalidade do Checklist geral.'; return; }
+  if (finalChecklistType === 'diario' && !['inicio', 'fim'].includes(dailyPeriod)) { message.textContent = 'Escolha se o checklist diário é do começo ou do fim do dia.'; return; }
+  if (['transferencia', 'recebimento', 'entrega'].includes(finalChecklistType) && !targetUserId) { message.textContent = 'Selecione o usuário que receberá o veículo.'; return; }
   if (!currentUser?.signatureData || !$('#vehicle-signature-confirm').checked) { message.textContent = 'Confirme a assinatura padrão cadastrada antes de enviar o checklist.'; return; }
   if (!vehicleSelfieDraft) { message.textContent = 'Capture a selfie pela câmera antes de enviar o checklist.'; return; }
   const missingPhoto = vehicleWizardDraft.find((item) => item.requiresPhoto && !vehiclePhotoDrafts.some((photo) => photo.itemKey === item.itemKey));
@@ -2938,9 +3126,9 @@ $('#vehicle-checklist-form').addEventListener('submit', async (event) => {
   const returnToMobileVehicleList = mobileChecklistActive && mobileChecklistKind === 'vehicle';
   try {
     await ensureVehicleLocation();
-    await api('/api/vehicles/checklists', { method: 'POST', body: JSON.stringify({ checklistType: selectedVehicleChecklistType, targetUserId: ['transferencia', 'entrega'].includes(selectedVehicleChecklistType) ? $('#vehicle-target-user').value : null, plate: $('#vehicle-plate').value, model: $('#vehicle-model').value, vehicleYear: $('#vehicle-year').value, mileage: $('#vehicle-wizard-mileage').value, items: readVehicleEditor(), signatureConfirmed: true, latitude: vehicleSignatureLocation.latitude, longitude: vehicleSignatureLocation.longitude, deviceInfo: navigator.userAgent, selfie: vehicleSelfieDraft, photos: vehiclePhotoDrafts.map((photo) => ({ imageData: photo.imageData, itemKey: photo.itemKey || null, captureMode: 'camera', latitude: vehicleSignatureLocation.latitude, longitude: vehicleSignatureLocation.longitude })) }) });
-    const sentType = vehicleChecklistTypeLabel();
-    const sentMessage = selectedVehicleChecklistType === 'transferencia' ? `${sentType} enviado. Aguardando assinatura e selfie do destinatário.` : selectedVehicleChecklistType === 'entrega' ? `${sentType} enviado. Aguardando assinatura e selfie do técnico destinatário.` : `${sentType} e fotos enviados para validação.`;
+    await api('/api/vehicles/checklists', { method: 'POST', body: JSON.stringify({ checklistType: finalChecklistType, targetUserId, dailyPeriod, plate: $('#vehicle-plate').value, model: $('#vehicle-model').value, vehicleYear: $('#vehicle-year').value, mileage: $('#vehicle-wizard-mileage').value, items: readVehicleEditor(), signatureConfirmed: true, latitude: vehicleSignatureLocation.latitude, longitude: vehicleSignatureLocation.longitude, deviceInfo: navigator.userAgent, selfie: vehicleSelfieDraft, photos: vehiclePhotoDrafts.map((photo) => ({ imageData: photo.imageData, itemKey: photo.itemKey || null, captureMode: 'camera', latitude: vehicleSignatureLocation.latitude, longitude: vehicleSignatureLocation.longitude })) }) });
+    const sentType = vehicleChecklistTypeLabel(finalChecklistType);
+    const sentMessage = finalChecklistType === 'transferencia' ? `${sentType} enviado. Aguardando assinatura e selfie do destinatário.` : ['recebimento', 'entrega'].includes(finalChecklistType) ? `${sentType} enviado. Aguardando assinatura e selfie do técnico destinatário.` : finalChecklistType === 'diario' ? `${sentType} de ${dailyPeriod === 'inicio' ? 'começo' : 'fim'} do dia enviado para validação.` : `${sentType} e fotos enviados para validação.`;
     if (returnToMobileVehicleList) closeMobileChecklist({ reset: false });
     event.target.reset(); selectedVehicleChecklistType = null; renderVehicleEditor(); setupVehicleTechnicianSignature(); message.textContent = sentMessage; await loadVehicleChecklists(); await loadOverview();
   } catch (error) { message.textContent = error.message; }

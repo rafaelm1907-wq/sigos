@@ -8,6 +8,7 @@ const { Pool } = require('pg');
 const PDFDocument = require('pdfkit');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const { spawn } = require('node:child_process');
 
 let firebaseAdmin = null;
 let firebaseMessaging = null;
@@ -51,6 +52,8 @@ const host = process.env.HOST || '127.0.0.1';
 const jwtSecret = process.env.JWT_SECRET;
 const cookieSecure = String(process.env.COOKIE_SECURE || 'false') === 'true';
 const enforceHttps = String(process.env.ENFORCE_HTTPS || 'false') === 'true';
+const systemUpdateStatusPath = process.env.SIGOS_UPDATE_STATUS_PATH || '/opt/epi-checklist/.update/status.json';
+const systemUpdateCommand = '/usr/local/sbin/sigos-update';
 // A sessão precisa sobreviver ao fechamento do navegador e ao uso diário do app.
 // O limite de aparelhos continua sendo controlado por session_version: um perfil
 // comum mantém uma sessão e o Superadmin mantém as duas mais recentes.
@@ -514,7 +517,7 @@ async function notifyUsers({ userIds, notificationType, title, message, entityTy
   });
 }
 
-async function ensureComplianceAlert({ alertKey, alertType, periodKey, subjectType, subjectId, subjectLabel, title, message, metadata = {}, notifyUserId = null }) {
+async function ensureComplianceAlert({ alertKey, alertType, periodKey, subjectType, subjectId, subjectLabel, title, message, metadata = {}, notifyUserId = null, notifyUserTitle = 'Checklist diário pendente', notifyUserMessage = 'Você ainda não enviou o checklist diário de EPI de hoje.' }) {
   const result = await pool.query(
     `INSERT INTO compliance_alerts
       (alert_key, alert_type, period_key, subject_type, subject_id, subject_label, title, message)
@@ -530,8 +533,8 @@ async function ensureComplianceAlert({ alertKey, alertType, periodKey, subjectTy
     await notifyUsers({
       userIds: [notifyUserId],
       notificationType: alertType,
-      title: 'Checklist diário pendente',
-      message: 'Você ainda não enviou o checklist diário de EPI de hoje.',
+      title: notifyUserTitle,
+      message: notifyUserMessage,
       entityType: 'compliance_alert',
       entityId: alertKey,
       metadata: notificationMetadata,
@@ -575,6 +578,22 @@ async function resolveCompletedComplianceAlerts() {
            AND p.process_type = 'checklist_diario'
            AND p.submitted_at IS NOT NULL
            AND timezone('America/Fortaleza', p.submitted_at)::date = a.period_key::date
+       )`,
+  );
+  await pool.query(
+    `UPDATE compliance_alerts a
+     SET status = 'resolvido', updated_at = NOW()
+     WHERE a.status = 'aberto'
+       AND a.alert_type = 'vehicle_daily_missing_end'
+       AND EXISTS (
+         SELECT 1
+         FROM vehicle_checklists vc
+         WHERE vc.checklist_type = 'diario'
+           AND vc.daily_period = 'fim'
+           AND vc.driver_user_id = a.subject_id
+           AND vc.submitted_at IS NOT NULL
+           AND timezone('America/Fortaleza', vc.submitted_at)::date = a.period_key::date
+           AND a.alert_key = 'vehicle-daily-end:' || a.period_key || ':vehicle:' || vc.vehicle_id || ':user:' || vc.driver_user_id
        )`,
   );
   await pool.query(
@@ -679,6 +698,60 @@ async function checkDailyChecklistReminders() {
         await notifyUsers({ userIds: [row.technician_id], notificationType: 'epi_daily_missing', title: 'Checklist diário ainda pendente', message: 'Você ainda não enviou o checklist diário de EPI de hoje.', entityType: 'compliance_alert', entityId: alertKey, metadata: notificationMetadata });
       }
     }
+  }
+
+  const vehicleDailyEnd = await pool.query(
+    `WITH local_clock AS (
+       SELECT timezone('America/Fortaleza', NOW()) AS local_now,
+              timezone('America/Fortaleza', NOW())::date AS local_date
+     ), morning AS (
+       SELECT DISTINCT ON (vc.vehicle_id, vc.driver_user_id)
+              vc.vehicle_id, vc.driver_user_id, vc.plate, vc.model,
+              u.name AS driver_name, clock.local_date
+       FROM vehicle_checklists vc
+       JOIN users u ON u.id = vc.driver_user_id AND u.active = TRUE
+       CROSS JOIN local_clock clock
+       WHERE vc.checklist_type = 'diario'
+         AND vc.daily_period = 'inicio'
+         AND vc.submitted_at IS NOT NULL
+         AND timezone('America/Fortaleza', vc.submitted_at)::date = clock.local_date
+         AND clock.local_now >= clock.local_date + TIME '18:00'
+       ORDER BY vc.vehicle_id, vc.driver_user_id, vc.submitted_at DESC
+     )
+     SELECT morning.*
+     FROM morning
+     WHERE NOT EXISTS (
+       SELECT 1
+       FROM vehicle_checklists vc_end
+       CROSS JOIN local_clock clock
+       WHERE vc_end.vehicle_id = morning.vehicle_id
+         AND vc_end.driver_user_id = morning.driver_user_id
+         AND vc_end.checklist_type = 'diario'
+         AND vc_end.daily_period = 'fim'
+         AND vc_end.submitted_at IS NOT NULL
+         AND timezone('America/Fortaleza', vc_end.submitted_at)::date = clock.local_date
+     )
+     ORDER BY morning.driver_name, morning.plate`,
+  );
+
+  for (const row of vehicleDailyEnd.rows) {
+    const periodKey = String(row.local_date).slice(0, 10);
+    const alertKey = `vehicle-daily-end:${periodKey}:vehicle:${row.vehicle_id}:user:${row.driver_user_id}`;
+    const subjectLabel = `${row.driver_name} · ${row.plate}${row.model ? ` · ${row.model}` : ''}`;
+    await ensureComplianceAlert({
+      alertKey,
+      alertType: 'vehicle_daily_missing_end',
+      periodKey,
+      subjectType: 'tecnico',
+      subjectId: row.driver_user_id,
+      subjectLabel,
+      title: 'Segundo checklist diário de veículo pendente',
+      message: `O usuário ${row.driver_name} fez o checklist de começo do dia do veículo ${row.plate}, mas ainda não registrou o checklist de fim do dia até 18:00.`,
+      metadata: { vehicleId: String(row.vehicle_id), plate: row.plate, driverId: String(row.driver_user_id), dailyPeriod: 'fim', deadline: '18:00' },
+      notifyUserId: row.driver_user_id,
+      notifyUserTitle: 'Checklist de fim do dia pendente',
+      notifyUserMessage: `O checklist de fim do dia do veículo ${row.plate} ainda não foi registrado. O Admin também foi notificado.`,
+    });
   }
 
   const vehicles = await pool.query(
@@ -953,6 +1026,15 @@ function requireRole(...roles) {
 
 function sqlLiteral(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+function readSystemUpdateStatus() {
+  try {
+    const status = JSON.parse(fs.readFileSync(systemUpdateStatusPath, 'utf8'));
+    return status && typeof status === 'object' ? status : { status: 'not_configured' };
+  } catch {
+    return { status: 'not_configured', message: 'O atualizador ainda não foi configurado neste servidor.' };
+  }
 }
 
 async function initSchema() {
@@ -1449,10 +1531,13 @@ async function initSchema() {
 
     ALTER TABLE vehicle_checklists ADD COLUMN IF NOT EXISTS checklist_type TEXT NOT NULL DEFAULT 'quinzenal';
     ALTER TABLE vehicle_checklists ADD COLUMN IF NOT EXISTS target_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL;
+    ALTER TABLE vehicle_checklists ADD COLUMN IF NOT EXISTS daily_period TEXT;
     ALTER TABLE vehicle_checklists DROP CONSTRAINT IF EXISTS vehicle_checklists_status_check;
     ALTER TABLE vehicle_checklists ADD CONSTRAINT vehicle_checklists_status_check CHECK (status IN ('rascunho', 'pendente_destinatario', 'pendente_validacao', 'validado', 'reprovado'));
     ALTER TABLE vehicle_checklists DROP CONSTRAINT IF EXISTS vehicle_checklists_checklist_type_check;
-    ALTER TABLE vehicle_checklists ADD CONSTRAINT vehicle_checklists_checklist_type_check CHECK (checklist_type IN ('diario', 'quinzenal', 'transferencia', 'devolucao', 'entrega'));
+    ALTER TABLE vehicle_checklists ADD CONSTRAINT vehicle_checklists_checklist_type_check CHECK (checklist_type IN ('diario', 'quinzenal', 'transferencia', 'recebimento', 'devolucao', 'entrega'));
+    ALTER TABLE vehicle_checklists DROP CONSTRAINT IF EXISTS vehicle_checklists_daily_period_check;
+    ALTER TABLE vehicle_checklists ADD CONSTRAINT vehicle_checklists_daily_period_check CHECK (daily_period IS NULL OR daily_period IN ('inicio', 'fim'));
 
     CREATE TABLE IF NOT EXISTS vehicle_checklist_items (
       id BIGSERIAL PRIMARY KEY,
@@ -1535,6 +1620,7 @@ async function initSchema() {
     CREATE INDEX IF NOT EXISTS vehicle_checklists_created_at_idx ON vehicle_checklists (created_at DESC);
     CREATE INDEX IF NOT EXISTS vehicle_checklists_status_idx ON vehicle_checklists (status);
     CREATE INDEX IF NOT EXISTS vehicle_checklists_driver_idx ON vehicle_checklists (driver_user_id);
+    CREATE INDEX IF NOT EXISTS vehicle_checklists_daily_period_idx ON vehicle_checklists (vehicle_id, driver_user_id, daily_period, submitted_at DESC);
     CREATE INDEX IF NOT EXISTS vehicle_checklist_items_checklist_idx ON vehicle_checklist_items (checklist_id);
   `);
 }
@@ -1862,6 +1948,28 @@ app.get('/api/health', async (_req, res) => {
     res.json({ ok: true, service: 'sigos', database: 'online' });
   } catch {
     res.status(503).json({ ok: false, database: 'offline' });
+  }
+});
+
+app.get('/api/system/update', auth, requireRole('superadmin'), (_req, res) => {
+  res.json(readSystemUpdateStatus());
+});
+
+app.post('/api/system/update', auth, requireRole('superadmin'), async (req, res) => {
+  const currentStatus = readSystemUpdateStatus();
+  if (currentStatus.status === 'running') {
+    return res.status(409).json({ error: 'Já existe uma atualização em andamento.', status: currentStatus });
+  }
+  if (!fs.existsSync(systemUpdateCommand)) {
+    return res.status(503).json({ error: 'O atualizador ainda não foi instalado neste servidor.' });
+  }
+  try {
+    const child = spawn('/usr/bin/sudo', ['-n', systemUpdateCommand], { detached: true, stdio: 'ignore' });
+    child.unref();
+    await audit({ req, actorUserId: req.user.id, eventType: 'system_update_requested', entityType: 'system', metadata: { command: systemUpdateCommand } });
+    return res.status(202).json({ status: 'started', message: 'Atualização iniciada. Acompanhe o andamento nesta tela.' });
+  } catch (error) {
+    return res.status(503).json({ error: `Não foi possível iniciar a atualização: ${error.message}` });
   }
 });
 
@@ -2556,7 +2664,7 @@ app.get('/api/reports', auth, requireRole('admin'), async (req, res) => {
               COUNT(vc.id) FILTER (WHERE vc.checklist_type = 'diario')::int AS daily_count,
               COUNT(vc.id) FILTER (WHERE vc.checklist_type = 'quinzenal')::int AS fortnightly_count,
               COUNT(vc.id) FILTER (WHERE vc.checklist_type = 'transferencia')::int AS transfer_count,
-              COUNT(vc.id) FILTER (WHERE vc.checklist_type IN ('entrega', 'devolucao'))::int AS delivery_count,
+              COUNT(vc.id) FILTER (WHERE vc.checklist_type IN ('entrega', 'recebimento', 'devolucao'))::int AS delivery_count,
               COUNT(vc.id) FILTER (WHERE vc.status = 'pendente_validacao')::int AS pending_validation_count,
               MAX(vc.submitted_at) AS last_checklist_at
        FROM vehicles v
@@ -4080,7 +4188,8 @@ function renderVehicleChecklistPdf(doc, checklist, company) {
   doc.font('Helvetica-Bold').fontSize(9).fillColor('#172033').text(`Checklist #${checklist.id}`);
   doc.font('Helvetica').fontSize(9).text(`Motorista: ${checklist.driverName || '–'}    Supervisor: ${checklist.inspectorName || '–'}`);
   doc.text(`Placa: ${checklist.plate || '–'}    Modelo: ${checklist.model || '–'}    Ano: ${checklist.vehicleYear || '–'}    KM: ${checklist.mileage ?? '–'}`);
-  if (checklist.targetName) doc.text(`${checklist.checklistType === 'entrega' ? 'Técnico destinatário' : 'Destinatário da transferência'}: ${checklist.targetName}`);
+  if (checklist.targetName) doc.text(`${['entrega', 'recebimento'].includes(checklist.checklistType) ? 'Técnico destinatário' : 'Destinatário da transferência'}: ${checklist.targetName}`);
+  if (isDaily && checklist.dailyPeriod) doc.text(`Período: ${checklist.dailyPeriod === 'inicio' ? 'Começo do dia' : 'Fim do dia'}`);
   doc.text(`Status: ${checklist.status || '–'}    Emissão: ${checklist.createdAt ? new Date(checklist.createdAt).toLocaleString('pt-BR') : '–'}`);
   doc.moveDown(.8);
   if (isDaily) {
@@ -4130,7 +4239,7 @@ function renderVehicleChecklistPdf(doc, checklist, company) {
 }
 
 function vehicleChecklistTypeLabelForPdf(type) {
-  return ({ diario: 'CHECKLIST DIÁRIO', quinzenal: 'RESPONSABILIDADE QUINZENAL', transferencia: 'TRANSFERÊNCIA DE RESPONSABILIDADE', devolucao: 'DEVOLUÇÃO DE RESPONSABILIDADE', entrega: 'ENTREGA DE RESPONSABILIDADE' }[type] || 'RESPONSABILIDADE');
+  return ({ diario: 'CHECKLIST DIÁRIO', quinzenal: 'CHECKLIST QUINZENAL', transferencia: 'TRANSFERÊNCIA DE RESPONSABILIDADE', recebimento: 'RECEBIMENTO DE RESPONSABILIDADE', devolucao: 'DEVOLUÇÃO DE RESPONSABILIDADE', entrega: 'ENTREGA DE RESPONSABILIDADE' }[type] || 'RESPONSABILIDADE');
 }
 
 function vehicleSignatureRoleLabelForPdf(role, context = {}) {
@@ -4450,6 +4559,7 @@ function publicVehicleChecklist(row, includeSignatureData = false) {
   return {
     id: row.id,
     checklistType: row.checklist_type || 'quinzenal',
+    dailyPeriod: row.daily_period || null,
     plate: row.plate,
     model: row.model,
     vehicleYear: row.vehicle_year,
@@ -4680,13 +4790,13 @@ function vehicleChecklistScope(req, alias = 'c', includePending = false) {
 
 app.get('/api/vehicles/checklists/template', auth, (req, res) => {
   if (!['admin', 'superadmin', 'tecnico', 'vistoriador'].includes(req.user.role)) return res.status(403).json({ error: 'Perfil sem acesso ao checklist de veículos.' });
-  res.json({ items: VEHICLE_CHECKLIST_ITEMS.map(([key, name]) => ({ key, name })), dailyItems: VEHICLE_DAILY_CHECKLIST_ITEMS.map(([key, name]) => ({ key, name })), processTypes: ['diario', 'quinzenal', 'transferencia', 'entrega', 'devolucao'] });
+  res.json({ items: VEHICLE_CHECKLIST_ITEMS.map(([key, name]) => ({ key, name })), dailyItems: VEHICLE_DAILY_CHECKLIST_ITEMS.map(([key, name]) => ({ key, name })), processTypes: ['diario', 'geral', 'quinzenal', 'transferencia', 'recebimento', 'entrega', 'devolucao'] });
 });
 
 app.get('/api/vehicles/targets', auth, requireRole('admin', 'tecnico', 'vistoriador'), async (req, res) => {
   const checklistType = String(req.query.type || 'transferencia');
-  if (checklistType === 'entrega' && !isAdminRole(req.user.role) && req.user.role !== 'vistoriador') return res.status(403).json({ error: 'Somente Admin ou Supervisor podem iniciar uma entrega de veículo.' });
-  const targetRoles = checklistType === 'entrega' ? "('tecnico')" : "('tecnico', 'vistoriador')";
+  if (['entrega', 'recebimento'].includes(checklistType) && !isAdminRole(req.user.role) && req.user.role !== 'vistoriador') return res.status(403).json({ error: 'Somente Admin ou Supervisor podem iniciar este processo de veículo.' });
+  const targetRoles = ['entrega', 'recebimento'].includes(checklistType) ? "('tecnico')" : "('tecnico', 'vistoriador')";
   const result = await pool.query(
     `SELECT id, name, email, role
      FROM users
@@ -4792,9 +4902,12 @@ app.get('/api/vehicles/checklists/:id/pdf', auth, async (req, res) => {
 });
 
 app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin', 'tecnico', 'vistoriador'), async (req, res) => {
-  const checklistType = String(req.body.checklistType || 'quinzenal');
-  if (!['diario', 'quinzenal', 'transferencia', 'entrega', 'devolucao'].includes(checklistType)) return res.status(400).json({ error: 'Tipo de checklist de veículo inválido.' });
-  if (checklistType === 'entrega' && !isAdminRole(req.user.role) && req.user.role !== 'vistoriador') return res.status(403).json({ error: 'Somente Admin ou Supervisor podem iniciar uma entrega de veículo.' });
+  const requestedChecklistType = String(req.body.checklistType || 'quinzenal');
+  const checklistType = requestedChecklistType === 'geral' ? String(req.body.checklistPurpose || '') : requestedChecklistType;
+  if (!['diario', 'quinzenal', 'transferencia', 'recebimento', 'entrega', 'devolucao'].includes(checklistType)) return res.status(400).json({ error: 'Escolha a finalidade do Checklist geral.' });
+  if (['entrega', 'recebimento'].includes(checklistType) && !isAdminRole(req.user.role) && req.user.role !== 'vistoriador') return res.status(403).json({ error: 'Somente Admin ou Supervisor podem iniciar este processo de veículo.' });
+  const dailyPeriod = checklistType === 'diario' ? String(req.body.dailyPeriod || '') : null;
+  if (checklistType === 'diario' && !['inicio', 'fim'].includes(dailyPeriod)) return res.status(400).json({ error: 'Escolha se o checklist diário é do começo ou do fim do dia.' });
   const baseChecklistDefinition = checklistType === 'diario'
     ? VEHICLE_DAILY_CHECKLIST_ITEMS.map(([itemKey, itemName]) => [itemKey, itemName, 'daily_photo', null])
     : VEHICLE_CHECKLIST_ITEMS.map(([itemKey, itemName]) => [itemKey, itemName, 'vehicle_item', null]);
@@ -4808,9 +4921,9 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
   const submittedSelfie = req.body.selfie && typeof req.body.selfie === 'object' ? req.body.selfie : null;
   const submittedPhotos = Array.isArray(req.body.photos) ? req.body.photos : [];
   let target = null;
-  if (['transferencia', 'entrega'].includes(checklistType)) {
+  if (['transferencia', 'recebimento', 'entrega'].includes(checklistType)) {
     if (!Number.isInteger(targetUserId) || targetUserId <= 0 || targetUserId === Number(req.user.id)) return res.status(400).json({ error: 'Selecione outro usuário para receber o veículo.' });
-    const targetResult = await pool.query(`SELECT id, name, role FROM users WHERE id = $1 AND active = TRUE AND role IN ${checklistType === 'entrega' ? "('tecnico')" : "('tecnico', 'vistoriador')"}`, [targetUserId]);
+    const targetResult = await pool.query(`SELECT id, name, role FROM users WHERE id = $1 AND active = TRUE AND role IN ${['entrega', 'recebimento'].includes(checklistType) ? "('tecnico')" : "('tecnico', 'vistoriador')"}`, [targetUserId]);
     target = targetResult.rows[0];
     if (!target) return res.status(404).json({ error: 'Usuário destinatário não encontrado ou inativo.' });
   } else if (targetUserId !== null) {
@@ -4908,11 +5021,30 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
        RETURNING id`,
       [plate, [model, vehicleYear ? `Ano ${vehicleYear}` : null].filter(Boolean).join(' · '), model, vehicleYear],
     );
+    if (checklistType === 'diario') {
+      const duplicate = await client.query(
+        `SELECT id
+         FROM vehicle_checklists
+         WHERE vehicle_id = $1
+           AND driver_user_id = $2
+           AND checklist_type = 'diario'
+           AND daily_period = $3
+           AND submitted_at IS NOT NULL
+           AND timezone('America/Fortaleza', submitted_at)::date = timezone('America/Fortaleza', NOW())::date
+         LIMIT 1
+         FOR UPDATE`,
+        [vehicleResult.rows[0].id, req.user.id, dailyPeriod],
+      );
+      if (duplicate.rows[0]) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: `Você já registrou o checklist de ${dailyPeriod === 'inicio' ? 'começo' : 'fim'} do dia deste veículo hoje.` });
+      }
+    }
     const checklistResult = await client.query(
-      `INSERT INTO vehicle_checklists (vehicle_id, driver_user_id, target_user_id, checklist_type, plate, model, vehicle_year, mileage, status, submitted_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `INSERT INTO vehicle_checklists (vehicle_id, driver_user_id, target_user_id, checklist_type, daily_period, plate, model, vehicle_year, mileage, status, submitted_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING id`,
-      [vehicleResult.rows[0].id, req.user.id, target?.id || null, checklistType, plate, model, vehicleYear, mileage, ['transferencia', 'entrega'].includes(checklistType) ? 'pendente_destinatario' : 'pendente_validacao', signedAt],
+      [vehicleResult.rows[0].id, req.user.id, target?.id || null, checklistType, dailyPeriod, plate, model, vehicleYear, mileage, ['transferencia', 'recebimento', 'entrega'].includes(checklistType) ? 'pendente_destinatario' : 'pendente_validacao', signedAt],
     );
     const checklistId = checklistResult.rows[0].id;
     for (const item of normalizedItems) {
@@ -4982,29 +5114,29 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
         longitude: photo.longitude ?? req.body.longitude,
       }));
     }
-    await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_checklist_created', entityType: 'vehicle_checklist', entityId: checklistId, metadata: { plate, checklistType, targetUserId: target?.id || null, itemCount: normalizedItems.length, problemCount: problemItems.length, signatureHash, documentHash, signatureVersion: 2 } });
+    await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_checklist_created', entityType: 'vehicle_checklist', entityId: checklistId, metadata: { plate, checklistType, dailyPeriod, targetUserId: target?.id || null, itemCount: normalizedItems.length, problemCount: problemItems.length, signatureHash, documentHash, signatureVersion: 2 } });
     await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_signature_signed', entityType: 'vehicle_checklist', entityId: checklistId, metadata: { signerRole: signature.signerRole, signatureHash, documentHash, signatureVersion: 2, typedName: signature.typedName, latitude: signature.signerLatitude, longitude: signature.signerLongitude, device: signature.signerDevice } });
     await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_checklist_photos_uploaded', entityType: 'vehicle_checklist', entityId: checklistId, metadata: { mediaIds: media.map((item) => item.id), selfieCount: 1, photoCount: submittedPhotos.length, captureMode: 'camera', coordinates: media.map((item) => ({ mediaId: item.id, kind: item.kind, itemKey: item.item_key, latitude: item.latitude, longitude: item.longitude, locationLabel: item.location_label })) } });
     await notifyRoles({
-      roles: checklistType === 'entrega' ? ['admin'] : ['admin', ...(checklistType === 'transferencia' || checklistType === 'devolucao' ? [] : ['vistoriador'])],
+      roles: ['entrega', 'recebimento'].includes(checklistType) ? ['admin'] : ['admin', ...(checklistType === 'transferencia' || checklistType === 'devolucao' ? [] : ['vistoriador'])],
       notificationType: 'checklist_created',
       title: 'Novo checklist de veículo',
       message: checklistType === 'transferencia'
         ? `A transferência do veículo ${plate} foi iniciada por ${req.user.name} e aguarda o aceite de ${target.name}.`
-        : checklistType === 'entrega'
+        : ['entrega', 'recebimento'].includes(checklistType)
           ? `A entrega do veículo ${plate} foi iniciada por ${req.user.name} e aguarda o aceite do técnico ${target.name}.`
-          : `O ${checklistType === 'diario' ? 'checklist diário' : checklistType === 'devolucao' ? 'termo de devolução' : 'checklist quinzenal'} do veículo ${plate} foi criado e está aguardando validação.`,
+          : `O ${checklistType === 'diario' ? `checklist diário de ${dailyPeriod === 'inicio' ? 'começo' : 'fim'} do dia` : checklistType === 'devolucao' ? 'termo de devolução' : 'checklist quinzenal'} do veículo ${plate} foi criado e está aguardando validação.`,
       entityType: 'vehicle_checklist',
       entityId: checklistId,
-      metadata: { plate, checklistType, createdBy: req.user.id, creatorRole: req.user.role, targetUserId: target?.id || null },
+      metadata: { plate, checklistType, dailyPeriod, createdBy: req.user.id, creatorRole: req.user.role, targetUserId: target?.id || null },
     });
     if (target) {
       await notifyUsers({
         userIds: [target.id],
-        notificationType: checklistType === 'entrega' ? 'vehicle_delivery_recipient' : 'vehicle_transfer_recipient',
-        title: checklistType === 'entrega' ? 'Entrega de veículo para seu aceite' : 'Transferência de veículo para sua validação',
-        message: checklistType === 'entrega'
-          ? `${req.user.name} entregou o veículo ${plate} para você. Abra o checklist, confira os itens, assine e tire a selfie para aceitar a entrega.`
+        notificationType: ['entrega', 'recebimento'].includes(checklistType) ? 'vehicle_delivery_recipient' : 'vehicle_transfer_recipient',
+        title: ['entrega', 'recebimento'].includes(checklistType) ? `${checklistType === 'recebimento' ? 'Recebimento' : 'Entrega'} de veículo para seu aceite` : 'Transferência de veículo para sua validação',
+        message: ['entrega', 'recebimento'].includes(checklistType)
+          ? `${req.user.name} registrou o ${checklistType === 'recebimento' ? 'recebimento' : 'entrega'} do veículo ${plate} para você. Abra o checklist, confira os itens, assine e tire a selfie para aceitar.`
           : `${req.user.name} enviou o veículo ${plate} para você. Abra o checklist, confira os itens, assine e tire a selfie para aceitar a transferência.`,
         entityType: 'vehicle_checklist',
         entityId: checklistId,
@@ -5016,7 +5148,7 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
         roles: ['admin'],
         notificationType: 'vehicle_checklist_issue',
         title: 'Avaria identificada em veículo',
-        message: `O ${checklistType === 'diario' ? 'checklist diário' : checklistType === 'devolucao' ? 'termo de devolução' : checklistType === 'transferencia' ? 'processo de transferência' : checklistType === 'entrega' ? 'termo de entrega' : 'checklist quinzenal'} do veículo ${plate} registrou ${problemItems.length} item(ns) com avaria ou irregularidade.`,
+        message: `O ${checklistType === 'diario' ? 'checklist diário' : checklistType === 'devolucao' ? 'termo de devolução' : checklistType === 'transferencia' ? 'processo de transferência' : checklistType === 'recebimento' ? 'processo de recebimento' : checklistType === 'entrega' ? 'termo de entrega' : 'checklist quinzenal'} do veículo ${plate} registrou ${problemItems.length} item(ns) com avaria ou irregularidade.`,
         entityType: 'vehicle_checklist',
         entityId: checklistId,
         metadata: {
@@ -5041,12 +5173,13 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
 app.post('/api/vehicles/checklists/:id/accept-transfer', auth, requireRole('admin', 'tecnico', 'vistoriador'), async (req, res) => {
   const pending = await pool.query(`${vehicleChecklistQuery} WHERE c.id = $1 AND c.status = 'pendente_destinatario' AND c.target_user_id = $2 GROUP BY c.id, driver.name, inspector.name, target.name, target.role`, [req.params.id, req.user.id]);
   const checklist = pending.rows[0];
-  if (!checklist || !['transferencia', 'entrega'].includes(checklist.checklist_type)) return res.status(404).json({ error: 'Processo pendente para este usuário não encontrado.' });
-  const isDelivery = checklist.checklist_type === 'entrega';
+  if (!checklist || !['transferencia', 'recebimento', 'entrega'].includes(checklist.checklist_type)) return res.status(404).json({ error: 'Processo pendente para este usuário não encontrado.' });
+  const isDelivery = ['recebimento', 'entrega'].includes(checklist.checklist_type);
   const signatureRequest = parseRegisteredVehicleSignature(req.user, req.body);
   const submittedSelfie = req.body.selfie && typeof req.body.selfie === 'object' ? req.body.selfie : null;
   if (signatureRequest.error) return res.status(400).json({ error: signatureRequest.error });
-  if (!submittedSelfie || submittedSelfie.captureMode !== 'camera' || !submittedSelfie.imageData) return res.status(400).json({ error: `Capture uma selfie pela câmera antes de aceitar a ${isDelivery ? 'entrega' : 'transferência'}.` });
+  const acceptanceWord = checklist.checklist_type === 'recebimento' ? 'recebimento' : isDelivery ? 'entrega' : 'transferência';
+  if (!submittedSelfie || submittedSelfie.captureMode !== 'camera' || !submittedSelfie.imageData) return res.status(400).json({ error: `Capture uma selfie pela câmera antes de aceitar o ${acceptanceWord}.` });
   try { parseCapturedImage(submittedSelfie.imageData); } catch (error) { return res.status(400).json({ error: error.message }); }
 
   const signedAt = new Date().toISOString();
@@ -5079,7 +5212,7 @@ app.post('/api/vehicles/checklists/:id/accept-transfer', auth, requireRole('admi
     );
     if (!updated.rows[0]) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ error: `Esta ${isDelivery ? 'entrega' : 'transferência'} já foi aceita ou não está mais disponível.` });
+      return res.status(409).json({ error: `Esta ${acceptanceWord} já foi aceita ou não está mais disponível.` });
     }
     await client.query(
       `INSERT INTO vehicle_checklist_signatures
@@ -5091,12 +5224,13 @@ app.post('/api/vehicles/checklists/:id/accept-transfer', auth, requireRole('admi
     );
     await client.query('COMMIT');
     const media = await storeVehicleChecklistMedia({ req, checklistId: req.params.id, imageData: submittedSelfie.imageData, kind: 'selfie', deviceInfo: req.body.deviceInfo, latitude: submittedSelfie.latitude ?? req.body.latitude, longitude: submittedSelfie.longitude ?? req.body.longitude });
-    await audit({ req, actorUserId: req.user.id, eventType: isDelivery ? 'vehicle_delivery_accepted' : 'vehicle_transfer_accepted', entityType: 'vehicle_checklist', entityId: req.params.id, metadata: { plate: updated.rows[0].plate, signatureHash, documentHash, mediaId: media.id, sourceUserId: checklist.driver_user_id, finalized: isDelivery } });
+    await audit({ req, actorUserId: req.user.id, eventType: isDelivery ? 'vehicle_delivery_accepted' : 'vehicle_transfer_accepted', entityType: 'vehicle_checklist', entityId: req.params.id, metadata: { plate: updated.rows[0].plate, signatureHash, documentHash, mediaId: media.id, sourceUserId: checklist.driver_user_id, finalized: isDelivery, checklistType: checklist.checklist_type } });
     await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_signature_signed', entityType: 'vehicle_checklist', entityId: req.params.id, metadata: { signerRole: signature.signerRole, signatureContext: signature.signatureContext, signatureHash, documentHash, typedName: signature.typedName, latitude: signature.signerLatitude, longitude: signature.signerLongitude, device: signature.signerDevice } });
     await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_checklist_photos_uploaded', entityType: 'vehicle_checklist', entityId: req.params.id, metadata: { mediaIds: [media.id], selfieCount: 1, photoCount: 0, captureMode: 'camera' } });
     if (isDelivery) {
-      await notifyRoles({ roles: ['admin'], notificationType: 'vehicle_delivery_accepted', title: 'Entrega de veículo aceita', message: `O técnico ${req.user.name} aceitou a entrega do veículo ${updated.rows[0].plate} com assinatura e selfie.`, entityType: 'vehicle_checklist', entityId: req.params.id, metadata: { plate: updated.rows[0].plate, acceptedBy: req.user.id, sourceUserId: checklist.driver_user_id, status: 'validado' } });
-      await notifyUsers({ userIds: [checklist.driver_user_id], notificationType: 'vehicle_delivery_accepted', title: 'Entrega de veículo aceita', message: `${req.user.name} aceitou a entrega do veículo ${updated.rows[0].plate}. O processo foi concluído.`, entityType: 'vehicle_checklist', entityId: req.params.id, metadata: { plate: updated.rows[0].plate, acceptedBy: req.user.id, status: 'validado' } });
+      const deliveryLabel = checklist.checklist_type === 'recebimento' ? 'recebimento' : 'entrega';
+      await notifyRoles({ roles: ['admin'], notificationType: 'vehicle_delivery_accepted', title: `${deliveryLabel[0].toUpperCase()}${deliveryLabel.slice(1)} de veículo aceita`, message: `O técnico ${req.user.name} aceitou o ${deliveryLabel} do veículo ${updated.rows[0].plate} com assinatura e selfie.`, entityType: 'vehicle_checklist', entityId: req.params.id, metadata: { plate: updated.rows[0].plate, acceptedBy: req.user.id, sourceUserId: checklist.driver_user_id, status: 'validado', checklistType: checklist.checklist_type } });
+      await notifyUsers({ userIds: [checklist.driver_user_id], notificationType: 'vehicle_delivery_accepted', title: `${deliveryLabel[0].toUpperCase()}${deliveryLabel.slice(1)} de veículo aceita`, message: `${req.user.name} aceitou o ${deliveryLabel} do veículo ${updated.rows[0].plate}. O processo foi concluído.`, entityType: 'vehicle_checklist', entityId: req.params.id, metadata: { plate: updated.rows[0].plate, acceptedBy: req.user.id, status: 'validado', checklistType: checklist.checklist_type } });
     } else {
       await notifyRoles({ roles: ['admin'], notificationType: 'vehicle_transfer_ready_for_admin', title: 'Transferência de veículo pronta para validação', message: `A transferência do veículo ${updated.rows[0].plate} foi aceita por ${req.user.name} e aguarda validação do Admin.`, entityType: 'vehicle_checklist', entityId: req.params.id, metadata: { plate: updated.rows[0].plate, acceptedBy: req.user.id, sourceUserId: checklist.driver_user_id } });
       await notifyUsers({ userIds: [checklist.driver_user_id], notificationType: 'vehicle_transfer_recipient_accepted', title: 'Transferência de veículo aceita', message: `${req.user.name} aceitou a transferência do veículo ${updated.rows[0].plate}. O processo agora aguarda a validação do Admin.`, entityType: 'vehicle_checklist', entityId: req.params.id, metadata: { plate: updated.rows[0].plate, acceptedBy: req.user.id } });

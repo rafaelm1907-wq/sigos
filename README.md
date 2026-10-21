@@ -26,6 +26,10 @@ sudo ./scripts/install.sh
 
 O instalador prepara o usuário de serviço, o runtime Node.js compatível, os diretórios de armazenamento, as dependências e a unidade systemd. Ele não cria credenciais reais nem publica arquivos do cliente.
 
+O instalador também prepara a atualização controlada pelo Superadmin. Com o repositório configurado em `SIGOS_UPDATE_REPO_URL`, o botão de atualização baixa somente a branch definida em `SIGOS_UPDATE_BRANCH`, cria um backup da aplicação, instala as dependências, reinicia o serviço e verifica `/api/health`. O processo é executado por um script fixo autorizado no `sudoers`; o navegador não envia comandos ao servidor.
+
+Para uma instalação nova, preencha também `BOOTSTRAP_SUPERADMIN_NAME`, `BOOTSTRAP_SUPERADMIN_EMAIL` e `BOOTSTRAP_SUPERADMIN_PASSWORD` no `runtime.env` se quiser que o Superadmin inicial seja criado automaticamente. O banco começa vazio; os dados de uma instalação existente não são levados pelo Git.
+
 Para habilitar o modelo de firewall, revise as portas permitidas em `deploy/sigos-firewall.nft` e instale-o conscientemente no servidor. O arquivo mantém o SSH na porta 22 e o HTTP na porta 80 por padrão; ajuste conforme a infraestrutura do cliente.
 
 ## Desenvolvimento local
