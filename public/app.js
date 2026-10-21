@@ -81,6 +81,7 @@ const eventLabels = {
   user_created: 'Conta criada',
   user_updated: 'Conta alterada',
   user_deactivated: 'Conta desativada',
+  user_activated: 'Conta reativada',
   epi_term_created: 'Termo EPI emitido',
   epi_term_signed: 'Termo EPI assinado',
   epi_signature_validated: 'Assinatura EPI validada',
@@ -285,6 +286,14 @@ function initializeSubtabs() {
 function formatDate(value) {
   if (!value) return '–';
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
+}
+
+function reactivationDeadline(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setDate(date.getDate() + 7);
+  return date;
 }
 
 function currentFortalezaMonth() {
@@ -2056,13 +2065,26 @@ async function openEpiProcess(id) {
 async function loadUsers() {
   const data = await api('/api/users');
   complianceAssignableUsers = data.users || [];
-  $('#users-table').innerHTML = data.users.map((user) => `<tr><td>${user.role === 'tecnico' ? `<button type="button" class="user-detail-button" data-user-id="${user.id}">${escapeHtml(user.name)}</button>` : escapeHtml(user.name)}</td><td>${escapeHtml(user.email)}</td><td>${escapeHtml(roleLabels[user.role] || user.role)}</td><td>${user.active ? 'Ativo' : 'Desativado'}</td><td class="user-actions">${user.systemProtected ? '<span class="muted">Protegido</span>' : `<button type="button" class="secondary small-button edit-user" data-user-id="${user.id}">Alterar</button>${user.active && String(user.id) !== String(currentUser.id) ? `<button type="button" class="danger-button deactivate-user" data-user-id="${user.id}">Remover</button>` : ''}`}</td></tr>`).join('');
+  $('#users-table').innerHTML = data.users.map((user) => {
+    const deadline = !user.active ? reactivationDeadline(user.deactivatedAt) : null;
+    const status = user.active
+      ? '<span class="status status-ativo">Ativo</span>'
+      : `<span class="status status-inativo">Desativado</span>${deadline ? `<small class="table-subtext">Reativar até ${escapeHtml(formatDate(deadline))}</small>` : ''}`;
+    const actions = user.systemProtected
+      ? '<span class="muted">Protegido</span>'
+      : `<button type="button" class="secondary small-button edit-user" data-user-id="${user.id}">Alterar</button>${user.active && String(user.id) !== String(currentUser.id) ? `<button type="button" class="danger-button deactivate-user" data-user-id="${user.id}">Remover</button>` : ''}${!user.active ? `<button type="button" class="secondary small-button reactivate-user" data-user-id="${user.id}">Reativar</button>` : ''}`;
+    return `<tr><td>${user.role === 'tecnico' ? `<button type="button" class="user-detail-button" data-user-id="${user.id}">${escapeHtml(user.name)}</button>` : escapeHtml(user.name)}</td><td>${escapeHtml(user.email)}</td><td>${escapeHtml(roleLabels[user.role] || user.role)}</td><td>${status}</td><td class="user-actions">${actions}</td></tr>`;
+  }).join('');
   renderAdminNotificationRecipients(data.users);
   document.querySelectorAll('.user-detail-button').forEach((button) => button.addEventListener('click', () => loadTechnicianSummary(button.dataset.userId)));
   document.querySelectorAll('.edit-user').forEach((button) => button.addEventListener('click', () => startUserEdit(button.dataset.userId, data.users)));
   document.querySelectorAll('.deactivate-user').forEach((button) => button.addEventListener('click', async () => {
     if (!window.confirm('Desativar esta conta? Os registros de auditoria serão preservados.')) return;
     try { await api(`/api/users/${button.dataset.userId}`, { method: 'DELETE' }); await loadUsers(); await loadOverview(); } catch (error) { $('#user-form-message').textContent = error.message; }
+  }));
+  document.querySelectorAll('.reactivate-user').forEach((button) => button.addEventListener('click', async () => {
+    if (!window.confirm('Reativar esta conta antes do prazo de expiração?')) return;
+    try { await api(`/api/users/${button.dataset.userId}/status`, { method: 'PATCH', body: JSON.stringify({ active: true }) }); await loadUsers(); await loadOverview(); } catch (error) { $('#user-form-message').textContent = error.message; }
   }));
 }
 
@@ -2319,7 +2341,9 @@ async function loadStock() {
   document.querySelectorAll('[data-vehicle-inventory]').forEach((button) => button.addEventListener('click', () => { selectedStockVehicleId = String(button.dataset.vehicleInventory); renderStockVehicleEquipment(stockVehicles); scrollToInteraction('.vehicle-equipment-stock', { focusTarget: '#stock-vehicle-equipment-vehicle' }); }));
   $('#stock-ppes-table').innerHTML = stockPpeCatalog.length ? stockPpeCatalog.map((ppe) => {
     const holders = (ppe.assignedUsers || []).map((holder) => `${holder.name || 'Usuário'} · ${holder.quantity} un.`).join(', ');
-    return `<tr><td><strong>${escapeHtml(ppe.name)}</strong><small class="table-subtext">${escapeHtml(ppe.category || 'Sem categoria')}</small></td><td>${escapeHtml(ppe.ca)}</td><td>${escapeHtml(ppe.stockQuantity)}</td><td><strong>${escapeHtml(ppe.availableQuantity)}</strong></td><td>${escapeHtml(holders || 'Ninguém')}${ppe.assignedQuantity ? `<small class="table-subtext">Total em posse: ${escapeHtml(ppe.assignedQuantity)}</small>` : ''}</td><td><span class="stock-state stock-state-${escapeHtml(ppe.stockStatus || 'normal')}">${escapeHtml(stockStatusLabel(ppe.stockStatus))}</span><small class="table-subtext">${escapeHtml(ppe.active ? 'Ativo' : 'Inativo')}</small></td><td><div class="table-actions"><button type="button" class="secondary small-button" data-ppe-edit="${escapeHtml(ppe.id)}">Editar</button><button type="button" class="secondary small-button" data-ppe-toggle="${escapeHtml(ppe.id)}" data-ppe-next-active="${ppe.active ? 'false' : 'true'}">${ppe.active ? 'Desativar' : 'Ativar'}</button></div></td></tr>`;
+    const deadline = !ppe.active ? reactivationDeadline(ppe.deactivatedAt) : null;
+    const status = `<span class="stock-state stock-state-${escapeHtml(ppe.stockStatus || 'normal')}">${escapeHtml(stockStatusLabel(ppe.stockStatus))}</span><small class="table-subtext">${escapeHtml(ppe.active ? 'Ativo' : 'Inativo')}</small>${deadline ? `<small class="table-subtext">Reativar até ${escapeHtml(formatDate(deadline))}</small>` : ''}`;
+    return `<tr><td><strong>${escapeHtml(ppe.name)}</strong><small class="table-subtext">${escapeHtml(ppe.category || 'Sem categoria')}</small></td><td>${escapeHtml(ppe.ca)}</td><td>${escapeHtml(ppe.stockQuantity)}</td><td><strong>${escapeHtml(ppe.availableQuantity)}</strong></td><td>${escapeHtml(holders || 'Ninguém')}${ppe.assignedQuantity ? `<small class="table-subtext">Total em posse: ${escapeHtml(ppe.assignedQuantity)}</small>` : ''}</td><td>${status}</td><td><div class="table-actions"><button type="button" class="secondary small-button" data-ppe-edit="${escapeHtml(ppe.id)}">Editar</button><button type="button" class="secondary small-button" data-ppe-toggle="${escapeHtml(ppe.id)}" data-ppe-next-active="${ppe.active ? 'false' : 'true'}">${ppe.active ? 'Desativar' : 'Reativar'}</button></div></td></tr>`;
   }).join('') : '<tr><td colspan="7" class="muted">Nenhum EPI cadastrado.</td></tr>';
   const movements = data.movements || [];
   $('#stock-movements-table').innerHTML = movements.length ? movements.map((movement) => `<tr><td>${escapeHtml(formatDate(movement.createdAt))}</td><td>${escapeHtml(stockMovementLabel(movement.movementType))}</td><td><strong>${escapeHtml(movement.ppeName)}</strong><small class="table-subtext">CA ${escapeHtml(movement.ca || '–')}</small></td><td>${escapeHtml(movement.quantity)}</td><td>${escapeHtml(movement.fromUser || 'Estoque')}</td><td>${escapeHtml(movement.toUser || 'Estoque')}</td><td>${escapeHtml(stockProcessLabel(movement))}</td><td>${escapeHtml(movement.createdBy || 'Sistema')}</td></tr>`).join('') : '<tr><td colspan="8" class="muted">Nenhuma movimentação registrada.</td></tr>';

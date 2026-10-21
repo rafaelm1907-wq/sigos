@@ -5984,14 +5984,28 @@ app.post('/api/stock/ppes', auth, requireRole('admin'), async (req, res) => {
 
 app.patch('/api/stock/ppes/:id/status', auth, requireRole('admin'), async (req, res) => {
   const active = req.body.active === true || String(req.body.active).toLowerCase() === 'true';
-  const result = await pool.query(
-    `UPDATE ppe_items
-     SET active = $1, deactivated_at = CASE WHEN $1 THEN NULL ELSE NOW() END
-     WHERE id = $2
-     RETURNING *`,
-    [active, req.params.id],
-  );
-  if (!result.rows[0]) return res.status(404).json({ error: 'EPI não encontrado.' });
+  const result = active
+    ? await pool.query(
+      `UPDATE ppe_items
+       SET active = TRUE, deactivated_at = NULL
+       WHERE id = $1
+         AND (active = TRUE OR (deactivated_at IS NOT NULL AND deactivated_at > NOW() - INTERVAL '7 days'))
+       RETURNING *`,
+      [req.params.id],
+    )
+    : await pool.query(
+      `UPDATE ppe_items
+       SET active = FALSE, deactivated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [req.params.id],
+    );
+  if (!result.rows[0]) {
+    const existing = await pool.query('SELECT active, deactivated_at FROM ppe_items WHERE id = $1', [req.params.id]);
+    if (!existing.rows[0]) return res.status(404).json({ error: 'EPI não encontrado.' });
+    if (active && !existing.rows[0].active) return res.status(410).json({ error: 'O prazo de reativação deste EPI expirou.' });
+    return res.status(409).json({ error: 'O status do EPI já está atualizado.' });
+  }
   await audit({ req, actorUserId: req.user.id, eventType: active ? 'ppe_activated' : 'ppe_deactivated', entityType: 'ppe_item', entityId: result.rows[0].id, metadata: { active } });
   res.json({ ppe: publicStockPpe(result.rows[0]) });
 });
@@ -6167,10 +6181,38 @@ app.patch('/api/users/:id', auth, requireRole('admin'), async (req, res) => {
   }
 });
 
+app.patch('/api/users/:id/status', auth, requireRole('admin'), async (req, res) => {
+  const userId = Number(req.params.id);
+  const active = req.body.active === true || String(req.body.active).toLowerCase() === 'true';
+  if (!Number.isInteger(userId) || userId <= 0) return res.status(400).json({ error: 'Usuário inválido.' });
+  if (!active) return res.status(400).json({ error: 'Use a opção Remover para desativar uma conta.' });
+
+  const result = await pool.query(
+    `UPDATE users
+     SET active = TRUE, deactivated_at = NULL, session_version = session_version + 1, updated_at = NOW()
+     WHERE id = $1
+       AND active = FALSE
+       AND role <> 'superadmin'
+       AND deactivated_at IS NOT NULL
+       AND deactivated_at > NOW() - INTERVAL '7 days'
+     RETURNING id, name, email, role, active, deactivated_at, created_at`,
+    [userId],
+  );
+  if (!result.rows[0]) {
+    const existing = await pool.query('SELECT id, role, active, deactivated_at FROM users WHERE id = $1', [userId]);
+    if (!existing.rows[0]) return res.status(404).json({ error: 'Usuário não encontrado.' });
+    if (existing.rows[0].role === 'superadmin') return res.status(403).json({ error: 'A conta Superadmin é protegida.' });
+    if (existing.rows[0].active) return res.status(409).json({ error: 'A conta já está ativa.' });
+    return res.status(410).json({ error: 'O prazo de reativação desta conta expirou.' });
+  }
+  await audit({ req, actorUserId: req.user.id, eventType: 'user_activated', entityType: 'user', entityId: userId, metadata: { role: result.rows[0].role } });
+  res.json({ user: publicUser(result.rows[0]) });
+});
+
 app.delete('/api/users/:id', auth, requireRole('admin'), async (req, res) => {
   if (String(req.params.id) === String(req.user.id)) return res.status(400).json({ error: 'O administrador não pode remover a própria conta.' });
   const result = await pool.query(
-    `UPDATE users SET active = FALSE, deactivated_at = NOW(), updated_at = NOW()
+    `UPDATE users SET active = FALSE, deactivated_at = NOW(), session_version = session_version + 1, updated_at = NOW()
      WHERE id = $1 AND active = TRUE AND role <> 'superadmin'
      RETURNING id, name, email, role`,
     [req.params.id],
