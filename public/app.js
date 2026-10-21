@@ -2502,9 +2502,9 @@ function initializeVehicleStartPurpose() {
   const startStep = $('#vehicle-start-step');
   const options = startStep?.querySelector('.vehicle-checklist-options');
   if (!startStep || !options || $('#vehicle-start-purpose-field')) return;
-  options.insertAdjacentHTML('afterend', '<label id="vehicle-start-purpose-field" class="hidden">Finalidade do Checklist geral<select id="vehicle-start-purpose"><option value="">Selecione a finalidade</option><option value="quinzenal">Checklist recorrente</option><option value="transferencia">Transferência</option><option value="recebimento">Recebimento</option><option value="entrega">Entrega</option></select></label>');
+  options.insertAdjacentHTML('afterend', '<label id="vehicle-start-purpose-field" class="hidden">Finalidade do Checklist geral<select id="vehicle-start-purpose"><option value="">Selecione a finalidade</option><option value="quinzenal">Checklist recorrente</option><option value="transferencia">Transferência</option><option value="recebimento">Recebimento</option><option value="entrega">Entrega</option></select></label><label id="vehicle-start-target-field" class="hidden">Usuário que receberá o veículo<select id="vehicle-start-target-user"><option value="">Carregando usuários...</option></select></label>');
   const intro = startStep.querySelector('.subheading .muted');
-  if (intro) intro.textContent = 'No Checklist geral, escolha a finalidade agora e depois preencha os itens do veículo.';
+  if (intro) intro.textContent = 'No Checklist geral, escolha a finalidade agora. Em uma transferência, selecione também o usuário que receberá o veículo.';
   const finalIntro = $('#vehicle-final-step .vehicle-final-heading .muted');
   if (finalIntro) finalIntro.textContent = 'Confira a finalidade escolhida, a assinatura, a selfie e as fotos antes de enviar.';
   const finalRecurringOption = $('#vehicle-final-purpose option[value="quinzenal"]');
@@ -2513,7 +2513,18 @@ function initializeVehicleStartPurpose() {
     selectedVehicleChecklistPurpose = event.target.value || null;
     const message = $('#vehicle-start-message');
     if (selectedVehicleChecklistPurpose) message.textContent = `${vehicleChecklistTypeLabel(selectedVehicleChecklistPurpose)} selecionado. Agora escolha o veículo.`;
+    configureVehicleFinalFields();
+    updateVehicleStartTargetField();
   });
+}
+
+function updateVehicleStartTargetField() {
+  const purpose = $('#vehicle-start-purpose')?.value || selectedVehicleChecklistPurpose || '';
+  const needsTarget = ['transferencia', 'recebimento', 'entrega'].includes(purpose);
+  const targetField = $('#vehicle-start-target-field');
+  const targetSelect = $('#vehicle-start-target-user');
+  targetField?.classList.toggle('hidden', !needsTarget);
+  if (targetSelect) targetSelect.required = needsTarget;
 }
 
 function initializeVehicleWizardDom() {
@@ -2601,7 +2612,10 @@ function configureVehicleFinalFields() {
     option.disabled = restricted;
   }));
   targetField.classList.toggle('hidden', !needsTarget);
-  if (targetSelect) targetSelect.required = needsTarget;
+  if (targetSelect) {
+    targetSelect.required = needsTarget;
+    targetSelect.disabled = needsTarget && selectedVehicleChecklistType === 'geral';
+  }
   if (help) {
     help.textContent = purpose === 'quinzenal'
       ? 'A regra de notificação dos checklists recorrentes continua valendo.'
@@ -2614,6 +2628,7 @@ function configureVehicleFinalFields() {
             : 'Escolha o período correspondente ao momento em que o veículo foi conferido.';
   }
   populateVehicleTargetUsers();
+  updateVehicleStartTargetField();
 }
 
 function startVehicleChecklist() {
@@ -2632,6 +2647,12 @@ function startVehicleChecklist() {
     return;
   }
   selectedVehicleChecklistPurpose = selectedPurpose;
+  const needsTarget = ['transferencia', 'recebimento', 'entrega'].includes(selectedPurpose);
+  const startTargetUserId = needsTarget ? ($('#vehicle-start-target-user')?.value || '') : '';
+  if (needsTarget && !startTargetUserId) {
+    if (message) message.textContent = 'Selecione o usuário que receberá o veículo antes de iniciar.';
+    return;
+  }
   if (!vehicle) {
     if (message) message.textContent = 'Selecione um veículo antes de iniciar.';
     return;
@@ -2654,6 +2675,7 @@ function startVehicleChecklist() {
   $('#vehicle-final-step').classList.add('hidden');
   $('#vehicle-checklist-step').classList.remove('hidden');
   $('#vehicle-start-message').textContent = '';
+  if ($('#vehicle-final-target-user') && startTargetUserId) $('#vehicle-final-target-user').value = startTargetUserId;
   configureVehicleFinalFields();
   renderVehicleWizardItem();
   renderVehiclePhotoDrafts();
@@ -2686,11 +2708,17 @@ async function loadVehicleCatalog() {
 }
 
 function populateVehicleTargetUsers() {
-  const targetSelect = $('#vehicle-final-target-user');
-  if (!targetSelect) return;
-  const purpose = $('#vehicle-final-purpose')?.value || selectedVehicleChecklistPurpose;
+  const targetSelects = [$('#vehicle-final-target-user'), $('#vehicle-start-target-user')].filter(Boolean);
+  if (!targetSelects.length) return;
+  const purpose = $('#vehicle-start-purpose')?.value || selectedVehicleChecklistPurpose || $('#vehicle-final-purpose')?.value;
   const users = ['entrega', 'recebimento'].includes(purpose) ? vehicleDeliveryTargetUsers : vehicleTargetUsers;
-  targetSelect.innerHTML = users.length ? `<option value="">Selecione o usuário</option>${users.map((user) => `<option value="${escapeHtml(user.id)}">${escapeHtml(user.name)} · ${escapeHtml(roleLabels[user.role] || user.role)}</option>`).join('')}` : '<option value="">Nenhum usuário ativo disponível</option>';
+  const options = users.length ? `<option value="">Selecione o usuário</option>${users.map((user) => `<option value="${escapeHtml(user.id)}">${escapeHtml(user.name)} · ${escapeHtml(roleLabels[user.role] || user.role)}</option>`).join('')}` : '<option value="">Nenhum usuário ativo disponível</option>';
+  targetSelects.forEach((targetSelect) => {
+    const selected = targetSelect.value;
+    targetSelect.innerHTML = options;
+    if ([...targetSelect.options].some((option) => option.value === selected)) targetSelect.value = selected;
+  });
+  updateVehicleStartTargetField();
 }
 
 function configureVehicleChecklistOptions() {
@@ -2711,10 +2739,12 @@ function resetVehicleWizard() {
   $('#vehicle-final-step')?.classList.add('hidden');
   $('#vehicle-wizard-mileage').value = '';
   if ($('#vehicle-start-purpose')) $('#vehicle-start-purpose').value = '';
+  if ($('#vehicle-start-target-user')) $('#vehicle-start-target-user').value = '';
   if ($('#vehicle-final-target-user')) $('#vehicle-final-target-user').value = '';
   if ($('#vehicle-final-purpose')) $('#vehicle-final-purpose').value = 'quinzenal';
   if ($('#vehicle-final-daily-period')) $('#vehicle-final-daily-period').value = 'inicio';
   $('#vehicle-start-purpose-field')?.classList.toggle('hidden', selectedVehicleChecklistType !== 'geral');
+  $('#vehicle-start-target-field')?.classList.add('hidden');
   $('#vehicle-item-wizard').innerHTML = '';
   renderVehicleWizardItem();
   renderVehiclePhotoDrafts();
@@ -3338,7 +3368,9 @@ $('#vehicle-checklist-form').addEventListener('submit', async (event) => {
     ? (selectedVehicleChecklistPurpose || $('#vehicle-start-purpose')?.value || '')
     : selectedVehicleChecklistType;
   const dailyPeriod = finalChecklistType === 'diario' ? ($('#vehicle-final-daily-period')?.value || '') : null;
-  const targetUserId = ['transferencia', 'recebimento', 'entrega'].includes(finalChecklistType) ? ($('#vehicle-final-target-user')?.value || '') : null;
+  const targetUserId = ['transferencia', 'recebimento', 'entrega'].includes(finalChecklistType)
+    ? ($('#vehicle-start-target-user')?.value || $('#vehicle-final-target-user')?.value || '')
+    : null;
   if (selectedVehicleChecklistType === 'geral' && !['quinzenal', 'transferencia', 'recebimento', 'entrega'].includes(finalChecklistType)) { message.textContent = 'Escolha a finalidade do Checklist geral.'; return; }
   if (finalChecklistType === 'diario' && !['inicio', 'fim'].includes(dailyPeriod)) { message.textContent = 'Escolha se o checklist diário é do começo ou do fim do dia.'; return; }
   if (['transferencia', 'recebimento', 'entrega'].includes(finalChecklistType) && !targetUserId) { message.textContent = 'Selecione o usuário que receberá o veículo.'; return; }
