@@ -156,7 +156,7 @@ let epiAttentionSelfieDraft = null;
 let validationSelfieDraft = null;
 let epiWizardIndex = 0;
 let epiWizardItems = [];
-let epiDailyPhotoDrafts = {};
+let epiDailyPhotoDrafts = {}; epiPhotoDrafts = []; renderEpiPhotoDrafts();
 let mobileChecklistActive = false;
 let mobileChecklistKind = null;
 let mobileWorkflowParent = null;
@@ -1657,7 +1657,7 @@ async function resumeDailyChecklist(process) {
   epiWizardItems = (process.items || []).map(normalizeEpiWizardItem);
   epiWizardIndex = 0;
   window.epiWizardSignatureVisible = false;
-  epiDailyPhotoDrafts = {};
+  epiDailyPhotoDrafts = {}; epiPhotoDrafts = []; renderEpiPhotoDrafts();
   renderDailyChecklistGuard(null);
   renderEpiProcessItems(process.items || []);
   setEpiWorkflowOpen(true);
@@ -1665,7 +1665,7 @@ async function resumeDailyChecklist(process) {
   $('#epi-selfie-step').classList.toggle('hidden', process.status !== 'aguarda_selfie');
   $('#epi-photos-step').classList.toggle('hidden', process.status !== 'aguarda_fotos');
   $('#epi-selfie-message').textContent = process.status === 'aguarda_selfie' ? 'Continue este checklist registrando a selfie.' : '';
-  $('#epi-photos-message').textContent = process.status === 'aguarda_fotos' ? 'Continue este checklist enviando as fotos pendentes.' : '';
+  $('#epi-photos-message').textContent = process.status === 'aguarda_fotos' ? 'As fotos adicionais são opcionais. Conclua agora ou tire fotos se desejar registrá-las.' : '';
   if (shouldUseMobileEpiChecklist('checklist_diario')) openMobileEpiChecklist();
   scrollToInteraction(document.querySelector('#epi-selfie-step:not(.hidden), #epi-photos-step:not(.hidden)'));
 }
@@ -1830,10 +1830,10 @@ function setEpiProcessType(processType, reveal = true) {
   $('#epi-validator-field').classList.toggle('hidden', !isDevolution);
   $('#epi-target-field').classList.toggle('hidden', !isTransfer);
   $('#epi-validator-user').required = isDevolution;
-  $('#epi-target-user').required = isTransfer;
+  $('#epi-target-user').required = isTransfer; renderEpiPhotoDrafts();
   if (reveal) {
     window.epiWizardSignatureVisible = false;
-    epiDailyPhotoDrafts = {};
+    epiDailyPhotoDrafts = {}; epiPhotoDrafts = []; renderEpiPhotoDrafts();
     if (normalizedType !== 'checklist_diario') renderDailyChecklistGuard(null);
     renderEpiProcessItems();
     setEpiWorkflowOpen(true);
@@ -3306,7 +3306,7 @@ async function submitEpiProcessPhotos(photos, messageElement) {
   $('#epi-process-form-message').textContent = 'Processo enviado para validação.';
   currentEpiProcess = null;
   epiPhotoDrafts = [];
-  epiDailyPhotoDrafts = {};
+  epiDailyPhotoDrafts = {}; epiPhotoDrafts = []; renderEpiPhotoDrafts();
   renderEpiPhotoDrafts();
   $('#epi-selfie-step').classList.add('hidden');
   $('#epi-photos-step').classList.add('hidden');
@@ -3323,7 +3323,7 @@ async function submitEpiProcessPhotos(photos, messageElement) {
 
 function renderEpiPhotoDrafts() {
   $('#epi-photo-previews').innerHTML = epiPhotoDrafts.map((photo, index) => `<div><img src="${photo}" alt="Foto do EPI ${index + 1}" /></div>`).join('');
-  $('#epi-send-photos').disabled = epiPhotoDrafts.length === 0;
+  const canFinishWithoutPhotos = selectedEpiProcessType === 'checklist_diario'; const help = $('#epi-photos-help'); const submitButton = $('#epi-send-photos'); if (help) help.textContent = canFinishWithoutPhotos ? 'As fotos adicionais são opcionais. Você pode tirar até cinco fotos ou concluir sem enviar nenhuma.' : 'Tire até cinco fotos pela câmera para concluir o processo.'; submitButton.disabled = !canFinishWithoutPhotos && epiPhotoDrafts.length === 0; submitButton.textContent = canFinishWithoutPhotos && epiPhotoDrafts.length === 0 ? 'Concluir sem fotos' : 'Enviar fotos e concluir';
   $('#epi-open-photo-camera').disabled = epiPhotoDrafts.length >= 5;
 }
 
@@ -3339,7 +3339,7 @@ $('#epi-take-photo').addEventListener('click', () => {
   $('#epi-photos-message').textContent = `${epiPhotoDrafts.length} foto(s) preparada(s).`;
 });
 $('#epi-send-photos').addEventListener('click', async () => {
-  if (!currentEpiProcess || !epiPhotoDrafts.length) return;
+  const canFinishWithoutPhotos = selectedEpiProcessType === 'checklist_diario'; if (!currentEpiProcess || (!epiPhotoDrafts.length && !canFinishWithoutPhotos)) return;
   const message = $('#epi-photos-message');
   try {
     await submitEpiProcessPhotos(epiPhotoDrafts.map((imageData) => ({ imageData, captureMode: 'camera', latitude: epiProcessLocation.latitude, longitude: epiProcessLocation.longitude })), message);
