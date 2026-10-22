@@ -1060,9 +1060,16 @@ function configureNavigation(user) {
   $('#nav-pending').classList.remove('hidden');
   $('#system-update-section')?.classList.toggle('hidden', !isSuperadminRole(user.role));
   configureCadastroHeading();
-  $('#epi-technician-form').classList.toggle('hidden', user.role !== 'tecnico');
+  $('#epi-technician-form').classList.toggle('hidden', !['tecnico', 'superadmin'].includes(user.role));
+  $('#epi-test-mode-banner')?.classList.toggle('hidden', !isSuperadminRole(user.role));
+  $('#epi-signature-confirm').disabled = isSuperadminRole(user.role);
+  $('#epi-signature-confirm').required = !isSuperadminRole(user.role);
+  $('#epi-signature-confirm').checked = isSuperadminRole(user.role);
+  $('#epi-signature-confirm').closest('.consent-check')?.classList.toggle('hidden', isSuperadminRole(user.role));
+  $('#epi-process-signature-preview')?.classList.toggle('hidden', isSuperadminRole(user.role));
+  $('#epi-test-signature-note')?.classList.toggle('hidden', !isSuperadminRole(user.role));
   $('#admin-panel').classList.toggle('hidden', !isAdminRole(user.role));
-  $('#epi-new-process-tab')?.classList.toggle('hidden', user.role !== 'tecnico');
+  $('#epi-new-process-tab')?.classList.toggle('hidden', !['tecnico', 'superadmin'].includes(user.role));
   $('#company-settings-card').classList.toggle('hidden', !isAdminRole(user.role));
   $('#settings-tab-company').classList.toggle('hidden', !isAdminRole(user.role));
   $('#settings-tab-users').classList.toggle('hidden', !isAdminRole(user.role));
@@ -1072,7 +1079,7 @@ function configureNavigation(user) {
   $('#vehicle-list-panel').classList.toggle('hidden', !['admin', 'superadmin', 'tecnico', 'vistoriador'].includes(user.role));
   $('#vehicle-main-management-tab')?.classList.toggle('hidden', !isAdminRole(user.role));
   $('#compliance-alerts-card').classList.toggle('hidden', !isAdminRole(user.role));
-  activateSubtab('epi-main', user.role === 'tecnico' ? 'new' : 'processes');
+  activateSubtab('epi-main', ['tecnico', 'superadmin'].includes(user.role) ? 'new' : 'processes');
   activateSubtab('vehicles-main', 'new');
   activateSubtab('validation-main', 'list');
   activateSubtab('admin-main', 'users');
@@ -1401,7 +1408,7 @@ function generateAutomaticSignature(canvas, name) {
 function renderEpiSignaturePreview(signatureData) {
   const mount = $('#epi-process-signature-preview');
   if (!mount) return;
-  mount.innerHTML = signatureData ? `<img src="${signatureData}" alt="Assinatura padrão cadastrada" />` : '<p class="muted">Assinatura não cadastrada.</p>';
+  mount.innerHTML = isSuperadminRole() ? '<p class="muted">Assinatura padrão dispensada no modo de teste.</p>' : signatureData ? `<img src="${signatureData}" alt="Assinatura padrão cadastrada" />` : '<p class="muted">Assinatura não cadastrada.</p>';
 }
 
 function stopEpiCamera(videoSelector) {
@@ -1856,10 +1863,18 @@ function setEpiProcessType(processType, reveal = true) {
   document.querySelectorAll('.epi-process-option').forEach((button) => button.classList.toggle('active', button.dataset.processType === normalizedType));
   const isDevolution = normalizedType === 'devolucao';
   const isTransfer = normalizedType === 'transferencia';
-  $('#epi-validator-field').classList.toggle('hidden', !isDevolution);
-  $('#epi-target-field').classList.toggle('hidden', !isTransfer);
-  $('#epi-validator-user').required = isDevolution;
-  $('#epi-target-user').required = isTransfer; renderEpiPhotoDrafts();
+  const isTestMode = isSuperadminRole();
+  $('#epi-validator-field').classList.toggle('hidden', !isDevolution || isTestMode);
+  $('#epi-target-field').classList.toggle('hidden', !isTransfer || isTestMode);
+  $('#epi-validator-user').required = isDevolution && !isTestMode;
+  $('#epi-target-user').required = isTransfer && !isTestMode;
+  $('#epi-signature-confirm').required = !isTestMode;
+  $('#epi-signature-confirm').checked = isTestMode;
+  $('#epi-signature-confirm').disabled = isTestMode;
+  $('#epi-signature-confirm').closest('.consent-check')?.classList.toggle('hidden', isTestMode);
+  $('#epi-process-signature-preview')?.classList.toggle('hidden', isTestMode);
+  $('#epi-test-signature-note')?.classList.toggle('hidden', !isTestMode);
+  renderEpiPhotoDrafts();
   if (reveal) {
     window.epiWizardSignatureVisible = false;
     epiDailyPhotoDrafts = {}; epiPhotoDrafts = []; renderEpiPhotoDrafts();
@@ -1895,9 +1910,9 @@ function renderEpiProcessRow(process) {
   const target = process.targetName ? ` · destino: ${process.targetName}` : '';
   const action = `<button type="button" class="secondary small-button epi-process-open" data-process-id="${process.id}">Abrir</button>`;
   const attentionStatus = process.attentionStatus || (process.adminAttentionRequired ? 'pending_admin' : 'none');
-  const attentionOpen = process.adminAttentionRequired && ['pending_admin', 'awaiting_technician'].includes(attentionStatus);
+  const attentionOpen = !process.isTest && process.adminAttentionRequired && ['pending_admin', 'awaiting_technician'].includes(attentionStatus);
   const attention = attentionOpen ? '<span class="status status-attention">⚠️ Requer atenção</span>' : '';
-  return `<div class="epi-process-row"><div><strong>${escapeHtml(process.processTitle)}</strong><small>${escapeHtml(process.createdBy.name)}${escapeHtml(target)} · ${escapeHtml(formatDate(process.createdAt))}</small></div><div class="epi-process-actions">${attention}<span class="status status-${escapeHtml(process.status)}">${escapeHtml(epiProcessStatusLabel(process.status))}</span>${action}</div></div>`;
+  return `<div class="epi-process-row"><div><strong>${escapeHtml(process.processTitle)}${process.isTest ? ' <span class="test-status">TESTE</span>' : ''}</strong><small>${escapeHtml(process.createdBy.name)}${escapeHtml(target)} · ${escapeHtml(formatDate(process.createdAt))}</small></div><div class="epi-process-actions">${process.isTest ? '' : attention}<span class="status status-${escapeHtml(process.status)}">${escapeHtml(epiProcessStatusLabel(process.status))}</span>${action}</div></div>`;
 }
 
 async function loadEpiProcesses() {
@@ -1906,6 +1921,7 @@ async function loadEpiProcesses() {
     $('#epi-process-list').innerHTML = data.processes.length ? data.processes.map(renderEpiProcessRow).join('') : '<p class="muted">Nenhum processo cadastrado.</p>';
     document.querySelectorAll('.epi-process-open').forEach((button) => button.addEventListener('click', () => openEpiProcess(button.dataset.processId)));
     if (currentUser?.role === 'tecnico') { await loadEpiTargets(); await loadEpiCatalog(); renderEpiSignaturePreview(currentUser.signatureData); }
+    if (isSuperadminRole()) { await loadEpiCatalog(); renderEpiSignaturePreview(null); }
     if (currentUser?.role === 'tecnico' && selectedEpiProcessType === 'checklist_diario') await loadDailyChecklistStatus();
   } catch (error) { $('#epi-process-list').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`; }
 }
@@ -1927,19 +1943,23 @@ function renderEpiDailyResponsibilityTerm(process) {
     if (!items.length) return '';
     return `<tr class="daily-section-row"><th colspan="4">${escapeHtml(group.title)}</th></tr>${items.map((item) => `<tr><td>${escapeHtml(process.items.indexOf(item) + 1)}</td><td>${escapeHtml(item.equipmentName)}</td><td>${escapeHtml(epiDailyResponseLabel(item.checkStatus || item.condition))}</td><td>${escapeHtml(epiDailyObservation(item, attentionOpen))}</td></tr>`).join('')}`;
   }).join('') : process.items.map((item, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(item.equipmentName)}</td><td>${escapeHtml(epiDailyResponseLabel(item.checkStatus || item.condition))}</td><td>${escapeHtml(epiDailyObservation(item, attentionOpen))}</td></tr>`).join('');
-  return `<section class="epi-responsibility-term"><div class="paper-header"><div class="term-brand">${logo}<div><strong>${escapeHtml(term.companyName)}</strong><span>CNPJ: ${escapeHtml(term.companyCnpj)}</span></div></div><span class="paper-number">TERMO ASSINADO</span></div><h3>${escapeHtml(term.title)}</h3><p>${escapeHtml(term.intro)}</p><ol>${term.clauses.map((clause) => `<li>${escapeHtml(clause)}</li>`).join('')}</ol><div class="recipient-line"><span><b>Funcionário:</b> ${escapeHtml(process.createdBy.name)}</span><span><b>Emissão:</b> ${escapeHtml(formatDate(process.createdAt))}</span></div><table class="paper-table daily-checklist-table"><thead><tr><th>Nº</th><th>EPI / item de segurança</th><th>Resposta</th><th>Observação</th></tr></thead><tbody>${rows}</tbody></table><div class="legal-text"><p>${escapeHtml(term.legalText.clt)}</p><p>${escapeHtml(term.legalText.nr06)}</p><p>${escapeHtml(term.legalText.declaration)}</p></div><div class="signature-block"><img class="saved-signature" src="${signature}" alt="Assinatura eletrônica do técnico" /><div class="signature-line">Ass. do Funcionário · ${escapeHtml(term.signerName)}</div><div class="audit-note">Assinatura validada em ${escapeHtml(formatDate(term.signedAt))} · SHA-256: ${escapeHtml(term.signatureHash || '–')}</div></div><p class="epi-term-attached-note">Este termo assinado faz parte deste checklist diário e foi enviado junto com as fotos registradas.</p></section>`;
+  const signatureMarkup = process.isTest ? '<p class="test-mode-inline">Assinatura dispensada no modo de teste.</p>' : `<img class="saved-signature" src="${escapeHtml(signature)}" alt="Assinatura eletrônica do técnico" />`;
+  return `<section class="epi-responsibility-term"><div class="paper-header"><div class="term-brand">${logo}<div><strong>${escapeHtml(term.companyName)}</strong><span>CNPJ: ${escapeHtml(term.companyCnpj)}</span></div></div><span class="paper-number">${process.isTest ? 'DOCUMENTO DE TESTE' : 'TERMO ASSINADO'}</span></div><h3>${escapeHtml(term.title)}</h3><p>${escapeHtml(term.intro)}</p><ol>${term.clauses.map((clause) => `<li>${escapeHtml(clause)}</li>`).join('')}</ol><div class="recipient-line"><span><b>Funcionário:</b> ${escapeHtml(process.createdBy.name)}</span><span><b>Emissão:</b> ${escapeHtml(formatDate(process.createdAt))}</span></div><table class="paper-table daily-checklist-table"><thead><tr><th>Nº</th><th>EPI / item de segurança</th><th>Resposta</th><th>Observação</th></tr></thead><tbody>${rows}</tbody></table><div class="legal-text"><p>${escapeHtml(term.legalText.clt)}</p><p>${escapeHtml(term.legalText.nr06)}</p><p>${escapeHtml(term.legalText.declaration)}</p></div><div class="signature-block">${signatureMarkup}<div class="signature-line">Ass. do Funcionário · ${escapeHtml(term.signerName)}</div><div class="audit-note">Assinatura validada em ${escapeHtml(formatDate(term.signedAt))} · SHA-256: ${escapeHtml(term.signatureHash || '–')}</div></div><p class="epi-term-attached-note">Este termo assinado faz parte deste checklist diário e foi enviado junto com as fotos registradas.</p></section>`;
 }
 
 function renderEpiGenericTerm(process) {
   const logo = process.companyLogoData ? `<img class="company-term-logo" src="${escapeHtml(process.companyLogoData)}" alt="Logo da empresa" />` : '';
   const signature = process.signatureData || currentUser.signatureData || '';
-  return `<section class="epi-responsibility-term"><div class="paper-header"><div class="term-brand">${logo}<div><strong>${escapeHtml(process.companyName || 'Empresa')}</strong><span>CNPJ: ${escapeHtml(process.companyCnpj || '–')}</span></div></div><span class="paper-number">TERMO</span></div><h3>${escapeHtml(process.termText?.title || process.processTitle)}</h3><p>${escapeHtml(process.termText?.paragraphs?.[0] || '')}</p><p>${escapeHtml(process.termText?.paragraphs?.[1] || '')}</p><div class="epi-signature-preview"><img src="${escapeHtml(signature)}" alt="Assinatura usada no termo" /></div><div class="table-wrap"><table class="paper-table"><thead><tr><th>EPI</th><th>Qtd.</th><th>CA</th><th>Condição</th></tr></thead><tbody>${process.items.map((item) => `<tr><td>${escapeHtml(item.equipmentName)}</td><td>${escapeHtml(item.quantity)}</td><td>${escapeHtml(item.ca || '–')}</td><td>${escapeHtml(item.condition || '–')}</td></tr>`).join('')}</tbody></table></div><div class="detail-actions"><button id="print-epi-process" type="button" class="secondary small-button">Imprimir / salvar PDF</button></div></section>`;
+  const signatureMarkup = process.isTest ? '<p class="test-mode-inline">Assinatura dispensada no modo de teste.</p>' : `<div class="epi-signature-preview"><img src="${escapeHtml(signature)}" alt="Assinatura usada no termo" /></div>`;
+  return `<section class="epi-responsibility-term"><div class="paper-header"><div class="term-brand">${logo}<div><strong>${escapeHtml(process.companyName || 'Empresa')}</strong><span>CNPJ: ${escapeHtml(process.companyCnpj || '–')}</span></div></div><span class="paper-number">${process.isTest ? 'DOCUMENTO DE TESTE' : 'TERMO'}</span></div><h3>${escapeHtml(process.termText?.title || process.processTitle)}</h3><p>${escapeHtml(process.termText?.paragraphs?.[0] || '')}</p><p>${escapeHtml(process.termText?.paragraphs?.[1] || '')}</p>${signatureMarkup}<div class="table-wrap"><table class="paper-table"><thead><tr><th>EPI</th><th>Qtd.</th><th>CA</th><th>Condição</th></tr></thead><tbody>${process.items.map((item) => `<tr><td>${escapeHtml(item.equipmentName)}</td><td>${escapeHtml(item.quantity)}</td><td>${escapeHtml(item.ca || '–')}</td><td>${escapeHtml(item.condition || '–')}</td></tr>`).join('')}</tbody></table></div><div class="detail-actions"><button id="print-epi-process" type="button" class="secondary small-button">Imprimir / salvar PDF</button></div></section>`;
 }
 
 function renderEpiAdminValidationSignature(process) {
   if (!process.validatedByName && !process.validatedAt) return '';
   const signerLabel = process.validatedByRole === 'admin' || process.validatedByRole === 'superadmin' ? 'Admin validador' : process.validatedByRole === 'vistoriador' ? 'Supervisor validador' : 'Responsável pela validação';
-  const signature = process.validationSignatureData
+  const signature = process.isTest
+    ? '<p class="test-mode-inline">Assinatura padrão dispensada na validação de teste.</p>'
+    : process.validationSignatureData
     ? `<img class="saved-signature" src="${escapeHtml(process.validationSignatureData)}" alt="Assinatura de ${escapeHtml(signerLabel)}" />`
     : '<p class="muted">Assinatura do validador não disponível neste registro.</p>';
   return `<div class="epi-admin-validation-signature"><strong>${escapeHtml(signerLabel)}: ${escapeHtml(process.validatedByName || '–')}</strong>${signature}<div class="signature-line">${escapeHtml(signerLabel)} · ${escapeHtml(process.validationSignatureTypedName || process.validatedByName || '–')}</div><div class="audit-note">Validação registrada em ${escapeHtml(formatDate(process.validationSignatureValidatedAt || process.validatedAt))} · SHA-256: ${escapeHtml(process.validationSignatureHash || '–')}</div>${process.validationSignatureDocumentHash ? `<div class="audit-note">Hash do documento validado: ${escapeHtml(process.validationSignatureDocumentHash)}</div>` : ''}</div>`;
@@ -2002,18 +2022,21 @@ async function openEpiProcess(id) {
     const responsibilityTerm = process.processType === 'checklist_diario' ? renderEpiDailyResponsibilityTerm(process) : renderEpiGenericTerm(process);
     const canValidate = isChecklistValidatorRole() || String(process.validatorUserId || '') === String(currentUser.id);
     const attentionStatus = process.attentionStatus || (process.adminAttentionRequired ? 'pending_admin' : 'none');
-    const attentionOpen = process.adminAttentionRequired && ['pending_admin', 'awaiting_technician'].includes(attentionStatus);
+    const attentionOpen = !process.isTest && process.adminAttentionRequired && ['pending_admin', 'awaiting_technician'].includes(attentionStatus);
     const attention = attentionOpen ? `<div class="epi-attention-flag"><strong>⚠️ Checklist requer atenção do Admin</strong><div>${(process.adminAttentionReasons || []).map((reason) => `<span>${escapeHtml(epiAttentionReasonLabel(reason))}</span>`).join('')}</div></div>` : '';
-    const attentionWorkflow = renderEpiAttentionWorkflow(process);
+    const attentionWorkflow = process.isTest ? '' : renderEpiAttentionWorkflow(process);
     const validatorValidation = isChecklistValidatorRole();
     const validatorLabel = currentUser.role === 'vistoriador' ? 'Supervisor' : 'Admin';
-    const validationSignaturePreview = validatorValidation
+    const testSuperadminValidation = process.isTest && isSuperadminRole();
+    const validationSignaturePreview = testSuperadminValidation
+      ? `<div class="test-mode-inline"><strong>Validação de teste</strong><p>A assinatura padrão é dispensada. Capture sua selfie para liberar a validação.</p><button id="epi-validation-open-selfie" type="button" class="secondary">Capturar selfie do Superadmin</button><div id="epi-validation-selfie-camera" class="hidden"><video id="epi-validation-selfie-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button id="epi-validation-take-selfie" type="button">Tirar selfie</button><button id="epi-validation-cancel-selfie" type="button" class="secondary">Cancelar</button></div></div><div id="epi-validation-selfie-preview" class="epi-photo-previews"></div><p id="epi-validation-selfie-status" class="muted" aria-live="polite">Selfie do responsável ainda não capturada.</p></div>`
+      : validatorValidation
       ? `<div class="epi-validation-signature-box"><strong>Assinatura do ${validatorLabel}</strong>${currentUser.signatureData ? `<div class="epi-signature-preview"><img src="${escapeHtml(currentUser.signatureData)}" alt="Sua assinatura padrão" /></div>` : `<p class="error">Cadastre sua assinatura padrão em Segurança antes de validar.</p>`}<button id="epi-validation-signature-button" type="button" class="secondary" ${currentUser.signatureData ? '' : 'disabled'}>Validar assinatura do ${validatorLabel}</button><p id="epi-validation-signature-status" class="muted" aria-live="polite">Clique para confirmar a assinatura que será anexada ao documento.</p><button id="epi-validation-open-selfie" type="button" class="secondary" ${currentUser.signatureData ? '' : 'disabled'}>Capturar selfie do ${validatorLabel}</button><div id="epi-validation-selfie-camera" class="hidden"><video id="epi-validation-selfie-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button id="epi-validation-take-selfie" type="button">Tirar selfie</button><button id="epi-validation-cancel-selfie" type="button" class="secondary">Cancelar</button></div></div><div id="epi-validation-selfie-preview" class="epi-photo-previews"></div><p id="epi-validation-selfie-status" class="muted" aria-live="polite">Selfie do responsável ainda não capturada.</p></div>`
       : '';
-    const validationAllowedForAttention = !process.adminAttentionRequired || attentionStatus === 'returned_to_admin';
+    const validationAllowedForAttention = process.isTest || !process.adminAttentionRequired || attentionStatus === 'returned_to_admin';
     const validation = process.status === 'pendente_validacao' && canValidate && validationAllowedForAttention ? `<div class="epi-review-actions">${validationSignaturePreview}<textarea id="epi-validation-notes" maxlength="500" placeholder="Observação da validação (opcional)"></textarea><div class="form-actions"><button type="button" data-epi-validate="validado">Validar processo</button><button type="button" class="secondary" data-epi-validate="reprovado">Reprovar</button></div><p id="epi-validation-message" class="error" aria-live="polite"></p></div>` : '';
     const adminValidationSignature = renderEpiAdminValidationSignature(process);
-    panel.innerHTML = `<div class="epi-process-detail-card"><div class="section-heading"><div><div class="eyebrow">${escapeHtml(process.processTitle)}</div><h3>Processo #${escapeHtml(process.id)}</h3><p class="muted">${escapeHtml(epiProcessStatusLabel(process.status))} · ${escapeHtml(formatDate(process.createdAt))}</p></div><button id="close-epi-process-detail" type="button" class="secondary small-button">Fechar</button></div>${attention}${attentionWorkflow}${responsibilityTerm}<p class="audit-note">Responsável: ${escapeHtml(process.createdBy.name)} · Validador: ${escapeHtml(process.validatorName || 'Administradores')} · Assinatura SHA-256: ${escapeHtml(process.signatureHash || '–')}</p>${adminValidationSignature}${media ? `<div class="epi-process-media">${media}</div>` : '<p class="muted">Nenhuma imagem registrada.</p>'}${validation}</div>`;
+    panel.innerHTML = `<div class="epi-process-detail-card">${process.isTest ? '<div class="test-mode-banner"><strong>CHECKLIST DE TESTE · SEM VALIDADE OPERACIONAL</strong><p>Registro isolado do fluxo real e disponível somente para o Superadmin.</p></div>' : ''}<div class="section-heading"><div><div class="eyebrow">${escapeHtml(process.processTitle)}</div><h3>Processo #${escapeHtml(process.id)}</h3><p class="muted">${escapeHtml(epiProcessStatusLabel(process.status))} · ${escapeHtml(formatDate(process.createdAt))}</p></div><button id="close-epi-process-detail" type="button" class="secondary small-button">Fechar</button></div>${attention}${attentionWorkflow}${responsibilityTerm}<p class="audit-note">Responsável: ${escapeHtml(process.createdBy.name)} · Validador: ${escapeHtml(process.validatorName || 'Superadmin')} · Assinatura SHA-256: ${escapeHtml(process.signatureHash || '–')}</p>${adminValidationSignature}${media ? `<div class="epi-process-media">${media}</div>` : '<p class="muted">Nenhuma imagem registrada.</p>'}${validation}</div>`;
     panel.querySelector('.epi-process-detail-card > .section-heading')?.insertAdjacentHTML('beforeend', '<button id="download-epi-process-pdf" type="button" class="secondary small-button">Baixar PDF</button>');
     $('#close-epi-process-detail').addEventListener('click', () => { panel.classList.add('hidden'); activateSubtab('epi-main', 'processes'); });
     $('#download-epi-process-pdf')?.addEventListener('click', (event) => downloadPdfFile(`/api/epi/processes/${process.id}/pdf`, `processo-epi-${process.id}.pdf`, event.currentTarget));
@@ -2059,7 +2082,7 @@ async function openEpiProcess(id) {
         await openEpiProcess(data.process.id);
       } catch (error) { button.disabled = false; message.textContent = error.message; }
     });
-    let adminSignatureConfirmed = !validatorValidation;
+    let adminSignatureConfirmed = !validatorValidation || testSuperadminValidation;
     $('#epi-validation-signature-button')?.addEventListener('click', () => {
       const status = $('#epi-validation-signature-status');
       if (!currentUser.signatureData) { status.textContent = 'Cadastre sua assinatura padrão em Segurança antes de continuar.'; status.className = 'error'; return; }
@@ -2085,8 +2108,8 @@ async function openEpiProcess(id) {
     });
     panel.querySelectorAll('[data-epi-validate]').forEach((button) => button.addEventListener('click', async () => {
       const message = $('#epi-validation-message');
-      if (validatorValidation && !currentUser.signatureData) { message.textContent = 'Cadastre sua assinatura padrão em Segurança antes de validar.'; return; }
-      if (validatorValidation && !adminSignatureConfirmed) { message.textContent = `Clique em “Validar assinatura do ${validatorLabel}” antes de continuar.`; return; }
+      if (validatorValidation && !testSuperadminValidation && !currentUser.signatureData) { message.textContent = 'Cadastre sua assinatura padrão em Segurança antes de validar.'; return; }
+      if (validatorValidation && !testSuperadminValidation && !adminSignatureConfirmed) { message.textContent = `Clique em “Validar assinatura do ${validatorLabel}” antes de continuar.`; return; }
       if (validatorValidation && !validationSelfieDraft) { message.textContent = `Capture uma selfie do ${validatorLabel} antes de continuar.`; return; }
       try { message.textContent = ''; await api(`/api/epi/processes/${process.id}/validate`, { method: 'POST', body: JSON.stringify({ decision: button.dataset.epiValidate, notes: $('#epi-validation-notes').value, signatureConfirmed: validatorValidation ? adminSignatureConfirmed : false, validationSelfie: validatorValidation ? validationSelfieDraft : null }) }); validationSelfieDraft = null; await loadEpiProcesses(); await openEpiProcess(process.id); await loadNotifications(); await loadOverview(); } catch (error) { message.textContent = error.message; }
     }));
@@ -2548,7 +2571,7 @@ function initializeVehicleStartPurpose() {
 
 function updateVehicleStartTargetField() {
   const purpose = $('#vehicle-start-purpose')?.value || selectedVehicleChecklistPurpose || '';
-  const needsTarget = ['transferencia', 'recebimento', 'entrega'].includes(purpose);
+  const needsTarget = !isSuperadminRole() && ['transferencia', 'recebimento', 'entrega'].includes(purpose);
   const targetField = $('#vehicle-start-target-field');
   const targetSelect = $('#vehicle-start-target-user');
   targetField?.classList.toggle('hidden', !needsTarget);
@@ -2565,6 +2588,7 @@ function initializeVehicleWizardDom() {
   const photo = form.querySelector('.vehicle-photo-entry');
   const submitActions = [...form.children].find((child) => child.classList.contains('form-actions'));
   form.insertAdjacentHTML('afterbegin', '<div id="vehicle-start-step" class="vehicle-step"><div class="subheading"><h3>Tipo de checklist</h3><p class="muted">O Checklist geral é preenchido uma vez e sua finalidade é escolhida no final.</p></div><div class="vehicle-checklist-options" role="tablist" aria-label="Tipo de checklist de veículo"><button type="button" class="vehicle-checklist-option" data-vehicle-checklist-type="diario">Checklist diário</button><button type="button" class="vehicle-checklist-option" data-vehicle-checklist-type="geral">Checklist geral</button></div><label>Veículo<select id="vehicle-select"><option value="">Carregando veículos...</option></select></label><div class="form-actions"><button id="vehicle-start-checklist" type="button">Iniciar checklist</button><span id="vehicle-start-message" class="muted">Escolha o tipo e o veículo para iniciar.</span></div></div><div id="vehicle-checklist-step" class="vehicle-step hidden"><div class="vehicle-selected-card"><strong id="vehicle-selected-title">Veículo selecionado</strong><span id="vehicle-selected-details" class="muted"></span></div><label id="vehicle-mileage-field">Quilometragem (opcional)<input id="vehicle-wizard-mileage" type="number" min="0" placeholder="Quilometragem atual" /></label><div class="vehicle-wizard-progress"><strong id="vehicle-wizard-counter">Item 1</strong><span id="vehicle-wizard-instruction">Faça a conferência e avance.</span><div class="wizard-progress-track"><span id="vehicle-wizard-progress-bar"></span></div></div><div id="vehicle-item-wizard"></div><div class="wizard-navigation"><button id="vehicle-item-back" type="button" class="secondary small-button">Anterior</button><span id="vehicle-item-message" class="muted"></span><button id="vehicle-item-next" type="button" class="small-button">Próximo item</button></div></div>');
+  $('#vehicle-start-step .vehicle-checklist-options').insertAdjacentHTML('beforebegin', '<div id="vehicle-test-mode-banner" class="test-mode-banner hidden" role="status"><strong>Modo de teste do Superadmin</strong><p>Este registro fica isolado: só o Superadmin pode visualizá-lo e validá-lo. Não afeta estoque, alertas ou relatórios operacionais.</p></div>');
   meta?.classList.add('hidden');
   legend?.classList.add('hidden');
   table?.classList.add('hidden');
@@ -2573,6 +2597,7 @@ function initializeVehicleWizardDom() {
   finalStep.className = 'vehicle-step hidden';
   finalStep.innerHTML = '<div class="vehicle-final-heading"><div><h3>Finalizar checklist</h3><p class="muted">Escolha a finalidade, confira a assinatura, tire a selfie e envie as fotos. Nos itens visuais a foto é obrigatória; em itens funcionais, como buzina, ar-condicionado e alarme, ela é opcional.</p></div><button id="vehicle-return-to-items" type="button" class="secondary small-button">Voltar aos itens</button></div><div class="vehicle-final-purpose"><label id="vehicle-final-purpose-field">Finalidade do Checklist geral<select id="vehicle-final-purpose"><option value="quinzenal">Quinzenal</option><option value="transferencia">Transferência</option><option value="recebimento">Recebimento</option><option value="entrega">Entrega</option></select></label><label id="vehicle-final-target-field" class="hidden">Usuário que receberá o veículo<select id="vehicle-final-target-user"><option value="">Selecione o usuário</option></select></label><label id="vehicle-final-daily-period-field" class="hidden">Período do checklist diário<select id="vehicle-final-daily-period"><option value="inicio">Começo do dia</option><option value="fim">Fim do dia</option></select></label><p id="vehicle-final-purpose-help" class="muted"></p></div><div class="vehicle-selfie-entry"><div class="subheading"><h3>Selfie do momento</h3></div><p class="muted">Tire a selfie agora pela câmera. Não é permitido escolher uma imagem da galeria.</p><button id="vehicle-open-selfie-camera" type="button">Abrir câmera</button><div id="vehicle-selfie-camera" class="hidden"><video id="vehicle-selfie-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-take-selfie" type="button">Tirar selfie</button><button id="vehicle-cancel-selfie" type="button" class="secondary">Cancelar</button></div></div><div id="vehicle-selfie-preview" class="epi-photo-previews"></div><p id="vehicle-selfie-message" class="muted" aria-live="polite">Nenhuma selfie capturada.</p></div>';
   const selfieEntry = finalStep.querySelector('.vehicle-selfie-entry');
+  signature?.insertAdjacentHTML('beforeend', '<p class="test-mode-inline vehicle-test-signature-note hidden">A assinatura padrão é dispensada no modo de teste. A selfie permanece obrigatória.</p>');
   if (signature) finalStep.insertBefore(signature, selfieEntry);
   if (selfieEntry && photo) finalStep.append(photo);
   if (submitActions) finalStep.append(submitActions);
@@ -2634,7 +2659,7 @@ function configureVehicleFinalFields() {
   purposeField?.classList.add('hidden');
   dailyPeriodField.classList.toggle('hidden', !isDaily);
   purposeSelect.value = purpose;
-  const needsTarget = ['transferencia', 'recebimento', 'entrega'].includes(purpose);
+  const needsTarget = !isSuperadminRole() && ['transferencia', 'recebimento', 'entrega'].includes(purpose);
   [purposeSelect, $('#vehicle-start-purpose')].filter(Boolean).forEach((select) => select.querySelectorAll('option').forEach((option) => {
     const restricted = ['entrega', 'recebimento'].includes(option.value) && !(isAdminRole() || currentUser?.role === 'vistoriador');
     option.disabled = restricted;
@@ -2670,12 +2695,12 @@ function startVehicleChecklist() {
   const selectedPurpose = selectedVehicleChecklistType === 'geral'
     ? ($('#vehicle-start-purpose')?.value || '')
     : selectedVehicleChecklistType;
-  if (selectedVehicleChecklistType === 'geral' && !['quinzenal', 'transferencia', 'recebimento', 'entrega'].includes(selectedPurpose)) {
+  if (selectedVehicleChecklistType === 'geral' && !['quinzenal', 'transferencia', 'recebimento', 'entrega', ...(isSuperadminRole() ? ['devolucao'] : [])].includes(selectedPurpose)) {
     if (message) message.textContent = 'Escolha a finalidade do Checklist geral antes de iniciar.';
     return;
   }
   selectedVehicleChecklistPurpose = selectedPurpose;
-  const needsTarget = ['transferencia', 'recebimento', 'entrega'].includes(selectedPurpose);
+  const needsTarget = !isSuperadminRole() && ['transferencia', 'recebimento', 'entrega'].includes(selectedPurpose);
   const startTargetUserId = needsTarget ? ($('#vehicle-start-target-user')?.value || '') : '';
   if (needsTarget && !startTargetUserId) {
     if (message) message.textContent = 'Selecione o usuário que receberá o veículo antes de iniciar.';
@@ -2750,6 +2775,12 @@ function populateVehicleTargetUsers() {
 }
 
 function configureVehicleChecklistOptions() {
+  const testOnlyPurposeSelects = [$('#vehicle-start-purpose'), $('#vehicle-final-purpose')].filter(Boolean);
+  for (const select of testOnlyPurposeSelects) {
+    const existing = select.querySelector('option[value="devolucao"]');
+    if (isSuperadminRole() && !existing) select.insertAdjacentHTML('beforeend', '<option value="devolucao">Devolução</option>');
+    if (!isSuperadminRole()) existing?.remove();
+  }
   document.querySelectorAll('[data-vehicle-checklist-type]').forEach((button) => {
     button.classList.remove('hidden');
     button.disabled = false;
@@ -2784,6 +2815,15 @@ function renderVehicleEditor() {
   initializeVehicleWizardDom();
   initializeVehicleStartPurpose();
   configureVehicleChecklistOptions();
+  $('#vehicle-test-mode-banner')?.classList.toggle('hidden', !isSuperadminRole());
+  $('#vehicle-signature-preview')?.classList.toggle('hidden', isSuperadminRole());
+  $('#vehicle-signature-confirm')?.closest('.consent-check')?.classList.toggle('hidden', isSuperadminRole());
+  document.querySelector('.vehicle-test-signature-note')?.classList.toggle('hidden', !isSuperadminRole());
+  if ($('#vehicle-signature-confirm')) {
+    $('#vehicle-signature-confirm').disabled = isSuperadminRole();
+    $('#vehicle-signature-confirm').required = !isSuperadminRole();
+    $('#vehicle-signature-confirm').checked = isSuperadminRole();
+  }
   selectedVehicleChecklistType = null;
   selectedVehicleChecklistPurpose = null;
   document.querySelectorAll('[data-vehicle-checklist-type]').forEach((button) => button.classList.remove('active'));
@@ -2852,7 +2892,7 @@ function renderVehicleSummary(checklist, includeAction = false) {
   const action = includeAction ? `<button type="button" class="secondary small-button vehicle-open" data-vehicle-id="${checklist.id}">Abrir</button>` : '';
   const statusLabel = { pendente_destinatario: 'Aguardando destinatário', pendente_validacao: 'Aguardando validação', validado: 'Validado', reprovado: 'Reprovado', rascunho: 'Rascunho' }[checklist.status] || checklist.status;
   const target = checklist.targetName ? ` · destinatário: ${checklist.targetName}` : '';
-  return `<div class="vehicle-list-item"><div><strong>${escapeHtml(checklist.plate)} · ${escapeHtml(checklist.model || 'Modelo não informado')}</strong><small>${escapeHtml(vehicleChecklistDisplayLabel(checklist))} · ${escapeHtml(checklist.driverName || 'Técnico não informado')}${escapeHtml(target)} · ${escapeHtml(formatDate(checklist.createdAt))} · ${problems} ocorrência(s)</small></div><div class="vehicle-list-actions"><span class="status status-${escapeHtml(checklist.status)}">${escapeHtml(statusLabel)}</span>${action}</div></div>`;
+  return `<div class="vehicle-list-item"><div><strong>${escapeHtml(checklist.plate)} · ${escapeHtml(checklist.model || 'Modelo não informado')}${checklist.isTest ? ' <span class="test-status">TESTE</span>' : ''}</strong><small>${escapeHtml(vehicleChecklistDisplayLabel(checklist))} · ${escapeHtml(checklist.driverName || 'Técnico não informado')}${escapeHtml(target)} · ${escapeHtml(formatDate(checklist.createdAt))} · ${problems} ocorrência(s)</small></div><div class="vehicle-list-actions"><span class="status status-${escapeHtml(checklist.status)}">${escapeHtml(statusLabel)}</span>${action}</div></div>`;
 }
 
 async function loadVehicleChecklists() {
@@ -2879,11 +2919,13 @@ function renderVehicleDetail(checklist, containerSelector, canValidate) {
   if (!container) return;
   container.classList.remove('hidden');
   const isDaily = checklist.checklistType === 'diario';
+  const isTest = checklist.isTest === true;
   const adminOnlyValidation = ['transferencia', 'devolucao'].includes(checklist.checklistType);
   const canValidateChecklist = canValidate && checklist.status === 'pendente_validacao' && (!adminOnlyValidation || isAdminRole());
   const isRecipientAcceptance = ['transferencia', 'recebimento', 'entrega'].includes(checklist.checklistType) && checklist.status === 'pendente_destinatario' && String(checklist.targetUserId || '') === String(currentUser?.id || '');
   let vehicleValidationSelfie = null;
-  const validationControls = canValidateChecklist ? `<div class="validation-controls"><div class="epi-signature-preview"><img src="${escapeHtml(currentUser?.signatureData || '')}" alt="Assinatura padrão do responsável pela validação" /></div><label class="consent-check"><input id="vehicle-validation-signature-confirm" type="checkbox" /> Confirmo o uso da minha assinatura padrão nesta validação.</label><button id="vehicle-validation-open-selfie" type="button" class="secondary">Capturar selfie do validador</button><div id="vehicle-validation-selfie-camera" class="hidden"><video id="vehicle-validation-selfie-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-validation-take-selfie" type="button">Tirar selfie</button><button id="vehicle-validation-cancel-selfie" type="button" class="secondary">Cancelar</button></div></div><div id="vehicle-validation-selfie-preview" class="epi-photo-previews"></div><p id="vehicle-validation-selfie-status" class="muted" aria-live="polite">Selfie do validador ainda não capturada.</p><div class="signature-actions"><button id="vehicle-validation-capture-location" type="button" class="secondary">Capturar localização</button></div><textarea id="validation-notes" maxlength="700" placeholder="Observação da validação (opcional)"></textarea><div class="signature-actions"><button id="approve-vehicle" type="button">Validar vistoria</button><button id="reject-vehicle" type="button" class="danger-button">Reprovar vistoria</button></div><p id="validation-message" class="muted">A assinatura, a selfie e a localização serão registradas na validação.</p></div>` : '';
+  const validationSignatureProof = isTest ? '<div class="test-mode-inline"><strong>Validação de teste</strong><p>A assinatura padrão é dispensada. Capture uma selfie para registrar a validação.</p></div>' : `<div class="epi-signature-preview"><img src="${escapeHtml(currentUser?.signatureData || '')}" alt="Assinatura padrão do responsável pela validação" /></div><label class="consent-check"><input id="vehicle-validation-signature-confirm" type="checkbox" /> Confirmo o uso da minha assinatura padrão nesta validação.</label>`;
+  const validationControls = canValidateChecklist ? `<div class="validation-controls">${validationSignatureProof}<button id="vehicle-validation-open-selfie" type="button" class="secondary">Capturar selfie do validador</button><div id="vehicle-validation-selfie-camera" class="hidden"><video id="vehicle-validation-selfie-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-validation-take-selfie" type="button">Tirar selfie</button><button id="vehicle-validation-cancel-selfie" type="button" class="secondary">Cancelar</button></div></div><div id="vehicle-validation-selfie-preview" class="epi-photo-previews"></div><p id="vehicle-validation-selfie-status" class="muted" aria-live="polite">Selfie do validador ainda não capturada.</p><div class="signature-actions"><button id="vehicle-validation-capture-location" type="button" class="secondary">Capturar localização</button></div><textarea id="validation-notes" maxlength="700" placeholder="Observação da validação (opcional)"></textarea><div class="signature-actions"><button id="approve-vehicle" type="button">Validar vistoria</button><button id="reject-vehicle" type="button" class="danger-button">Reprovar vistoria</button></div><p id="validation-message" class="muted">${isTest ? 'A selfie do Superadmin será anexada à validação de teste.' : 'A assinatura, a selfie e a localização serão registradas na validação.'}</p></div>` : '';
   const isDelivery = ['recebimento', 'entrega'].includes(checklist.checklistType);
   const acceptanceLabel = checklist.checklistType === 'recebimento' ? 'Aceitar recebimento' : isDelivery ? 'Aceitar entrega' : 'Aceitar transferência';
   const transferAcceptanceControls = isRecipientAcceptance ? `<div class="vehicle-transfer-acceptance"><div class="subheading"><h4>${acceptanceLabel}</h4><p class="muted">Confira o veículo e confirme com sua assinatura padrão e uma selfie feita agora.</p></div><div class="epi-signature-preview"><img src="${escapeHtml(currentUser?.signatureData || '')}" alt="Sua assinatura padrão" /></div><label class="consent-check"><input id="vehicle-transfer-signature-confirm" type="checkbox" /> Confirmo minha assinatura e aceito receber este veículo.</label><button id="vehicle-transfer-open-selfie" type="button">Abrir câmera para selfie</button><div id="vehicle-transfer-selfie-camera" class="hidden"><video id="vehicle-transfer-selfie-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-transfer-take-selfie" type="button">Tirar selfie</button><button id="vehicle-transfer-cancel-selfie" type="button" class="secondary">Cancelar</button></div></div><div id="vehicle-transfer-selfie-preview" class="epi-photo-previews"></div><p id="vehicle-transfer-message" class="muted" aria-live="polite">Nenhuma selfie capturada.</p><button id="vehicle-transfer-accept" type="button">${acceptanceLabel}</button></div>` : '';
@@ -2894,7 +2936,7 @@ function renderVehicleDetail(checklist, containerSelector, canValidate) {
   const statusLabel = { pendente_destinatario: 'Aguardando destinatário', pendente_validacao: 'Aguardando validação', validado: 'Validado', reprovado: 'Reprovado' }[checklist.status] || checklist.status;
   const targetLine = checklist.targetName ? `<p class="muted">${isDelivery ? 'Técnico destinatário' : 'Destinatário'}: ${escapeHtml(checklist.targetName)}</p>` : '';
   const dailyPeriodLine = isDaily && checklist.dailyPeriod ? `<p class="muted">Período: ${checklist.dailyPeriod === 'inicio' ? 'Começo do dia' : 'Fim do dia'}</p>` : '';
-  container.innerHTML = `<div class="vehicle-detail-card"><div class="section-heading"><div><div class="eyebrow">${escapeHtml(vehicleChecklistDisplayLabel(checklist).toUpperCase())} #${checklist.id}</div><h3>${escapeHtml(checklist.plate)} · ${escapeHtml(checklist.model || '')}</h3><p class="muted">Técnico: ${escapeHtml(checklist.driverName || '–')} · ${escapeHtml(formatDate(checklist.createdAt))}</p>${dailyPeriodLine}${targetLine}</div><span class="status status-${escapeHtml(checklist.status)}">${escapeHtml(statusLabel)}</span></div><div class="table-wrap">${table}</div>${checklist.validationNotes ? `<p class="validation-note"><b>Observação do responsável pela validação:</b> ${escapeHtml(checklist.validationNotes)}</p>` : ''}${media ? `<section class="vehicle-checklist-media"><h4>Fotos registradas</h4><div class="epi-process-media">${media}</div></section>` : ''}${renderVehicleSignatures(checklist)}${transferAcceptanceControls}${validationControls}</div>`;
+  container.innerHTML = `<div class="vehicle-detail-card">${isTest ? '<div class="test-mode-banner"><strong>CHECKLIST DE TESTE · SEM VALIDADE OPERACIONAL</strong><p>Registro isolado do fluxo real e disponível somente para o Superadmin.</p></div>' : ''}<div class="section-heading"><div><div class="eyebrow">${escapeHtml(vehicleChecklistDisplayLabel(checklist).toUpperCase())} #${checklist.id}${isTest ? ' · TESTE' : ''}</div><h3>${escapeHtml(checklist.plate)} · ${escapeHtml(checklist.model || '')}</h3><p class="muted">Técnico: ${escapeHtml(checklist.driverName || '–')} · ${escapeHtml(formatDate(checklist.createdAt))}</p>${dailyPeriodLine}${targetLine}</div><span class="status status-${escapeHtml(checklist.status)}">${escapeHtml(statusLabel)}</span></div><div class="table-wrap">${table}</div>${checklist.validationNotes ? `<p class="validation-note"><b>Observação do responsável pela validação:</b> ${escapeHtml(checklist.validationNotes)}</p>` : ''}${media ? `<section class="vehicle-checklist-media"><h4>Fotos registradas</h4><div class="epi-process-media">${media}</div></section>` : ''}${renderVehicleSignatures(checklist)}${transferAcceptanceControls}${validationControls}</div>`;
   container.querySelector('.vehicle-detail-card')?.insertAdjacentHTML('afterbegin', '<div class="detail-actions vehicle-detail-toolbar"><button id="close-vehicle-detail" type="button" class="secondary small-button">Fechar</button><button id="download-vehicle-checklist-pdf" type="button" class="secondary small-button">Baixar PDF</button></div>');
   container.querySelector('#close-vehicle-detail')?.addEventListener('click', () => { container.classList.add('hidden'); if (containerSelector === '#vehicle-list-detail') activateSubtab('vehicles-main', 'list'); if (containerSelector === '#vehicle-admin-detail') activateSubtab('vehicles-main', 'management'); if (containerSelector === '#validation-detail') activateSubtab('validation-main', 'list'); });
   container.querySelector('#download-vehicle-checklist-pdf')?.addEventListener('click', (event) => downloadPdfFile(`/api/vehicles/checklists/${checklist.id}/pdf`, `checklist-veiculo-${checklist.id}.pdf`, event.currentTarget));
@@ -2953,13 +2995,13 @@ function renderVehicleDetail(checklist, containerSelector, canValidate) {
     });
     const validate = async (decision) => {
       const message = $('#validation-message');
-      if (!$('#vehicle-validation-signature-confirm')?.checked) { message.textContent = 'Confirme o uso da sua assinatura padrão antes de validar.'; return; }
+      if (!isTest && !$('#vehicle-validation-signature-confirm')?.checked) { message.textContent = 'Confirme o uso da sua assinatura padrão antes de validar.'; return; }
       if (!vehicleValidationSelfie) { message.textContent = 'Capture a selfie do validador antes de validar.'; return; }
       try {
         if (validationLocation.latitude === null || validationLocation.longitude === null) {
           await new Promise((resolve) => navigator.geolocation?.getCurrentPosition((position) => { validationLocation = { latitude: position.coords.latitude, longitude: position.coords.longitude }; resolve(); }, () => resolve(), { enableHighAccuracy: false, timeout: 5000, maximumAge: 120000 }) || resolve());
         }
-        const updated = await api(`/api/vehicles/checklists/${checklist.id}/validate`, { method: 'POST', body: JSON.stringify({ decision, notes: $('#validation-notes').value, signatureConfirmed: true, latitude: validationLocation.latitude, longitude: validationLocation.longitude, deviceInfo: navigator.userAgent, validationSelfie: vehicleValidationSelfie }) });
+        const updated = await api(`/api/vehicles/checklists/${checklist.id}/validate`, { method: 'POST', body: JSON.stringify({ testMode: isTest, decision, notes: $('#validation-notes').value, signatureConfirmed: !isTest, latitude: validationLocation.latitude, longitude: validationLocation.longitude, deviceInfo: navigator.userAgent, validationSelfie: vehicleValidationSelfie }) });
         renderVehicleDetail(updated.checklist, containerSelector, true);
         scrollToInteraction(containerSelector);
         await loadValidationQueue();
@@ -3281,7 +3323,7 @@ $('#epi-process-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const message = $('#epi-process-form-message');
   try {
-    const data = await api('/api/epi/processes', { method: 'POST', body: JSON.stringify({ processType: $('#epi-process-type').value, validatorUserId: $('#epi-validator-user').value || null, targetUserId: $('#epi-target-user').value || null, items: readEpiProcessItems() }) });
+    const data = await api('/api/epi/processes', { method: 'POST', body: JSON.stringify({ testMode: isSuperadminRole(), processType: $('#epi-process-type').value, validatorUserId: $('#epi-validator-user').value || null, targetUserId: $('#epi-target-user').value || null, items: readEpiProcessItems() }) });
     currentEpiProcess = data.process;
     epiProcessLocation = { latitude: null, longitude: null };
     $('#epi-process-form').classList.add('hidden');
@@ -3391,27 +3433,28 @@ $('#vehicle-take-photo').addEventListener('click', () => {
 $('#vehicle-checklist-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const message = $('#vehicle-form-message');
+  const isTestMode = isSuperadminRole();
   if (!selectedVehicleChecklistType) { message.textContent = 'Escolha o tipo de checklist antes de enviar.'; return; }
   const finalChecklistType = selectedVehicleChecklistType === 'geral'
     ? (selectedVehicleChecklistPurpose || $('#vehicle-start-purpose')?.value || '')
     : selectedVehicleChecklistType;
   const dailyPeriod = finalChecklistType === 'diario' ? ($('#vehicle-final-daily-period')?.value || '') : null;
-  const targetUserId = ['transferencia', 'recebimento', 'entrega'].includes(finalChecklistType)
+  const targetUserId = !isTestMode && ['transferencia', 'recebimento', 'entrega'].includes(finalChecklistType)
     ? ($('#vehicle-start-target-user')?.value || $('#vehicle-final-target-user')?.value || '')
     : null;
-  if (selectedVehicleChecklistType === 'geral' && !['quinzenal', 'transferencia', 'recebimento', 'entrega'].includes(finalChecklistType)) { message.textContent = 'Escolha a finalidade do Checklist geral.'; return; }
+  if (selectedVehicleChecklistType === 'geral' && !['quinzenal', 'transferencia', 'recebimento', 'entrega', ...(isTestMode ? ['devolucao'] : [])].includes(finalChecklistType)) { message.textContent = 'Escolha a finalidade do Checklist geral.'; return; }
   if (finalChecklistType === 'diario' && !['inicio', 'fim'].includes(dailyPeriod)) { message.textContent = 'Escolha se o checklist diário é do começo ou do fim do dia.'; return; }
-  if (['transferencia', 'recebimento', 'entrega'].includes(finalChecklistType) && !targetUserId) { message.textContent = 'Selecione o usuário que receberá o veículo.'; return; }
-  if (!currentUser?.signatureData || !$('#vehicle-signature-confirm').checked) { message.textContent = 'Confirme a assinatura padrão cadastrada antes de enviar o checklist.'; return; }
+  if (!isTestMode && ['transferencia', 'recebimento', 'entrega'].includes(finalChecklistType) && !targetUserId) { message.textContent = 'Selecione o usuário que receberá o veículo.'; return; }
+  if (!isTestMode && (!currentUser?.signatureData || !$('#vehicle-signature-confirm').checked)) { message.textContent = 'Confirme a assinatura padrão cadastrada antes de enviar o checklist.'; return; }
   if (!vehicleSelfieDraft) { message.textContent = 'Capture a selfie pela câmera antes de enviar o checklist.'; return; }
   const missingPhoto = vehicleWizardDraft.find((item) => item.requiresPhoto && !vehiclePhotoDrafts.some((photo) => photo.itemKey === item.itemKey));
   if (missingPhoto) { message.textContent = `Capture a foto obrigatória do item: ${missingPhoto.itemName}.`; return; }
   const returnToMobileVehicleList = mobileChecklistActive && mobileChecklistKind === 'vehicle';
   try {
     await ensureVehicleLocation();
-    await api('/api/vehicles/checklists', { method: 'POST', body: JSON.stringify({ checklistType: finalChecklistType, targetUserId, dailyPeriod, plate: $('#vehicle-plate').value, model: $('#vehicle-model').value, vehicleYear: $('#vehicle-year').value, mileage: $('#vehicle-wizard-mileage').value, items: readVehicleEditor(), signatureConfirmed: true, latitude: vehicleSignatureLocation.latitude, longitude: vehicleSignatureLocation.longitude, deviceInfo: navigator.userAgent, selfie: vehicleSelfieDraft, photos: vehiclePhotoDrafts.map((photo) => ({ imageData: photo.imageData, itemKey: photo.itemKey || null, captureMode: 'camera', latitude: vehicleSignatureLocation.latitude, longitude: vehicleSignatureLocation.longitude })) }) });
+    await api('/api/vehicles/checklists', { method: 'POST', body: JSON.stringify({ testMode: isTestMode, checklistType: finalChecklistType, targetUserId, dailyPeriod, plate: $('#vehicle-plate').value, model: $('#vehicle-model').value, vehicleYear: $('#vehicle-year').value, mileage: $('#vehicle-wizard-mileage').value, items: readVehicleEditor(), signatureConfirmed: !isTestMode, latitude: vehicleSignatureLocation.latitude, longitude: vehicleSignatureLocation.longitude, deviceInfo: navigator.userAgent, selfie: vehicleSelfieDraft, photos: vehiclePhotoDrafts.map((photo) => ({ imageData: photo.imageData, itemKey: photo.itemKey || null, captureMode: 'camera', latitude: vehicleSignatureLocation.latitude, longitude: vehicleSignatureLocation.longitude })) }) });
     const sentType = vehicleChecklistTypeLabel(finalChecklistType);
-    const sentMessage = finalChecklistType === 'transferencia' ? `${sentType} enviado. Aguardando assinatura e selfie do destinatário.` : ['recebimento', 'entrega'].includes(finalChecklistType) ? `${sentType} enviado. Aguardando assinatura e selfie do técnico destinatário.` : finalChecklistType === 'diario' ? `${sentType} de ${dailyPeriod === 'inicio' ? 'começo' : 'fim'} do dia enviado para validação.` : `${sentType} e fotos enviados para validação.`;
+    const sentMessage = isTestMode ? `${sentType} de teste criado. Somente o Superadmin pode visualizá-lo e validá-lo; nenhum fluxo operacional foi afetado.` : finalChecklistType === 'transferencia' ? `${sentType} enviado. Aguardando assinatura e selfie do destinatário.` : ['recebimento', 'entrega'].includes(finalChecklistType) ? `${sentType} enviado. Aguardando assinatura e selfie do técnico destinatário.` : finalChecklistType === 'diario' ? `${sentType} de ${dailyPeriod === 'inicio' ? 'começo' : 'fim'} do dia enviado para validação.` : `${sentType} e fotos enviados para validação.`;
     if (returnToMobileVehicleList) closeMobileChecklist({ reset: false });
     event.target.reset(); selectedVehicleChecklistType = null; renderVehicleEditor(); setupVehicleTechnicianSignature(); message.textContent = sentMessage; await loadVehicleChecklists(); await loadOverview();
   } catch (error) { message.textContent = error.message; }

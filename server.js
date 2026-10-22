@@ -616,6 +616,7 @@ async function resolveCompletedComplianceAlerts() {
          FROM epi_processes p
          WHERE p.created_by = a.subject_id
            AND p.process_type = 'checklist_diario'
+            AND p.is_test = FALSE
            AND p.submitted_at IS NOT NULL
            AND timezone('America/Fortaleza', p.submitted_at)::date = a.period_key::date
        )`,
@@ -629,6 +630,7 @@ async function resolveCompletedComplianceAlerts() {
          SELECT 1
          FROM vehicle_checklists vc
          WHERE vc.checklist_type = 'diario'
+            AND vc.is_test = FALSE
            AND vc.daily_period = 'fim'
            AND vc.driver_user_id = a.subject_id
            AND vc.submitted_at IS NOT NULL
@@ -646,6 +648,7 @@ async function resolveCompletedComplianceAlerts() {
        LEFT JOIN vehicle_checklists vc
          ON (vc.vehicle_id = v.id OR (vc.vehicle_id IS NULL AND vc.plate = v.plate))
         AND vc.checklist_type = 'quinzenal'
+         AND vc.is_test = FALSE
         AND vc.submitted_at IS NOT NULL
         AND timezone('America/Fortaleza', vc.submitted_at)::date >= date_trunc('month', clock.local_date)::date
         AND timezone('America/Fortaleza', vc.submitted_at)::date < (date_trunc('month', clock.local_date) + INTERVAL '1 month')::date
@@ -698,6 +701,7 @@ async function checkDailyChecklistReminders() {
          SELECT 1 FROM epi_processes p
          WHERE p.created_by = u.id
            AND p.process_type = 'checklist_diario'
+            AND p.is_test = FALSE
            AND p.submitted_at IS NOT NULL
            AND timezone('America/Fortaleza', p.submitted_at)::date = clock.local_date
        )
@@ -752,6 +756,7 @@ async function checkDailyChecklistReminders() {
        JOIN users u ON u.id = vc.driver_user_id AND u.active = TRUE
        CROSS JOIN local_clock clock
        WHERE vc.checklist_type = 'diario'
+          AND vc.is_test = FALSE
          AND vc.daily_period = 'inicio'
          AND vc.submitted_at IS NOT NULL
          AND timezone('America/Fortaleza', vc.submitted_at)::date = clock.local_date
@@ -767,6 +772,7 @@ async function checkDailyChecklistReminders() {
        WHERE vc_end.vehicle_id = morning.vehicle_id
          AND vc_end.driver_user_id = morning.driver_user_id
          AND vc_end.checklist_type = 'diario'
+          AND vc_end.is_test = FALSE
          AND vc_end.daily_period = 'fim'
          AND vc_end.submitted_at IS NOT NULL
          AND timezone('America/Fortaleza', vc_end.submitted_at)::date = clock.local_date
@@ -809,6 +815,7 @@ async function checkDailyChecklistReminders() {
        LEFT JOIN vehicle_checklists vc
          ON (vc.vehicle_id = v.id OR (vc.vehicle_id IS NULL AND vc.plate = v.plate))
         AND vc.checklist_type = 'quinzenal'
+         AND vc.is_test = FALSE
         AND vc.submitted_at IS NOT NULL
         AND timezone('America/Fortaleza', vc.submitted_at)::date >= clock.month_start
         AND timezone('America/Fortaleza', vc.submitted_at)::date < (clock.month_end + 1)
@@ -1453,6 +1460,7 @@ async function initSchema() {
       validation_signature_typed_name TEXT,
       validation_signature_document_hash TEXT,
       validation_signature_validated_at TIMESTAMPTZ,
+      is_test BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
@@ -1501,6 +1509,7 @@ async function initSchema() {
     ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS validation_signature_typed_name TEXT;
     ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS validation_signature_document_hash TEXT;
     ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS validation_signature_validated_at TIMESTAMPTZ;
+    ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS is_test BOOLEAN NOT NULL DEFAULT FALSE;
 
     CREATE TABLE IF NOT EXISTS epi_process_media (
       id BIGSERIAL PRIMARY KEY,
@@ -1579,6 +1588,7 @@ async function initSchema() {
         CHECK (status IN ('rascunho', 'pendente_destinatario', 'pendente_validacao', 'validado', 'reprovado')),
       validation_notes TEXT,
       target_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      is_test BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       submitted_at TIMESTAMPTZ,
       validated_at TIMESTAMPTZ
@@ -1587,6 +1597,7 @@ async function initSchema() {
     ALTER TABLE vehicle_checklists ADD COLUMN IF NOT EXISTS checklist_type TEXT NOT NULL DEFAULT 'quinzenal';
     ALTER TABLE vehicle_checklists ADD COLUMN IF NOT EXISTS target_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL;
     ALTER TABLE vehicle_checklists ADD COLUMN IF NOT EXISTS daily_period TEXT;
+    ALTER TABLE vehicle_checklists ADD COLUMN IF NOT EXISTS is_test BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE vehicle_checklists DROP CONSTRAINT IF EXISTS vehicle_checklists_status_check;
     ALTER TABLE vehicle_checklists ADD CONSTRAINT vehicle_checklists_status_check CHECK (status IN ('rascunho', 'pendente_destinatario', 'pendente_validacao', 'validado', 'reprovado'));
     ALTER TABLE vehicle_checklists DROP CONSTRAINT IF EXISTS vehicle_checklists_checklist_type_check;
@@ -1814,6 +1825,7 @@ async function requestedStockItems(client, row) {
 }
 
 async function applyEpiProcessStockMovements(client, row, actorUserId) {
+  if (row.is_test === true) return;
   const requested = await requestedStockItems(client, row);
   let current = await getUserPpeHoldings(client, row.created_by);
   const allPpeIds = new Set([...requested.keys(), ...current.keys()]);
@@ -1928,6 +1940,7 @@ async function backfillPpeStockMovements() {
        JOIN epi_processes p ON p.id = pi.process_id
        LEFT JOIN ppe_items catalog ON (UPPER(COALESCE(pi.ca, '')) = UPPER(COALESCE(catalog.ca, '')) OR LOWER(pi.equipment_name) = LOWER(catalog.name))
        WHERE p.status = 'validado' AND p.process_type = 'transferencia'
+         AND p.is_test = FALSE
          AND p.target_user_id IS NOT NULL AND COALESCE(pi.ppe_item_id, catalog.id) IS NOT NULL
        ON CONFLICT (reference_key) DO NOTHING`,
     );
@@ -1941,7 +1954,8 @@ async function backfillPpeStockMovements() {
        FROM epi_process_items pi
        JOIN epi_processes p ON p.id = pi.process_id
        LEFT JOIN ppe_items catalog ON (UPPER(COALESCE(pi.ca, '')) = UPPER(COALESCE(catalog.ca, '')) OR LOWER(pi.equipment_name) = LOWER(catalog.name))
-       WHERE p.status = 'validado' AND p.process_type = 'devolucao' AND COALESCE(pi.ppe_item_id, catalog.id) IS NOT NULL
+       WHERE p.status = 'validado' AND p.process_type = 'devolucao'
+         AND p.is_test = FALSE AND COALESCE(pi.ppe_item_id, catalog.id) IS NOT NULL
        ON CONFLICT (reference_key) DO NOTHING`,
     );
 
@@ -1951,7 +1965,8 @@ async function backfillPpeStockMovements() {
        FROM epi_process_items pi
        JOIN epi_processes p ON p.id = pi.process_id
        LEFT JOIN ppe_items catalog ON (UPPER(COALESCE(pi.ca, '')) = UPPER(COALESCE(catalog.ca, '')) OR LOWER(pi.equipment_name) = LOWER(catalog.name))
-       WHERE p.status = 'validado' AND p.process_type = 'checklist_diario' AND COALESCE(pi.ppe_item_id, catalog.id) IS NOT NULL
+       WHERE p.status = 'validado' AND p.process_type = 'checklist_diario'
+         AND p.is_test = FALSE AND COALESCE(pi.ppe_item_id, catalog.id) IS NOT NULL
        ORDER BY p.created_by, COALESCE(pi.ppe_item_id, catalog.id), p.validated_at DESC NULLS LAST, p.id DESC, pi.id DESC`,
     );
     for (const item of daily.rows) {
@@ -2634,7 +2649,7 @@ app.get('/api/overview', auth, async (req, res) => {
   const params = isAdmin ? [] : [req.user.id];
   const actorClause = isAdmin ? '' : ' AND a.actor_user_id = $1';
   const termClause = isAdmin ? '' : ' AND (t.created_by = $1 OR t.signer_user_id = $1)';
-  const processClause = canReviewAll ? '' : ' AND (p.created_by = $1 OR p.validator_user_id = $1 OR p.target_user_id = $1)';
+  const processClause = ` AND p.is_test = FALSE${canReviewAll ? '' : ' AND (p.created_by = $1 OR p.validator_user_id = $1 OR p.target_user_id = $1)'}`;
   const pendingParams = canReviewAll ? [] : [req.user.id];
 
   const [activity, eventCount, termCount, pendingTerms, pendingValidations] = await Promise.all([
@@ -2667,7 +2682,7 @@ app.get('/api/overview', auth, async (req, res) => {
     pool.query(
       `SELECT (
          (SELECT COUNT(*) FROM vehicle_checklists
-          WHERE status = 'pendente_validacao'${isAdmin || req.user.role === 'vistoriador' ? '' : ' AND driver_user_id = $1'})
+          WHERE is_test = FALSE AND status = 'pendente_validacao'${isAdmin || req.user.role === 'vistoriador' ? '' : ' AND driver_user_id = $1'})
          +
          (SELECT COUNT(*) FROM epi_processes p
           WHERE p.status = 'pendente_validacao'${processClause})
@@ -2701,11 +2716,12 @@ app.get('/api/reports', auth, requireRole('admin'), async (req, res) => {
             AND timezone('America/Fortaleza', a.created_at)::date < $2::date) AS activity_count,
          (SELECT COUNT(*)::int FROM epi_processes p
           WHERE p.process_type = 'checklist_diario'
+            AND p.is_test = FALSE
             AND p.submitted_at IS NOT NULL
             AND timezone('America/Fortaleza', p.submitted_at)::date >= $1::date
             AND timezone('America/Fortaleza', p.submitted_at)::date < $2::date) AS daily_epi_checklists,
          (SELECT COUNT(*)::int FROM epi_processes p
-          WHERE p.submitted_at IS NOT NULL
+          WHERE p.is_test = FALSE AND p.submitted_at IS NOT NULL
             AND timezone('America/Fortaleza', p.submitted_at)::date >= $1::date
             AND timezone('America/Fortaleza', p.submitted_at)::date < $2::date) AS epi_processes,
          (SELECT COUNT(*)::int FROM epi_terms t
@@ -2713,7 +2729,7 @@ app.get('/api/reports', auth, requireRole('admin'), async (req, res) => {
             AND timezone('America/Fortaleza', t.signed_at)::date >= $1::date
             AND timezone('America/Fortaleza', t.signed_at)::date < $2::date) AS signed_epi_terms,
          (SELECT COUNT(*)::int FROM vehicle_checklists vc
-          WHERE vc.submitted_at IS NOT NULL
+          WHERE vc.is_test = FALSE AND vc.submitted_at IS NOT NULL
             AND timezone('America/Fortaleza', vc.submitted_at)::date >= $1::date
             AND timezone('America/Fortaleza', vc.submitted_at)::date < $2::date) AS vehicle_checklists,
          (SELECT COUNT(*)::int FROM compliance_alerts a
@@ -2732,6 +2748,7 @@ app.get('/api/reports', auth, requireRole('admin'), async (req, res) => {
        LEFT JOIN epi_processes p
          ON p.created_by = u.id
         AND p.process_type = 'checklist_diario'
+         AND p.is_test = FALSE
         AND p.submitted_at IS NOT NULL
         AND timezone('America/Fortaleza', p.submitted_at)::date >= $1::date
         AND timezone('America/Fortaleza', p.submitted_at)::date < $2::date
@@ -2754,6 +2771,7 @@ app.get('/api/reports', auth, requireRole('admin'), async (req, res) => {
        LEFT JOIN vehicle_checklists vc
          ON (vc.vehicle_id = v.id OR (vc.vehicle_id IS NULL AND UPPER(vc.plate) = UPPER(v.plate)))
         AND vc.submitted_at IS NOT NULL
+         AND vc.is_test = FALSE
         AND timezone('America/Fortaleza', vc.submitted_at)::date >= $1::date
         AND timezone('America/Fortaleza', vc.submitted_at)::date < $2::date
        WHERE v.status = 'ativo'
@@ -3033,6 +3051,7 @@ function publicEpiProcess(row, includeSignatureData = false) {
     id: row.id,
     processType: row.process_type,
     processTitle: epiProcessTitle(row.process_type),
+    isTest: Boolean(row.is_test),
     companyName,
     companyCnpj,
     createdBy: { id: row.created_by, name: row.creator_name, email: row.creator_email },
@@ -3129,6 +3148,7 @@ function epiProcessDocumentHash({ row, items, schema = 'sigos-epi-process-v1', b
     schema,
     processId: String(row.id),
     processType: row.process_type,
+    ...(row.is_test === true ? { isTest: true } : {}),
     termVersion: row.term_version,
     createdBy: String(row.created_by),
     targetUserId: row.target_user_id ? String(row.target_user_id) : null,
@@ -3142,6 +3162,7 @@ function epiProcessDocumentHash({ row, items, schema = 'sigos-epi-process-v1', b
 }
 
 function canAccessEpiProcess(user, row) {
+  if (row.is_test === true && !isSuperadminRole(user.role)) return false;
   return isChecklistValidatorRole(user.role)
     || String(row.created_by) === String(user.id)
     || String(row.validator_user_id || '') === String(user.id)
@@ -3159,6 +3180,7 @@ async function getTodaysDailyEpiProcess(userId, db = pool) {
   const result = await db.query(
     `${epiProcessQuery}
      WHERE p.process_type = 'checklist_diario'
+       AND p.is_test = FALSE
        AND p.created_by = $1
        AND timezone('America/Fortaleza', p.created_at)::date = timezone('America/Fortaleza', NOW())::date
      ORDER BY p.created_at DESC
@@ -3166,6 +3188,14 @@ async function getTodaysDailyEpiProcess(userId, db = pool) {
     [userId],
   );
   return result.rows[0] || null;
+}
+
+function testSignatureHash(user) {
+  return sha256Json({ schema: 'sigos-superadmin-test-signature-v1', userId: String(user.id), name: cleanText(user.name, 160) });
+}
+
+function testSignatureData(user) {
+  return `SIGOS_TEST_SIGNATURE:${user.id}:${cleanText(user.name, 160)}`;
 }
 
 app.get('/api/epi/targets', auth, async (req, res) => {
@@ -3202,8 +3232,9 @@ app.get('/api/epi/catalog', auth, requireRole('admin', 'tecnico'), async (req, r
 
 app.get('/api/epi/processes', auth, async (req, res) => {
   const canReviewAll = isChecklistValidatorRole(req.user.role);
-  const visible = canReviewAll ? '' : ' WHERE p.created_by = $1 OR p.validator_user_id = $1 OR p.target_user_id = $1';
-  const result = await pool.query(`${epiProcessQuery}${visible} ORDER BY p.created_at DESC LIMIT 100`, canReviewAll ? [] : [req.user.id]);
+  const visibility = isSuperadminRole(req.user.role) ? '' : ' WHERE p.is_test = FALSE';
+  const ownership = canReviewAll ? '' : `${visibility ? ' AND' : ' WHERE'} (p.created_by = $1 OR p.validator_user_id = $1 OR p.target_user_id = $1)`;
+  const result = await pool.query(`${epiProcessQuery}${visibility}${ownership} ORDER BY p.created_at DESC LIMIT 100`, canReviewAll ? [] : [req.user.id]);
   res.json({ processes: result.rows.map((row) => publicEpiProcess(row)) });
 });
 
@@ -3246,12 +3277,15 @@ app.get('/api/epi/processes/:id/pdf', auth, async (req, res) => {
   }
 });
 
-app.post('/api/epi/processes', auth, requireRole('tecnico'), async (req, res) => {
-  if (!isTechnicianOnboardingComplete(req.user)) return res.status(428).json({ code: 'ONBOARDING_REQUIRED', error: 'Conclua o primeiro acesso antes de iniciar um processo de EPI.' });
+app.post('/api/epi/processes', auth, requireRole('tecnico', 'superadmin'), async (req, res) => {
+  const isTest = req.body.testMode === true;
+  if (isTest && !isSuperadminRole(req.user.role)) return res.status(403).json({ error: 'Somente o Superadmin pode emitir checklists de teste.' });
+  if (!isTest && req.user.role !== 'tecnico') return res.status(403).json({ error: 'O Superadmin deve usar o modo de checklist de teste.' });
+  if (!isTest && !isTechnicianOnboardingComplete(req.user)) return res.status(428).json({ code: 'ONBOARDING_REQUIRED', error: 'Conclua o primeiro acesso antes de iniciar um processo de EPI.' });
   const processType = String(req.body.processType || '');
   const items = Array.isArray(req.body.items) ? req.body.items : [];
-  const validatorUserId = req.body.validatorUserId === null || req.body.validatorUserId === undefined || req.body.validatorUserId === '' ? null : Number(req.body.validatorUserId);
-  const targetUserId = req.body.targetUserId === null || req.body.targetUserId === undefined || req.body.targetUserId === '' ? null : Number(req.body.targetUserId);
+  const validatorUserId = isTest && processType === 'devolucao' ? Number(req.user.id) : req.body.validatorUserId === null || req.body.validatorUserId === undefined || req.body.validatorUserId === '' ? null : Number(req.body.validatorUserId);
+  const targetUserId = isTest && processType === 'transferencia' ? Number(req.user.id) : req.body.targetUserId === null || req.body.targetUserId === undefined || req.body.targetUserId === '' ? null : Number(req.body.targetUserId);
   const dailyDefinitions = processType === 'checklist_diario' ? await getDailyEpiChecklistDefinitions() : [];
   const dailyDefinitionsByKey = new Map(dailyDefinitions.map((item) => [item.key, item]));
   const requestedItems = items.map((item) => ({
@@ -3265,7 +3299,7 @@ app.post('/api/epi/processes', auth, requireRole('tecnico'), async (req, res) =>
     replacementRequested: item.replacementRequested === true,
   })).filter((item) => item.ppeItemId || item.equipmentName);
   if (!EPI_PROCESS_TYPES.includes(processType)) return res.status(400).json({ error: 'Selecione um tipo de processo EPI.' });
-  if (!req.user.signature_data || !req.user.signature_hash) return res.status(400).json({ error: 'Cadastre sua assinatura padrão antes de iniciar um processo.' });
+  if (!isTest && (!req.user.signature_data || !req.user.signature_hash)) return res.status(400).json({ error: 'Cadastre sua assinatura padrão antes de iniciar um processo.' });
   const hasInvalidQuantity = requestedItems.some((item) => {
     if (processType === 'checklist_diario') {
       const definition = dailyDefinitionsByKey.get(item.itemKey);
@@ -3349,7 +3383,7 @@ app.post('/api/epi/processes', auth, requireRole('tecnico'), async (req, res) =>
     if (!validator || !(isAdminRole(validator.role) || validator.role === 'vistoriador')) return res.status(400).json({ error: 'O responsável pela devolução precisa ser um supervisor ou administrador ativo.' });
   }
   if (processType === 'transferencia') {
-    if (!Number.isInteger(targetUserId) || String(targetUserId) === String(req.user.id)) return res.status(400).json({ error: 'Selecione outro usuário para receber a transferência.' });
+    if (!Number.isInteger(targetUserId) || (!isTest && String(targetUserId) === String(req.user.id))) return res.status(400).json({ error: 'Selecione outro usuário para receber a transferência.' });
     const result = await pool.query('SELECT id, name, role FROM users WHERE id = $1 AND active = TRUE', [targetUserId]);
     target = result.rows[0];
     if (!target) return res.status(400).json({ error: 'O usuário escolhido não está ativo.' });
@@ -3364,7 +3398,7 @@ app.post('/api/epi/processes', auth, requireRole('tecnico'), async (req, res) =>
   let signatureHash;
   try {
     await client.query('BEGIN');
-    if (processType === 'checklist_diario') {
+    if (processType === 'checklist_diario' && !isTest) {
       // Serializa duas tentativas simultâneas do mesmo usuário no mesmo dia
       // antes de consultar e inserir o processo.
       await client.query(
@@ -3384,10 +3418,10 @@ app.post('/api/epi/processes', auth, requireRole('tecnico'), async (req, res) =>
     const created = await client.query(
       `INSERT INTO epi_processes
         (process_type, created_by, validator_user_id, target_user_id, status, term_version,
-         company_logo_data, company_logo_mime_type, signature_validated_at, signer_signature_hash)
-       VALUES ($1, $2, $3, $4, 'aguarda_selfie', $5, $6, $7, NOW(), $8)
+         company_logo_data, company_logo_mime_type, signature_validated_at, signer_signature_hash, is_test)
+       VALUES ($1, $2, $3, $4, 'aguarda_selfie', $5, $6, $7, NOW(), $8, $9)
        RETURNING id`,
-      [processType, req.user.id, validator?.id || null, target?.id || null, legalText.version, companySettings.logoData, companySettings.logoMimeType, req.user.signature_hash],
+      [processType, req.user.id, validator?.id || null, target?.id || null, legalText.version, companySettings.logoData, companySettings.logoMimeType, isTest ? testSignatureHash(req.user) : req.user.signature_hash, isTest],
     );
     processId = created.rows[0].id;
     for (const item of normalizedItems) {
@@ -3401,13 +3435,14 @@ app.post('/api/epi/processes', auth, requireRole('tecnico'), async (req, res) =>
       schema: 'sigos-epi-process-v1',
       processId: String(processId),
       processType,
+      ...(isTest ? { isTest: true } : {}),
       termVersion: legalText.version,
       createdBy: String(req.user.id),
       targetUserId: target?.id ? String(target.id) : null,
       validatorUserId: validator?.id ? String(validator.id) : null,
       items: epiProcessSignatureItems(normalizedItems),
     });
-    signatureHash = sha256Json({ algorithm: 'SHA-256', version: 1, signerSignatureHash: req.user.signature_hash, documentHash });
+    signatureHash = sha256Json({ algorithm: 'SHA-256', version: 1, signerSignatureHash: isTest ? testSignatureHash(req.user) : req.user.signature_hash, documentHash });
     await client.query(
       `UPDATE epi_processes SET signature_document_hash = $1, signature_hash = $2 WHERE id = $3`,
       [documentHash, signatureHash, processId],
@@ -3420,9 +3455,9 @@ app.post('/api/epi/processes', auth, requireRole('tecnico'), async (req, res) =>
     client.release();
   }
 
-  await audit({ req, actorUserId: req.user.id, eventType: 'epi_process_created', entityType: 'epi_process', entityId: processId, metadata: { processType, itemCount: normalizedItems.length, validatorUserId: validator?.id || null, targetUserId: target?.id || null, termVersion: legalText.version } });
-  await audit({ req, actorUserId: req.user.id, eventType: 'epi_process_signature_validated', entityType: 'epi_process', entityId: processId, metadata: { signatureHash, documentHash, signerSignatureHash: req.user.signature_hash, termVersion: legalText.version } });
-  if (processType === 'transferencia') {
+  if (!isTest) await audit({ req, actorUserId: req.user.id, eventType: 'epi_process_created', entityType: 'epi_process', entityId: processId, metadata: { processType, itemCount: normalizedItems.length, validatorUserId: validator?.id || null, targetUserId: target?.id || null, termVersion: legalText.version } });
+  if (!isTest) await audit({ req, actorUserId: req.user.id, eventType: 'epi_process_signature_validated', entityType: 'epi_process', entityId: processId, metadata: { signatureHash, documentHash, signerSignatureHash: req.user.signature_hash, termVersion: legalText.version } });
+  if (processType === 'transferencia' && !isTest) {
     await notifyRoles({ roles: ['admin'], notificationType: 'epi_transfer_started', title: 'Transferência de EPI iniciada', message: `${req.user.name} iniciou uma transferência de EPI para ${target.name}.`, entityType: 'epi_process', entityId: processId, metadata: { processType, targetUserId: target.id } });
   }
   const created = await pool.query(`${epiProcessQuery} WHERE p.id = $1`, [processId]);
@@ -3458,7 +3493,7 @@ app.post('/api/epi/processes/:id/photos', auth, uploadRateLimit, async (req, res
   }
   const media = [];
   for (const photo of photos) media.push(await storeEpiProcessMedia({ req, processId: row.id, kind: 'epi_photo', itemKey: row.process_type === 'checklist_diario' ? photo.itemKey : null, imageData: photo.imageData, deviceInfo: req.body.deviceInfo, latitude: photo.latitude ?? req.body.latitude, longitude: photo.longitude ?? req.body.longitude }));
-  const stockClient = row.process_type === 'checklist_diario' ? await pool.connect() : null;
+  const stockClient = row.process_type === 'checklist_diario' && row.is_test !== true ? await pool.connect() : null;
   try {
     if (stockClient) {
       await stockClient.query('BEGIN');
@@ -3482,7 +3517,7 @@ app.post('/api/epi/processes/:id/photos', auth, uploadRateLimit, async (req, res
   } finally {
     stockClient?.release();
   }
-  await audit({ req, actorUserId: req.user.id, eventType: 'epi_process_photos_uploaded', entityType: 'epi_process', entityId: row.id, metadata: { mediaIds: media.map((item) => item.id), itemKeys: media.map((item) => item.item_key).filter(Boolean), photoCount: media.length, captureMode: 'camera', signatureHash: row.signature_hash, documentHash: row.signature_document_hash, termVersion: row.term_version, coordinates: media.map((item) => ({ mediaId: item.id, itemKey: item.item_key, latitude: item.latitude, longitude: item.longitude, locationLabel: item.location_label })) } });
+  if (!row.is_test) await audit({ req, actorUserId: req.user.id, eventType: 'epi_process_photos_uploaded', entityType: 'epi_process', entityId: row.id, metadata: { mediaIds: media.map((item) => item.id), itemKeys: media.map((item) => item.item_key).filter(Boolean), photoCount: media.length, captureMode: 'camera', signatureHash: row.signature_hash, documentHash: row.signature_document_hash, termVersion: row.term_version, coordinates: media.map((item) => ({ mediaId: item.id, itemKey: item.item_key, latitude: item.latitude, longitude: item.longitude, locationLabel: item.location_label })) } });
   const replacementItems = row.process_type === 'checklist_diario'
     ? (row.items || []).filter((item) => item.section === 'verificacao' && item.replacementRequested === true)
     : [];
@@ -3519,7 +3554,7 @@ app.post('/api/epi/processes/:id/photos', auth, uploadRateLimit, async (req, res
       ? `resposta “Não” na inspeção: ${negativeInspectionItems.map((item) => item.equipmentName).join(', ')}`
       : '';
     const attentionSummary = [replacementSummary, negativeSummary].filter(Boolean).join('; ');
-    await notifyRoles({
+    if (!row.is_test) await notifyRoles({
       roles: ['admin'],
       notificationType: 'epi_process_attention',
       title: 'Checklist de EPI requer atenção',
@@ -3528,7 +3563,7 @@ app.post('/api/epi/processes/:id/photos', auth, uploadRateLimit, async (req, res
       entityId: row.id,
       metadata: { processType: row.process_type, attentionReasons },
     });
-    if (replacementItems.length || negativeInspectionItems.length) {
+    if (!row.is_test && (replacementItems.length || negativeInspectionItems.length)) {
       await notifyUsers({
         userIds: [req.user.id],
         notificationType: replacementItems.length ? 'epi_replacement_requested' : 'epi_process_attention',
@@ -3541,7 +3576,7 @@ app.post('/api/epi/processes/:id/photos', auth, uploadRateLimit, async (req, res
         metadata: { processType: row.process_type, attentionReasons },
       });
     }
-    await audit({
+    if (!row.is_test) await audit({
       req,
       actorUserId: req.user.id,
       eventType: 'epi_process_attention',
@@ -3550,9 +3585,11 @@ app.post('/api/epi/processes/:id/photos', auth, uploadRateLimit, async (req, res
       metadata: { attentionReasons },
     });
   }
-  const recipientIds = [row.validator_user_id, row.target_user_id].filter((id) => id && String(id) !== String(req.user.id));
-  if (recipientIds.length) await notifyUsers({ userIds: recipientIds, notificationType: 'epi_process_pending_validation', title: `${epiProcessTitle(row.process_type)} aguardando validação`, message: `${req.user.name} enviou um processo de EPI para sua validação.`, entityType: 'epi_process', entityId: row.id, metadata: { processType: row.process_type } });
-  await notifyRoles({ roles: ['admin', 'vistoriador'], notificationType: 'epi_process_pending_validation', title: 'Processo de EPI aguardando validação', message: `${req.user.name} concluiu um processo de EPI e aguarda validação.`, entityType: 'epi_process', entityId: row.id, metadata: { processType: row.process_type, createdBy: req.user.id } });
+  if (!row.is_test) {
+    const recipientIds = [row.validator_user_id, row.target_user_id].filter((id) => id && String(id) !== String(req.user.id));
+    if (recipientIds.length) await notifyUsers({ userIds: recipientIds, notificationType: 'epi_process_pending_validation', title: `${epiProcessTitle(row.process_type)} aguardando validação`, message: `${req.user.name} enviou um processo de EPI para sua validação.`, entityType: 'epi_process', entityId: row.id, metadata: { processType: row.process_type } });
+    await notifyRoles({ roles: ['admin', 'vistoriador'], notificationType: 'epi_process_pending_validation', title: 'Processo de EPI aguardando validação', message: `${req.user.name} concluiu um processo de EPI e aguarda validação.`, entityType: 'epi_process', entityId: row.id, metadata: { processType: row.process_type, createdBy: req.user.id } });
+  }
   const updated = await pool.query(`${epiProcessQuery} WHERE p.id = $1`, [row.id]);
   res.json({ process: publicEpiProcess(updated.rows[0], true) });
 });
@@ -3560,19 +3597,20 @@ app.post('/api/epi/processes/:id/photos', auth, uploadRateLimit, async (req, res
 app.post('/api/epi/processes/:id/validate', auth, async (req, res) => {
   const row = await getEpiProcess(req.params.id, req.user);
   if (!row) return res.status(404).json({ error: 'Processo de EPI não encontrado.' });
-  const canValidate = isChecklistValidatorRole(req.user.role) || String(row.validator_user_id || '') === String(req.user.id);
+  const canValidate = row.is_test === true ? isSuperadminRole(req.user.role) : isChecklistValidatorRole(req.user.role) || String(row.validator_user_id || '') === String(req.user.id);
   if (!canValidate) return res.status(403).json({ error: 'Este processo não está atribuído para sua validação.' });
   if (row.status !== 'pendente_validacao') return res.status(409).json({ error: 'Este processo ainda não está pronto para validação.' });
   const decision = String(req.body.decision || 'validado') === 'reprovado' ? 'reprovado' : 'validado';
   const validationNotes = cleanText(req.body.notes, 500) || null;
   const isValidatorValidation = isChecklistValidatorRole(req.user.role);
-  if (isValidatorValidation && !req.user.signature_data) {
+  const testSuperadminValidation = row.is_test === true && isSuperadminRole(req.user.role);
+  if (isValidatorValidation && !testSuperadminValidation && !req.user.signature_data) {
     return res.status(409).json({ code: 'VALIDATOR_SIGNATURE_REQUIRED', error: 'Cadastre sua assinatura padrão antes de validar este processo.' });
   }
-  if (isValidatorValidation && req.body.signatureConfirmed !== true) {
+  if (isValidatorValidation && !testSuperadminValidation && req.body.signatureConfirmed !== true) {
     return res.status(400).json({ code: 'VALIDATOR_SIGNATURE_CONFIRMATION_REQUIRED', error: 'Confirme o uso da sua assinatura padrão para validar este processo.' });
   }
-  if (isValidatorValidation) {
+  if (isValidatorValidation && !testSuperadminValidation) {
     const expectedUserSignatureHash = sha256Json({ algorithm: 'SHA-256', version: 1, userId: String(req.user.id), signatureData: req.user.signature_data });
     if (!equalHash(req.user.signature_hash, expectedUserSignatureHash)) {
       return res.status(409).json({ code: 'VALIDATOR_SIGNATURE_INVALID', error: 'A assinatura padrão do responsável não confere. Cadastre-a novamente em Segurança.' });
@@ -3587,7 +3625,7 @@ app.post('/api/epi/processes/:id/validate', auth, async (req, res) => {
   }
   const items = row.items || [];
   const attentionStatus = row.attention_status || (row.admin_attention_required ? 'pending_admin' : 'none');
-  const isAttentionCorrection = row.admin_attention_required === true;
+  const isAttentionCorrection = row.is_test !== true && row.admin_attention_required === true;
   if (isAttentionCorrection) {
     if (attentionStatus !== 'returned_to_admin') {
       return res.status(409).json({ code: 'ATTENTION_REQUIRES_TECHNICIAN_CONFIRMATION', error: 'Este checklist requer retorno do técnico com nova selfie antes da aprovação.' });
@@ -3631,7 +3669,7 @@ app.post('/api/epi/processes/:id/validate', auth, async (req, res) => {
   const validationSignatureHash = isValidatorValidation ? sha256Json({
     algorithm: 'SHA-256',
     version: 1,
-    signerSignatureHash: req.user.signature_hash,
+    signerSignatureHash: testSuperadminValidation ? testSignatureHash(req.user) : req.user.signature_hash,
     documentHash: validationSignatureDocumentHash,
   }) : null;
   let validationMedia = null;
@@ -3655,18 +3693,18 @@ app.post('/api/epi/processes/:id/validate', auth, async (req, res) => {
       `UPDATE epi_processes
        SET status = $1, attention_status = CASE WHEN admin_attention_required THEN 'resolved' ELSE attention_status END,
            validated_by = $2, validated_at = $5, validation_notes = $3,
-           validation_signature_data = $6, validation_signature_hash = $7,
+            validation_signature_data = $6, validation_signature_hash = $7,
            validation_signature_typed_name = $8, validation_signature_document_hash = $9,
            validation_signature_validated_at = $5
        WHERE id = $4 AND status = 'pendente_validacao'
        RETURNING id, status, validated_at`,
-      [decision, req.user.id, validationNotes, row.id, validationSignatureAt, isValidatorValidation ? req.user.signature_data : null, validationSignatureHash, isValidatorValidation ? req.user.name : null, validationSignatureDocumentHash],
+      [decision, req.user.id, validationNotes, row.id, validationSignatureAt, isValidatorValidation ? (testSuperadminValidation ? testSignatureData(req.user) : req.user.signature_data) : null, validationSignatureHash, isValidatorValidation ? req.user.name : null, validationSignatureDocumentHash],
     );
     if (!updated.rows[0]) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Este processo já foi validado por outra pessoa.' });
     }
-    if (decision === 'validado') await applyEpiProcessStockMovements(client, row, req.user.id);
+    if (decision === 'validado' && !row.is_test) await applyEpiProcessStockMovements(client, row, req.user.id);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
@@ -3675,10 +3713,12 @@ app.post('/api/epi/processes/:id/validate', auth, async (req, res) => {
   } finally {
     client.release();
   }
-  await audit({ req, actorUserId: req.user.id, eventType: 'epi_process_validated', entityType: 'epi_process', entityId: row.id, metadata: { decision, notes: validationNotes, signatureHash: storedSignatureHash, documentHash: storedDocumentHash, validationSignatureHash, validationSignatureDocumentHash, validationMediaId: validationMedia?.id || null, validatorSignatureConfirmed: isValidatorValidation, attentionRevision: row.attention_revision || 0 } });
-  if (isValidatorValidation) await audit({ req, actorUserId: req.user.id, eventType: 'epi_process_validator_signature_validated', entityType: 'epi_process', entityId: row.id, metadata: { decision, validationSignatureHash, validationSignatureDocumentHash, validationMediaId: validationMedia?.id || null, originalDocumentHash: storedDocumentHash, validatorRole: req.user.role } });
-  await notifyRoles({ roles: ['admin'], notificationType: 'epi_process_validated', title: 'Processo de EPI validado', message: `${epiProcessTitle(row.process_type)} foi ${decision === 'validado' ? 'validado' : 'reprovado'} por ${req.user.name}.`, entityType: 'epi_process', entityId: row.id, metadata: { processType: row.process_type, decision, validatedBy: req.user.id } });
-  await notifyUsers({ userIds: [row.created_by, row.target_user_id].filter((id) => id && String(id) !== String(req.user.id)), notificationType: 'epi_process_validated', title: 'Processo de EPI atualizado', message: `${epiProcessTitle(row.process_type)} foi ${decision === 'validado' ? 'validado' : 'reprovado'}.`, entityType: 'epi_process', entityId: row.id, metadata: { processType: row.process_type, decision } });
+  if (!row.is_test) {
+    await audit({ req, actorUserId: req.user.id, eventType: 'epi_process_validated', entityType: 'epi_process', entityId: row.id, metadata: { decision, notes: validationNotes, signatureHash: storedSignatureHash, documentHash: storedDocumentHash, validationSignatureHash, validationSignatureDocumentHash, validationMediaId: validationMedia?.id || null, validatorSignatureConfirmed: isValidatorValidation, attentionRevision: row.attention_revision || 0 } });
+    if (isValidatorValidation) await audit({ req, actorUserId: req.user.id, eventType: 'epi_process_validator_signature_validated', entityType: 'epi_process', entityId: row.id, metadata: { decision, validationSignatureHash, validationSignatureDocumentHash, validationMediaId: validationMedia?.id || null, originalDocumentHash: storedDocumentHash, validatorRole: req.user.role } });
+    await notifyRoles({ roles: ['admin'], notificationType: 'epi_process_validated', title: 'Processo de EPI validado', message: `${epiProcessTitle(row.process_type)} foi ${decision === 'validado' ? 'validado' : 'reprovado'} por ${req.user.name}.`, entityType: 'epi_process', entityId: row.id, metadata: { processType: row.process_type, decision, validatedBy: req.user.id } });
+    await notifyUsers({ userIds: [row.created_by, row.target_user_id].filter((id) => id && String(id) !== String(req.user.id)), notificationType: 'epi_process_validated', title: 'Processo de EPI atualizado', message: `${epiProcessTitle(row.process_type)} foi ${decision === 'validado' ? 'validado' : 'reprovado'}.`, entityType: 'epi_process', entityId: row.id, metadata: { processType: row.process_type, decision } });
+  }
   const finalRow = await pool.query(`${epiProcessQuery} WHERE p.id = $1`, [row.id]);
   res.json({ process: publicEpiProcess(finalRow.rows[0], true) });
 });
@@ -3977,6 +4017,19 @@ function pdfContentWidth(doc) {
   return doc.page.width - doc.page.margins.left - doc.page.margins.right;
 }
 
+function pdfTestBanner(doc) {
+  pdfEnsureSpace(doc, 34);
+  const x = doc.page.margins.left;
+  const y = doc.y;
+  const width = pdfContentWidth(doc);
+  doc.save();
+  doc.rect(x, y, width, 26).fill('#fff7ed');
+  doc.restore();
+  doc.font('Helvetica-Bold').fontSize(10).fillColor('#9a3412')
+    .text('CHECKLIST DE TESTE · SEM VALIDADE OPERACIONAL', x + 8, y + 8, { width: width - 16, align: 'center' });
+  doc.y = y + 34;
+}
+
 function pdfMediaSource(media) {
   const imageData = media?.imageData || media?.image_data;
   const imageBuffer = pdfImageBuffer(imageData);
@@ -4197,7 +4250,7 @@ function renderEpiProcessPdf(doc, process) {
   const processType = process.process_type;
   const legalText = EPI_PROCESS_LEGAL_TEXT[processType] || EPI_PROCESS_LEGAL_TEXT.checklist_diario;
   const attentionStatus = process.attention_status || (process.admin_attention_required ? 'pending_admin' : 'none');
-  const attentionOpen = process.admin_attention_required === true && ['pending_admin', 'awaiting_technician'].includes(attentionStatus);
+  const attentionOpen = process.is_test !== true && process.admin_attention_required === true && ['pending_admin', 'awaiting_technician'].includes(attentionStatus);
   const companyName = process.company_trade_name || process.company_legal_name || DEFAULT_COMPANY_SETTINGS.tradeName;
   const companyCnpj = process.company_cnpj || DEFAULT_COMPANY_SETTINGS.cnpj;
   const logo = pdfCompanyHeader(doc, {
@@ -4206,6 +4259,7 @@ function renderEpiProcessPdf(doc, process) {
     logoData: process.company_logo_data || process.company_logo_data_current,
     label: `PROCESSO EPI #${process.id}`,
   });
+  if (process.is_test === true) pdfTestBanner(doc);
   doc.info.Title = `${legalText.title} #${process.id}`;
   doc.info.Author = 'SIGOS';
   doc.font('Helvetica-Bold').fontSize(13).fillColor('#172033').text(legalText.title, { align: 'center' });
@@ -4330,6 +4384,7 @@ function renderVehicleChecklistPdf(doc, checklist, company) {
     logoData: company.logoData,
     label: `${vehicleDocumentLabel} DE VEÍCULO #${checklist.id}`,
   });
+  if (checklist.isTest === true) pdfTestBanner(doc);
   doc.info.Title = `Termo de responsabilidade de veículo #${checklist.id}`;
   doc.info.Author = 'SIGOS';
   doc.font('Helvetica-Bold').fontSize(13).fillColor('#172033').text(vehicleDocumentLabel === 'CHECKLIST DIÁRIO' ? 'CHECKLIST DIÁRIO DE VEÍCULOS' : `TERMO DE ${vehicleDocumentLabel} DE VEÍCULOS`, { align: 'center' });
@@ -4711,6 +4766,7 @@ app.post('/api/epi/terms/:id/validate-signature', auth, async (req, res) => {
 function publicVehicleChecklist(row, includeSignatureData = false) {
   return {
     id: row.id,
+    isTest: Boolean(row.is_test),
     checklistType: row.checklist_type || 'quinzenal',
     dailyPeriod: row.daily_period || null,
     plate: row.plate,
@@ -4796,6 +4852,7 @@ function vehicleSignatureDocumentPayload(checklist, items, signature) {
   return {
     schema: 'sigos-vehicle-checklist-signature-v2',
     checklistId: String(checklist.id),
+    ...(checklist.is_test === true ? { isTest: true } : {}),
     plate: checklist.plate,
     model: checklist.model || null,
     vehicleYear: checklist.vehicle_year ?? checklist.vehicleYear ?? null,
@@ -4933,12 +4990,14 @@ const vehicleChecklistQuery = `
 `;
 
 function vehicleChecklistScope(req, alias = 'c', includePending = false) {
-  if (req.user.role === 'tecnico') return { clause: ` WHERE (${alias}.driver_user_id = $1 OR ${alias}.target_user_id = $1)`, params: [req.user.id] };
+  if (isSuperadminRole(req.user.role)) return { clause: '', params: [] };
+  const testFilter = `${alias}.is_test = FALSE AND `;
+  if (req.user.role === 'tecnico') return { clause: ` WHERE ${testFilter}(${alias}.driver_user_id = $1 OR ${alias}.target_user_id = $1)`, params: [req.user.id] };
   if (req.user.role === 'vistoriador') {
     const pendingClause = includePending ? ` OR ${alias}.status = 'pendente_validacao'` : '';
-    return { clause: ` WHERE (${alias}.driver_user_id = $1 OR ${alias}.target_user_id = $1 OR ${alias}.inspector_user_id = $1${pendingClause})`, params: [req.user.id] };
+    return { clause: ` WHERE ${testFilter}(${alias}.driver_user_id = $1 OR ${alias}.target_user_id = $1 OR ${alias}.inspector_user_id = $1${pendingClause})`, params: [req.user.id] };
   }
-  return { clause: '', params: [] };
+  return { clause: ` WHERE ${alias}.is_test = FALSE`, params: [] };
 }
 
 app.get('/api/vehicles/checklists/template', auth, (req, res) => {
@@ -4990,7 +5049,7 @@ app.get('/api/vehicles/checklists', auth, async (req, res) => {
 
 app.get('/api/vehicles/checklists/:id', auth, async (req, res) => {
   const includePending = req.user.role === 'vistoriador' && req.query.queue === '1';
-  let clause = ' WHERE c.id = $1';
+  let clause = ` WHERE c.id = $1${isSuperadminRole(req.user.role) ? '' : ' AND c.is_test = FALSE'}`;
   let params = [req.params.id];
   if (req.user.role === 'tecnico') {
     clause += ' AND (c.driver_user_id = $2 OR c.target_user_id = $2)';
@@ -5006,7 +5065,7 @@ app.get('/api/vehicles/checklists/:id', auth, async (req, res) => {
 
 app.get('/api/vehicles/checklists/:checklistId/media/:mediaId', auth, async (req, res) => {
   const access = await pool.query(
-    `SELECT c.driver_user_id, c.target_user_id, c.inspector_user_id, c.status, m.file_path, m.mime_type
+    `SELECT c.driver_user_id, c.target_user_id, c.inspector_user_id, c.status, c.is_test, m.file_path, m.mime_type
      FROM vehicle_checklist_media m
      JOIN vehicle_checklists c ON c.id = m.checklist_id
      WHERE m.id = $1 AND m.checklist_id = $2`,
@@ -5014,6 +5073,7 @@ app.get('/api/vehicles/checklists/:checklistId/media/:mediaId', auth, async (req
   );
   const media = access.rows[0];
   if (!media) return res.status(404).json({ error: 'Imagem do checklist não encontrada.' });
+  if (media.is_test && !isSuperadminRole(req.user.role)) return res.status(404).json({ error: 'Imagem do checklist não encontrada.' });
   const canAccess = isAdminRole(req.user.role)
     || String(media.driver_user_id) === String(req.user.id)
     || String(media.target_user_id || '') === String(req.user.id)
@@ -5025,7 +5085,7 @@ app.get('/api/vehicles/checklists/:checklistId/media/:mediaId', auth, async (req
 
 app.get('/api/vehicles/checklists/:id/pdf', auth, async (req, res) => {
   const includePending = req.user.role === 'vistoriador' && req.query.queue === '1';
-  let clause = ' WHERE c.id = $1';
+  let clause = ` WHERE c.id = $1${isSuperadminRole(req.user.role) ? '' : ' AND c.is_test = FALSE'}`;
   let params = [req.params.id];
   if (req.user.role === 'tecnico') {
     clause += ' AND (c.driver_user_id = $2 OR c.target_user_id = $2)';
@@ -5063,6 +5123,9 @@ app.get('/api/vehicles/checklists/:id/pdf', auth, async (req, res) => {
 });
 
 app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin', 'tecnico', 'vistoriador'), async (req, res) => {
+  const isTest = req.body.testMode === true;
+  if (isTest && !isSuperadminRole(req.user.role)) return res.status(403).json({ error: 'Somente o Superadmin pode emitir checklists de teste.' });
+  if (!isTest && isSuperadminRole(req.user.role)) return res.status(403).json({ error: 'O Superadmin deve usar o modo de checklist de teste.' });
   const requestedChecklistType = String(req.body.checklistType || 'quinzenal');
   const checklistType = requestedChecklistType === 'geral' ? String(req.body.checklistPurpose || '') : requestedChecklistType;
   if (!['diario', 'quinzenal', 'transferencia', 'recebimento', 'entrega', 'devolucao'].includes(checklistType)) return res.status(400).json({ error: 'Escolha a finalidade do Checklist geral.' });
@@ -5076,13 +5139,16 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
   const model = cleanText(req.body.model, 120);
   const vehicleYear = req.body.vehicleYear === null || req.body.vehicleYear === undefined || req.body.vehicleYear === '' ? null : Number(req.body.vehicleYear);
   const mileage = req.body.mileage === null || req.body.mileage === undefined || req.body.mileage === '' ? null : Number(req.body.mileage);
-  const targetUserId = req.body.targetUserId === null || req.body.targetUserId === undefined || req.body.targetUserId === '' ? null : Number(req.body.targetUserId);
+  const targetUserId = isTest ? null : req.body.targetUserId === null || req.body.targetUserId === undefined || req.body.targetUserId === '' ? null : Number(req.body.targetUserId);
   const submittedItems = Array.isArray(req.body.items) ? req.body.items : [];
-  const signatureRequest = parseRegisteredVehicleSignature(req.user, req.body);
+  const testLocation = isTest ? parseVehicleLocation(req.body) : null;
+  const signatureRequest = isTest
+    ? { ...testLocation, typedName: cleanText(req.user.name, 160), signatureData: testSignatureData(req.user), error: testLocation.error }
+    : parseRegisteredVehicleSignature(req.user, req.body);
   const submittedSelfie = req.body.selfie && typeof req.body.selfie === 'object' ? req.body.selfie : null;
   const submittedPhotos = Array.isArray(req.body.photos) ? req.body.photos : [];
   let target = null;
-  if (['transferencia', 'recebimento', 'entrega'].includes(checklistType)) {
+  if (!isTest && ['transferencia', 'recebimento', 'entrega'].includes(checklistType)) {
     if (!Number.isInteger(targetUserId) || targetUserId <= 0 || targetUserId === Number(req.user.id)) return res.status(400).json({ error: 'Selecione outro usuário para receber o veículo.' });
     const targetResult = await pool.query(`SELECT id, name, role FROM users WHERE id = $1 AND active = TRUE AND role IN ${['entrega', 'recebimento'].includes(checklistType) ? "('tecnico')" : "('tecnico', 'vistoriador')"}`, [targetUserId]);
     target = targetResult.rows[0];
@@ -5175,17 +5241,23 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const vehicleResult = await client.query(
-      `INSERT INTO vehicles (plate, description, model, vehicle_year)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (plate) DO UPDATE SET
-         description = EXCLUDED.description,
-         model = COALESCE(EXCLUDED.model, vehicles.model),
-         vehicle_year = COALESCE(EXCLUDED.vehicle_year, vehicles.vehicle_year)
-       RETURNING id`,
-      [plate, [model, vehicleYear ? `Ano ${vehicleYear}` : null].filter(Boolean).join(' · '), model, vehicleYear],
-    );
-    if (checklistType === 'diario') {
+    const vehicleResult = isTest
+      ? await client.query(`SELECT id FROM vehicles WHERE UPPER(plate) = UPPER($1) AND status = 'ativo' LIMIT 1`, [plate])
+      : await client.query(
+        `INSERT INTO vehicles (plate, description, model, vehicle_year)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (plate) DO UPDATE SET
+           description = EXCLUDED.description,
+           model = COALESCE(EXCLUDED.model, vehicles.model),
+           vehicle_year = COALESCE(EXCLUDED.vehicle_year, vehicles.vehicle_year)
+         RETURNING id`,
+        [plate, [model, vehicleYear ? `Ano ${vehicleYear}` : null].filter(Boolean).join(' · '), model, vehicleYear],
+      );
+    if (!vehicleResult.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Para um checklist de teste, selecione um veículo ativo já cadastrado.' });
+    }
+    if (checklistType === 'diario' && !isTest) {
       const duplicate = await client.query(
         `SELECT id
          FROM vehicle_checklists
@@ -5205,10 +5277,10 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
       }
     }
     const checklistResult = await client.query(
-      `INSERT INTO vehicle_checklists (vehicle_id, driver_user_id, target_user_id, checklist_type, daily_period, plate, model, vehicle_year, mileage, status, submitted_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `INSERT INTO vehicle_checklists (vehicle_id, driver_user_id, target_user_id, checklist_type, daily_period, plate, model, vehicle_year, mileage, status, submitted_at, is_test)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING id`,
-      [vehicleResult.rows[0].id, req.user.id, target?.id || null, checklistType, dailyPeriod, plate, model, vehicleYear, mileage, ['transferencia', 'recebimento', 'entrega'].includes(checklistType) ? 'pendente_destinatario' : 'pendente_validacao', signedAt],
+      [vehicleResult.rows[0].id, req.user.id, target?.id || null, checklistType, dailyPeriod, plate, model, vehicleYear, mileage, !isTest && ['transferencia', 'recebimento', 'entrega'].includes(checklistType) ? 'pendente_destinatario' : 'pendente_validacao', signedAt, isTest],
     );
     const checklistId = checklistResult.rows[0].id;
     for (const item of normalizedItems) {
@@ -5227,7 +5299,7 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
       [checklistId],
     );
     const { documentHash, signatureHash } = vehicleSignatureHashes(
-      { id: checklistId, plate, model, vehicle_year: vehicleYear, mileage },
+      { id: checklistId, plate, model, vehicle_year: vehicleYear, mileage, is_test: isTest },
       persistedItems.rows,
       signature,
     );
@@ -5278,10 +5350,12 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
         longitude: photo.longitude ?? req.body.longitude,
       }));
     }
-    await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_checklist_created', entityType: 'vehicle_checklist', entityId: checklistId, metadata: { plate, checklistType, dailyPeriod, targetUserId: target?.id || null, itemCount: normalizedItems.length, problemCount: problemItems.length, signatureHash, documentHash, signatureVersion: 2 } });
-    await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_signature_signed', entityType: 'vehicle_checklist', entityId: checklistId, metadata: { signerRole: signature.signerRole, signatureHash, documentHash, signatureVersion: 2, typedName: signature.typedName, latitude: signature.signerLatitude, longitude: signature.signerLongitude, device: signature.signerDevice } });
-    await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_checklist_photos_uploaded', entityType: 'vehicle_checklist', entityId: checklistId, metadata: { mediaIds: media.map((item) => item.id), selfieCount: 1, photoCount: submittedPhotos.length, captureMode: 'camera', coordinates: media.map((item) => ({ mediaId: item.id, kind: item.kind, itemKey: item.item_key, latitude: item.latitude, longitude: item.longitude, locationLabel: item.location_label })) } });
-    await notifyRoles({
+    if (!isTest) {
+      await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_checklist_created', entityType: 'vehicle_checklist', entityId: checklistId, metadata: { plate, checklistType, dailyPeriod, targetUserId: target?.id || null, itemCount: normalizedItems.length, problemCount: problemItems.length, signatureHash, documentHash, signatureVersion: 2 } });
+      await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_signature_signed', entityType: 'vehicle_checklist', entityId: checklistId, metadata: { signerRole: signature.signerRole, signatureHash, documentHash, signatureVersion: 2, typedName: signature.typedName, latitude: signature.signerLatitude, longitude: signature.signerLongitude, device: signature.signerDevice } });
+      await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_checklist_photos_uploaded', entityType: 'vehicle_checklist', entityId: checklistId, metadata: { mediaIds: media.map((item) => item.id), selfieCount: 1, photoCount: submittedPhotos.length, captureMode: 'camera', coordinates: media.map((item) => ({ mediaId: item.id, kind: item.kind, itemKey: item.item_key, latitude: item.latitude, longitude: item.longitude, locationLabel: item.location_label })) } });
+    }
+    if (!isTest) await notifyRoles({
       roles: ['entrega', 'recebimento'].includes(checklistType) ? ['admin'] : ['admin', ...(checklistType === 'transferencia' || checklistType === 'devolucao' ? [] : ['vistoriador'])],
       notificationType: 'checklist_created',
       title: 'Novo checklist de veículo',
@@ -5294,7 +5368,7 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
       entityId: checklistId,
       metadata: { plate, checklistType, dailyPeriod, createdBy: req.user.id, creatorRole: req.user.role, targetUserId: target?.id || null },
     });
-    if (target) {
+    if (target && !isTest) {
       await notifyUsers({
         userIds: [target.id],
         notificationType: ['entrega', 'recebimento'].includes(checklistType) ? 'vehicle_delivery_recipient' : 'vehicle_transfer_recipient',
@@ -5307,7 +5381,7 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
         metadata: { plate, checklistType, createdBy: req.user.id, targetUserId: target.id },
       });
     }
-    if (problemItems.length) {
+    if (problemItems.length && !isTest) {
       await notifyRoles({
         roles: ['admin'],
         notificationType: 'vehicle_checklist_issue',
@@ -5410,19 +5484,26 @@ app.post('/api/vehicles/checklists/:id/accept-transfer', auth, requireRole('admi
 });
 
 app.post('/api/vehicles/checklists/:id/validate', auth, requireRole('admin', 'vistoriador'), async (req, res) => {
+  const testMode = req.body.testMode === true;
+  if (testMode && !isSuperadminRole(req.user.role)) return res.status(403).json({ error: 'Somente o Superadmin pode validar checklists de teste.' });
   const decision = String(req.body.decision || '');
   const validationNotes = cleanText(req.body.notes, 700);
   if (!['validado', 'reprovado'].includes(decision)) return res.status(400).json({ error: 'Informe se a vistoria foi validada ou reprovada.' });
-  const signatureRequest = parseRegisteredVehicleSignature(req.user, req.body);
+  const testLocation = testMode ? parseVehicleLocation(req.body) : null;
+  const signatureRequest = testMode
+    ? { ...testLocation, typedName: cleanText(req.user.name, 160), signatureData: testSignatureData(req.user), error: testLocation.error }
+    : parseRegisteredVehicleSignature(req.user, req.body);
   if (signatureRequest.error) return res.status(400).json({ error: signatureRequest.error });
   const validationSelfie = req.body.validationSelfie && typeof req.body.validationSelfie === 'object' ? req.body.validationSelfie : null;
   if (!validationSelfie || validationSelfie.captureMode !== 'camera' || !validationSelfie.imageData) return res.status(400).json({ code: 'VALIDATOR_SELFIE_REQUIRED', error: 'Capture uma selfie pela câmera antes de validar este checklist.' });
   try { parseCapturedImage(validationSelfie.imageData); } catch (error) { return res.status(400).json({ code: 'VALIDATOR_SELFIE_INVALID', error: error.message }); }
-  const pending = await pool.query(`${vehicleChecklistQuery} WHERE c.id = $1 AND c.status = 'pendente_validacao' GROUP BY c.id, driver.name, inspector.name, target.name, target.role`, [req.params.id]);
+  const testVisibility = isSuperadminRole(req.user.role) ? '' : ' AND c.is_test = FALSE';
+  const pending = await pool.query(`${vehicleChecklistQuery} WHERE c.id = $1 AND c.status = 'pendente_validacao'${testVisibility} GROUP BY c.id, driver.name, inspector.name, target.name, target.role`, [req.params.id]);
   const checklist = pending.rows[0];
   if (!checklist) return res.status(404).json({ error: 'Checklist pendente não encontrado.' });
+  if (Boolean(checklist.is_test) !== testMode) return res.status(404).json({ error: 'Checklist pendente não encontrado.' });
   if (['transferencia', 'devolucao'].includes(checklist.checklist_type) && !isAdminRole(req.user.role)) return res.status(403).json({ error: 'Este processo precisa ser validado por um administrador.' });
-  if (checklist.checklist_type === 'transferencia') {
+  if (!checklist.is_test && checklist.checklist_type === 'transferencia') {
     const recipientSigned = (checklist.signatures || []).some((item) => item.signerUserId && String(item.signerUserId) === String(checklist.target_user_id) && item.signatureContext?.stage === 'transfer_recipient');
     const recipientSelfie = (checklist.media || []).some((item) => item.kind === 'selfie' && item.uploadedBy && String(item.uploadedBy) === String(checklist.target_user_id));
     if (!recipientSigned || !recipientSelfie) return res.status(409).json({ error: 'A transferência ainda precisa ser aceita pelo usuário destinatário com assinatura e selfie.' });
@@ -5493,9 +5574,10 @@ app.post('/api/vehicles/checklists/:id/validate', auth, requireRole('admin', 'vi
       ],
     );
     await client.query('COMMIT');
-    await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_checklist_validated', entityType: 'vehicle_checklist', entityId: result.rows[0].id, metadata: { decision, plate: result.rows[0].plate, notes: validationNotes || null, signatureHash, documentHash, validationMediaId: validationMedia.id, signatureVersion: 2 } });
-    await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_signature_signed', entityType: 'vehicle_checklist', entityId: result.rows[0].id, metadata: { signerRole: signature.signerRole, decision, signatureHash, documentHash, validationMediaId: validationMedia.id, signatureVersion: 2, typedName: signature.typedName, latitude: signature.signerLatitude, longitude: signature.signerLongitude, device: signature.signerDevice, signatureMethod: signature.signatureMethod } });
-    await notifyRoles({
+    if (!checklist.is_test) {
+      await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_checklist_validated', entityType: 'vehicle_checklist', entityId: result.rows[0].id, metadata: { decision, plate: result.rows[0].plate, notes: validationNotes || null, signatureHash, documentHash, validationMediaId: validationMedia.id, signatureVersion: 2 } });
+      await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_signature_signed', entityType: 'vehicle_checklist', entityId: result.rows[0].id, metadata: { signerRole: signature.signerRole, decision, signatureHash, documentHash, validationMediaId: validationMedia.id, signatureVersion: 2, typedName: signature.typedName, latitude: signature.signerLatitude, longitude: signature.signerLongitude, device: signature.signerDevice, signatureMethod: signature.signatureMethod } });
+      await notifyRoles({
       roles: ['admin'],
       notificationType: 'checklist_validated',
       title: 'Checklist validado',
@@ -5503,8 +5585,8 @@ app.post('/api/vehicles/checklists/:id/validate', auth, requireRole('admin', 'vi
       entityType: 'vehicle_checklist',
       entityId: result.rows[0].id,
       metadata: { plate: result.rows[0].plate, decision, validatedBy: req.user.id, notes: validationNotes || null },
-    });
-    await notifyUsers({
+      });
+      await notifyUsers({
       userIds: [checklist.driver_user_id, checklist.target_user_id].filter(Boolean),
       notificationType: 'vehicle_checklist_validation_result',
       title: `Processo de veículo ${decision === 'validado' ? 'validado' : 'reprovado'}`,
@@ -5512,7 +5594,8 @@ app.post('/api/vehicles/checklists/:id/validate', auth, requireRole('admin', 'vi
       entityType: 'vehicle_checklist',
       entityId: result.rows[0].id,
       metadata: { plate: result.rows[0].plate, decision, validatedBy: req.user.id, checklistType: checklist.checklist_type, notes: validationNotes || null },
-    });
+      });
+    }
     const updated = await pool.query(`${vehicleChecklistQuery} WHERE c.id = $1 GROUP BY c.id, driver.name, inspector.name, target.name, target.role`, [req.params.id]);
     res.json({ checklist: publicVehicleChecklist(updated.rows[0], true) });
   } catch (error) {
@@ -5531,7 +5614,7 @@ app.post('/api/vehicles/checklists/:id/validate-signature', auth, async (req, re
   if (req.user.role === 'vistoriador' && signerRole !== 'vistoriador') return res.status(403).json({ error: 'O Supervisor só pode validar a própria assinatura.' });
   if (!['admin', 'superadmin', 'tecnico', 'vistoriador'].includes(req.user.role)) return res.status(403).json({ error: 'Perfil sem acesso à validação de assinaturas.' });
 
-  let clause = ' WHERE c.id = $1';
+  let clause = ` WHERE c.id = $1${isSuperadminRole(req.user.role) ? '' : ' AND c.is_test = FALSE'}`;
   let params = [req.params.id];
   if (req.user.role === 'tecnico') {
     clause += ' AND (c.driver_user_id = $2 OR c.target_user_id = $2)';
@@ -5688,7 +5771,7 @@ app.get('/api/stock', auth, requireRole('admin'), async (_req, res) => {
                ) AS integrity_items
         FROM vehicle_checklists vc
         LEFT JOIN users u ON u.id = vc.driver_user_id
-        WHERE vc.vehicle_id = v.id OR vc.plate = v.plate
+        WHERE vc.is_test = FALSE AND (vc.vehicle_id = v.id OR vc.plate = v.plate)
         ORDER BY vc.created_at DESC, vc.id DESC
         LIMIT 1
       ) last_checklist ON TRUE
@@ -5699,10 +5782,12 @@ app.get('/api/stock', auth, requireRole('admin'), async (_req, res) => {
         SELECT ppe_item_id, to_user_id AS user_id, quantity::bigint AS delta
         FROM ppe_stock_movements
         WHERE to_user_id IS NOT NULL
+          AND (process_id IS NULL OR NOT EXISTS (SELECT 1 FROM epi_processes p WHERE p.id = ppe_stock_movements.process_id AND p.is_test = TRUE))
         UNION ALL
         SELECT ppe_item_id, from_user_id AS user_id, (-quantity)::bigint AS delta
         FROM ppe_stock_movements
         WHERE from_user_id IS NOT NULL
+          AND (process_id IS NULL OR NOT EXISTS (SELECT 1 FROM epi_processes p WHERE p.id = ppe_stock_movements.process_id AND p.is_test = TRUE))
       ), holding_by_user AS (
         SELECT h.ppe_item_id, h.user_id, u.name AS user_name, SUM(h.delta)::int AS quantity
         FROM holding_deltas h
@@ -5747,6 +5832,7 @@ app.get('/api/stock', auth, requireRole('admin'), async (_req, res) => {
      LEFT JOIN users to_user ON to_user.id = m.to_user_id
      LEFT JOIN users creator ON creator.id = m.created_by
      LEFT JOIN epi_processes process ON process.id = m.process_id
+     WHERE m.process_id IS NULL OR process.is_test = FALSE
      ORDER BY m.created_at DESC, m.id DESC
      LIMIT 100`,
   );
@@ -5765,6 +5851,7 @@ async function findVehicleIntegrityIssue({ vehicleId, checklistId, itemKey }) {
      JOIN vehicle_checklist_items i ON i.checklist_id = c.id AND i.item_key = $3
      LEFT JOIN users driver ON driver.id = c.driver_user_id
      WHERE c.id = $2
+       AND c.is_test = FALSE
      LIMIT 1`,
     [vehicleId, checklistId, itemKey],
   );
@@ -6149,7 +6236,7 @@ app.get('/api/users/:id/technician-summary', auth, requireRole('admin'), async (
       `WITH latest_daily_checklist AS (
          SELECT p.id, p.submitted_at, p.status
          FROM epi_processes p
-         WHERE p.created_by = $1
+          WHERE p.is_test = FALSE AND p.created_by = $1
            AND p.process_type = 'checklist_diario'
            AND p.submitted_at IS NOT NULL
            AND timezone('America/Fortaleza', p.submitted_at)::date = timezone('America/Fortaleza', NOW())::date
@@ -6174,7 +6261,7 @@ app.get('/api/users/:id/technician-summary', auth, requireRole('admin'), async (
     pool.query(
       `SELECT 'vehicle_checklist' AS type, id, plate AS label, status, created_at
        FROM vehicle_checklists
-       WHERE driver_user_id = $1 AND status IN ('pendente_validacao', 'reprovado')
+        WHERE is_test = FALSE AND driver_user_id = $1 AND status IN ('pendente_validacao', 'reprovado')
        UNION ALL
        SELECT 'epi_term' AS type, id, recipient_name AS label, status, created_at
        FROM epi_terms
@@ -6183,7 +6270,7 @@ app.get('/api/users/:id/technician-summary', auth, requireRole('admin'), async (
        UNION ALL
        SELECT 'epi_process' AS type, id, process_type AS label, status, created_at
        FROM epi_processes
-       WHERE created_by = $1
+        WHERE is_test = FALSE AND created_by = $1
          AND status IN ('aguarda_selfie', 'aguarda_fotos', 'pendente_validacao', 'reprovado')
        ORDER BY created_at DESC`,
       [technician.id],
@@ -6191,7 +6278,7 @@ app.get('/api/users/:id/technician-summary', auth, requireRole('admin'), async (
     pool.query(
       `SELECT DISTINCT to_char(timezone('America/Fortaleza', submitted_at)::date, 'YYYY-MM-DD') AS day
        FROM epi_processes
-       WHERE created_by = $1
+        WHERE is_test = FALSE AND created_by = $1
          AND process_type = 'checklist_diario'
          AND submitted_at IS NOT NULL
        ORDER BY day DESC`,
