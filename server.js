@@ -4517,10 +4517,10 @@ function renderEpiProcessPdf(doc, process) {
     });
   }
   if (process.validation_notes) pdfParagraph(doc, `Observação da validação: ${process.validation_notes}`);
-  pdfSignatureSection(doc, signatures);
   const itemLabels = new Map((process.items || []).map((item) => [String(item.item_key || item.itemKey || ''), item.equipment_name || item.equipmentName || 'EPI']));
   const epiPhotos = processMedia.filter((item) => item.kind === 'epi_photo');
   pdfMediaSection(doc, epiPhotos, 'Fotos dos EPIs', { startOnNewPage: true, labelByKey: itemLabels });
+  pdfSignatureSection(doc, signatures);
 }
 
 function renderVehicleChecklistPdf(doc, checklist, company) {
@@ -4591,10 +4591,10 @@ function renderVehicleChecklistPdf(doc, checklist, company) {
     label: `Assinatura · ${vehicleSignatureRoleLabelForPdf(signature.signerRole, signature.signatureContext)}`,
     identityMedia: findSignatureIdentityMedia(signature),
   }));
-  pdfSignatureSection(doc, signatures);
   const itemLabels = new Map((checklist.items || []).map((item) => [String(item.itemKey || item.item_key || ''), item.itemName || item.item_name || 'item do veículo']));
   const vehiclePhotos = checklistMedia.filter((item) => item.kind === 'vehicle_photo');
   pdfMediaSection(doc, vehiclePhotos, 'Fotos do veículo', { startOnNewPage: true, labelByKey: itemLabels });
+  pdfSignatureSection(doc, signatures);
 }
 
 function vehicleChecklistTypeLabelForPdf(type) {
