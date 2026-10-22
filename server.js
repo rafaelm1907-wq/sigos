@@ -4206,11 +4206,11 @@ function pdfSignatureSection(doc, signatures, title = 'Assinaturas eletrônicas'
     const photo = signature.identityMedia || {};
     doc.font('Helvetica').fontSize(6.5).fillColor('#172033');
     doc.text(`Nome: ${pdfShortMetadata(signature.typedName || signature.signerName || '–', 42)}`, textX, rowY + 30, { width: textWidth, lineBreak: false });
-    doc.text(`Foto: ${pdfMetadataDate(photo)}`, textX, rowY + 41, { width: textWidth, lineBreak: false });
-    doc.text(`Foto local: ${pdfShortMetadata(pdfMetadataLocation(photo), 34)}`, textX, rowY + 52, { width: textWidth, lineBreak: false });
-    doc.text(`Foto IP: ${pdfShortMetadata(pdfMetadataValue(photo, 'ipAddress', 'ip_address'), 30)}`, textX, rowY + 63, { width: textWidth, lineBreak: false });
-    doc.text(`Foto dispositivo: ${pdfShortMetadata(pdfMetadataDevice(photo), 30)}`, textX, rowY + 74, { width: textWidth, lineBreak: false });
-    doc.text(`Foto coord.: ${pdfShortMetadata(pdfMetadataCoordinates(photo), 30)}`, textX, rowY + 85, { width: textWidth, lineBreak: false });
+    doc.text(`Data/hora da foto: ${pdfMetadataDate(photo)}`, textX, rowY + 41, { width: textWidth, lineBreak: false });
+    doc.text(`Local da foto: ${pdfShortMetadata(pdfMetadataLocation(photo), 34)}`, textX, rowY + 52, { width: textWidth, lineBreak: false });
+    doc.text(`IP da foto: ${pdfShortMetadata(pdfMetadataValue(photo, 'ipAddress', 'ip_address'), 30)}`, textX, rowY + 63, { width: textWidth, lineBreak: false });
+    doc.text(`Dispositivo da foto: ${pdfShortMetadata(pdfMetadataDevice(photo), 30)}`, textX, rowY + 74, { width: textWidth, lineBreak: false });
+    doc.text(`Coordenadas da foto: ${pdfShortMetadata(pdfMetadataCoordinates(photo), 30)}`, textX, rowY + 85, { width: textWidth, lineBreak: false });
     const signatureImage = pdfImageBuffer(signature.signatureData);
     if (signatureImage) {
       try { doc.image(signatureImage, columnX + 8, rowY + 102, { fit: [cellWidth - 16, 64], align: 'center', valign: 'center' }); } catch { /* Assinatura inválida não impede o PDF. */ }
@@ -4223,11 +4223,11 @@ function pdfSignatureSection(doc, signatures, title = 'Assinaturas eletrônicas'
     const signatureCoordinates = pdfMetadataCoordinates(signature) !== 'Não informado' ? pdfMetadataCoordinates(signature) : pdfMetadataCoordinates(photo);
     const signatureLocation = pdfMetadataValue(signature, 'signerLocation') || pdfMetadataValue(photo, 'locationLabel', 'location_label') || signatureCoordinates;
     doc.font('Helvetica').fontSize(6.5).fillColor('#4b5563');
-    doc.text(`Assinatura: ${pdfMetadataDate(signature, 'signedAt', 'signed_at')}`, columnX + 8, rowY + 198, { width: cellWidth - 16, lineBreak: false });
-    doc.text(`Local: ${pdfShortMetadata(signatureLocation, 48)}`, columnX + 8, rowY + 209, { width: cellWidth - 16, lineBreak: false });
-    doc.text(`IP: ${pdfShortMetadata(signatureIp, 48)}`, columnX + 8, rowY + 220, { width: cellWidth - 16, lineBreak: false });
-    doc.text(`Dispositivo: ${pdfShortMetadata(signatureDevice, 48)}`, columnX + 8, rowY + 231, { width: cellWidth - 16, lineBreak: false });
-    doc.text(`Coordenadas: ${pdfShortMetadata(signatureCoordinates, 42)}`, columnX + 8, rowY + 242, { width: cellWidth - 16, lineBreak: false });
+    doc.text(`Data/hora da assinatura: ${pdfMetadataDate(signature, 'signedAt', 'signed_at')}`, columnX + 8, rowY + 198, { width: cellWidth - 16, lineBreak: false });
+    doc.text(`Local da assinatura: ${pdfShortMetadata(signatureLocation, 48)}`, columnX + 8, rowY + 209, { width: cellWidth - 16, lineBreak: false });
+    doc.text(`IP da assinatura: ${pdfShortMetadata(signatureIp, 48)}`, columnX + 8, rowY + 220, { width: cellWidth - 16, lineBreak: false });
+    doc.text(`Dispositivo da assinatura: ${pdfShortMetadata(signatureDevice, 48)}`, columnX + 8, rowY + 231, { width: cellWidth - 16, lineBreak: false });
+    doc.text(`Coordenadas da assinatura: ${pdfShortMetadata(signatureCoordinates, 42)}`, columnX + 8, rowY + 242, { width: cellWidth - 16, lineBreak: false });
     doc.text(`Hash: ${signature.signatureHash || '–'}`, columnX + 8, rowY + 249, { width: cellWidth - 16, height: 18, lineGap: 0 });
     if (index % 2 === 1 || index === entries.length - 1) doc.y = rowY + cardHeight;
   });
