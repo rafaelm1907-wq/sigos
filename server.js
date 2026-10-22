@@ -54,6 +54,7 @@ const cookieSecure = String(process.env.COOKIE_SECURE || 'false') === 'true';
 const enforceHttps = String(process.env.ENFORCE_HTTPS || 'false') === 'true';
 const systemUpdateStatusPath = process.env.SIGOS_UPDATE_STATUS_PATH || '/opt/epi-checklist/.update/status.json';
 const systemUpdateCommand = '/usr/local/sbin/sigos-update';
+const systemUpdateStaleAfterMs = 15 * 60 * 1000;
 // A sessão precisa sobreviver ao fechamento do navegador e ao uso diário do app.
 // O limite de aparelhos continua sendo controlado por session_version: um perfil
 // comum mantém uma sessão e o Superadmin mantém as duas mais recentes.
@@ -1093,7 +1094,18 @@ function sqlLiteral(value) {
 function readSystemUpdateStatus() {
   try {
     const status = JSON.parse(fs.readFileSync(systemUpdateStatusPath, 'utf8'));
-    return status && typeof status === 'object' ? status : { status: 'not_configured' };
+    if (!status || typeof status !== 'object') return { status: 'not_configured' };
+    if (status.status === 'running') {
+      const updatedAt = Date.parse(String(status.updatedAt || ''));
+      if (!Number.isFinite(updatedAt) || Date.now() - updatedAt > systemUpdateStaleAfterMs) {
+        return {
+          ...status,
+          status: 'failed',
+          message: 'A atualização anterior foi interrompida. O sistema está pronto para uma nova tentativa.',
+        };
+      }
+    }
+    return status;
   } catch {
     return { status: 'not_configured', message: 'O atualizador ainda não foi configurado neste servidor.' };
   }
