@@ -621,7 +621,7 @@ function pdfDownloadStatus(button) {
   return status;
 }
 
-async function downloadPdfFile(url, filename, button) {
+
   if (!button || button.disabled) return;
   const status = pdfDownloadStatus(button);
   const originalLabel = button.textContent;
@@ -652,13 +652,13 @@ async function downloadPdfFile(url, filename, button) {
         if (status) status.textContent = 'PDF pronto para salvar ou compartilhar.';
         return;
       } catch (error) {
-        if (error?.name === 'AbortError') throw error;
+        function isAndroidWebView() {  const userAgent = navigator.userAgent || '';  return /Android/i.test(userAgent) && (/;\s*wv\)/i.test(userAgent) || /Version\/4\.0.*Chrome\//i.test(userAgent));}function openPdfOnMobile(objectUrl, status, cancelledShare = false) {  const message = cancelledShare    ? 'Compartilhamento cancelado. O PDF foi aberto para você salvar no dispositivo.'    : 'PDF aberto. Use o menu do dispositivo para salvar ou compartilhar.';  const opened = window.open(objectUrl, '_blank', 'noopener,noreferrer');  if (!opened) window.location.assign(objectUrl);  if (status) status.textContent = message;}async function downloadPdfFile(url, filename, button) {
         // Alguns WebViews expõem o Web Share, mas recusam arquivos após o await do download.
         // Nesse caso, continua para o fallback de download/abertura do PDF.
       }
     }
-    const objectUrl = URL.createObjectURL(blob);
-    const link = document.createElement('a');
+    if (error?.name === 'AbortError') { /* Continue to the mobile PDF fallback. */ }
+    const objectUrl = URL.createObjectURL(blob);    if (isAndroidWebView()) {      // Android WebView normalmente ignora o atributo download para blob URLs.      // A URL autenticada deixa o DownloadManager/visualizador nativo assumir o arquivo.      window.location.assign(new URL(url, window.location.href).toString());      if (status) status.textContent = 'Abrindo o PDF para download no dispositivo…';      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);      return;    }
     link.href = objectUrl;
     link.download = filename;
     link.target = '_blank';
