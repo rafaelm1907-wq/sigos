@@ -3225,7 +3225,7 @@ app.get('/api/epi/processes/:id/pdf', auth, async (req, res) => {
   const row = await getEpiProcess(req.params.id, req.user);
   if (!row) return res.status(404).json({ error: 'Processo de EPI não encontrado.' });
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="processo-epi-${row.id}.pdf"`);
+  
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margins: { top: 42, bottom: 42, left: 42, right: 42 } });
   doc.pipe(res);
   try {
@@ -3969,7 +3969,7 @@ function pdfContentWidth(doc) {
   return doc.page.width - doc.page.margins.left - doc.page.margins.right;
 }
 
-function pdfParagraph(doc, value, width = null) {
+const mediaResult = await pool.query(    `SELECT id, kind, item_key, capture_context, file_path, mime_type, created_at     FROM epi_process_media     WHERE process_id = $1     ORDER BY created_at, id`,    [row.id],  );  row.pdfMedia = mediaResult.rows;  res.setHeader('Content-Disposition', `attachment; filename="processo-epi-${row.id}.pdf"`);
   pdfEnsureSpace(doc, 45);
   doc.x = doc.page.margins.left;
   doc.font('Helvetica').fontSize(10).fillColor('#172033').text(String(value || ''), { width: width || pdfContentWidth(doc), lineGap: 2, align: 'justify' });
@@ -4109,7 +4109,7 @@ function renderEpiTermPdf(doc, term) {
     ca: item.ca || '–',
     observation: `${String(item.condition || '').toUpperCase()}${item.observation ? ` · ${item.observation}` : ''}`,
   })));
-  pdfParagraph(doc, TERM_LEGAL_TEXT.clt);
+  function pdfMediaSource(media) {  const imageData = media?.imageData || media?.image_data;  const imageBuffer = pdfImageBuffer(imageData);  if (imageBuffer) return imageBuffer;  const filePath = media?.filePath || media?.file_path;  return filePath && fs.existsSync(filePath) ? filePath : null;}function pdfMediaLabel(media, index) {  const kind = media?.kind || '';  const context = media?.captureContext || media?.capture_context || 'original';  if (kind === 'selfie' && context === 'validation') return `Selfie do validador ${index}`;  if (kind === 'selfie' && context === 'attention_correction') return `Selfie após correção ${index}`;  if (kind === 'selfie') return `Selfie do responsável ${index}`;  if (media?.itemKey || media?.item_key) return `Foto do item ${media.itemKey || media.item_key}`;  return `Foto registrada ${index}`;}function pdfMediaSection(doc, media, title = 'Fotos registradas') {  const photos = (media || []).filter((item) => pdfMediaSource(item));  if (!photos.length) return;  const gap = 12;  const cellWidth = (pdfContentWidth(doc) - gap) / 2;  const imageHeight = 150;  const rowHeight = imageHeight + 34;  let rowY = null;  const drawTitle = () => {    doc.font('Helvetica-Bold').fontSize(10).fillColor('#172033').text(title, doc.page.margins.left, doc.y, { width: pdfContentWidth(doc) });    doc.moveDown(.35);  };  pdfEnsureSpace(doc, rowHeight + 38);  drawTitle();  photos.forEach((photo, index) => {    if (index % 2 === 0) {      if (doc.y + rowHeight > doc.page.height - doc.page.margins.bottom) {        doc.addPage();        drawTitle();      }      rowY = doc.y;    }    const columnX = doc.page.margins.left + (index % 2) * (cellWidth + gap);    const source = pdfMediaSource(photo);    try {      doc.image(source, columnX, rowY, { fit: [cellWidth, imageHeight], align: 'center', valign: 'center' });    } catch {      doc.rect(columnX, rowY, cellWidth, imageHeight).stroke('#9ca3af');      doc.font('Helvetica').fontSize(8).fillColor('#6b7280').text('Imagem indisponível', columnX, rowY + imageHeight / 2 - 5, { width: cellWidth, align: 'center' });    }    doc.font('Helvetica').fontSize(8).fillColor('#4b5563').text(pdfMediaLabel(photo, index + 1), columnX, rowY + imageHeight + 5, { width: cellWidth, align: 'center' });    if (index % 2 === 1 || index === photos.length - 1) doc.y = rowY + rowHeight;  });  doc.moveDown(.35);}function pdfParagraph(doc, value, width = null) {
   pdfParagraph(doc, TERM_LEGAL_TEXT.nr06);
   pdfParagraph(doc, TERM_LEGAL_TEXT.declaration);
   pdfEnsureSpace(doc, 150);
@@ -4198,7 +4198,7 @@ function renderEpiProcessPdf(doc, process) {
   }
 
   if (processType === 'checklist_diario') {
-    pdfParagraph(doc, TERM_LEGAL_TEXT.clt);
+    function pdfMediaSource(media) {  const imageData = media?.imageData || media?.image_data;  const imageBuffer = pdfImageBuffer(imageData);  if (imageBuffer) return imageBuffer;  const filePath = media?.filePath || media?.file_path;  return filePath && fs.existsSync(filePath) ? filePath : null;}function pdfMediaLabel(media, index) {  const kind = media?.kind || '';  const context = media?.captureContext || media?.capture_context || 'original';  if (kind === 'selfie' && context === 'validation') return `Selfie do validador ${index}`;  if (kind === 'selfie' && context === 'attention_correction') return `Selfie após correção ${index}`;  if (kind === 'selfie') return `Selfie do responsável ${index}`;  if (media?.itemKey || media?.item_key) return `Foto do item ${media.itemKey || media.item_key}`;  return `Foto registrada ${index}`;}function pdfMediaSection(doc, media, title = 'Fotos registradas') {  const photos = (media || []).filter((item) => pdfMediaSource(item));  if (!photos.length) return;  const gap = 12;  const cellWidth = (pdfContentWidth(doc) - gap) / 2;  const imageHeight = 150;  const rowHeight = imageHeight + 34;  let rowY = null;  const drawTitle = () => {    doc.font('Helvetica-Bold').fontSize(10).fillColor('#172033').text(title, doc.page.margins.left, doc.y, { width: pdfContentWidth(doc) });    doc.moveDown(.35);  };  pdfEnsureSpace(doc, rowHeight + 38);  drawTitle();  photos.forEach((photo, index) => {    if (index % 2 === 0) {      if (doc.y + rowHeight > doc.page.height - doc.page.margins.bottom) {        doc.addPage();        drawTitle();      }      rowY = doc.y;    }    const columnX = doc.page.margins.left + (index % 2) * (cellWidth + gap);    const source = pdfMediaSource(photo);    try {      doc.image(source, columnX, rowY, { fit: [cellWidth, imageHeight], align: 'center', valign: 'center' });    } catch {      doc.rect(columnX, rowY, cellWidth, imageHeight).stroke('#9ca3af');      doc.font('Helvetica').fontSize(8).fillColor('#6b7280').text('Imagem indisponível', columnX, rowY + imageHeight / 2 - 5, { width: cellWidth, align: 'center' });    }    doc.font('Helvetica').fontSize(8).fillColor('#4b5563').text(pdfMediaLabel(photo, index + 1), columnX, rowY + imageHeight + 5, { width: cellWidth, align: 'center' });    if (index % 2 === 1 || index === photos.length - 1) doc.y = rowY + rowHeight;  });  doc.moveDown(.35);}function pdfParagraph(doc, value, width = null) {
     pdfParagraph(doc, TERM_LEGAL_TEXT.nr06);
     pdfParagraph(doc, TERM_LEGAL_TEXT.declaration);
   }
@@ -4305,7 +4305,7 @@ function renderVehicleChecklistPdf(doc, checklist, company) {
       afterDescription: item.afterDescription || '–',
     })));
   }
-  if (checklist.validationNotes) pdfParagraph(doc, `Observação da validação: ${checklist.validationNotes}`);
+  pdfMediaSection(doc, process.pdfMedia || process.media, 'Fotos do checklist');    pdfParagraph(doc, TERM_LEGAL_TEXT.clt);
 
   (checklist.signatures || []).forEach((signature) => {
     pdfEnsureSpace(doc, 155);
@@ -4976,7 +4976,7 @@ app.get('/api/vehicles/checklists/:id/pdf', auth, async (req, res) => {
   const company = publicCompanySettings(await getCompanySettings());
   const checklist = publicVehicleChecklist(result.rows[0], true);
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="checklist-veiculo-${checklist.id}.pdf"`);
+  pdfMediaSection(doc, checklist.pdfMedia || checklist.media, 'Fotos do checklist');  if (checklist.validationNotes) pdfParagraph(doc, `Observação da validação: ${checklist.validationNotes}`);
   const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margins: { top: 42, bottom: 42, left: 42, right: 42 } });
   doc.pipe(res);
   try {
