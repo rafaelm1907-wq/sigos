@@ -3311,7 +3311,8 @@ app.post('/api/epi/processes', auth, requireRole('tecnico', 'superadmin'), async
     replacementRequested: item.replacementRequested === true,
   })).filter((item) => item.ppeItemId || item.equipmentName);
   if (!EPI_PROCESS_TYPES.includes(processType)) return res.status(400).json({ error: 'Selecione um tipo de processo EPI.' });
-  if (!isTest && (!req.user.signature_data || !req.user.signature_hash)) return res.status(400).json({ error: 'Cadastre sua assinatura padrão antes de iniciar um processo.' });
+  if (!req.user.signature_data || !req.user.signature_hash) return res.status(400).json({ error: 'Cadastre sua assinatura padrão antes de iniciar um processo.' });
+  if (req.body.signatureConfirmed !== true) return res.status(400).json({ error: 'Confirme o uso da sua assinatura padrão para iniciar este processo.' });
   const hasInvalidQuantity = requestedItems.some((item) => {
     if (processType === 'checklist_diario') {
       const definition = dailyDefinitionsByKey.get(item.itemKey);
@@ -3433,7 +3434,7 @@ app.post('/api/epi/processes', auth, requireRole('tecnico', 'superadmin'), async
          company_logo_data, company_logo_mime_type, signature_validated_at, signer_signature_hash, is_test)
        VALUES ($1, $2, $3, $4, 'aguarda_selfie', $5, $6, $7, NOW(), $8, $9)
        RETURNING id`,
-      [processType, req.user.id, validator?.id || null, target?.id || null, legalText.version, companySettings.logoData, companySettings.logoMimeType, isTest ? testSignatureHash(req.user) : req.user.signature_hash, isTest],
+      [processType, req.user.id, validator?.id || null, target?.id || null, legalText.version, companySettings.logoData, companySettings.logoMimeType, req.user.signature_hash, isTest],
     );
     processId = created.rows[0].id;
     for (const item of normalizedItems) {
@@ -3454,7 +3455,7 @@ app.post('/api/epi/processes', auth, requireRole('tecnico', 'superadmin'), async
       validatorUserId: validator?.id ? String(validator.id) : null,
       items: epiProcessSignatureItems(normalizedItems),
     });
-    signatureHash = sha256Json({ algorithm: 'SHA-256', version: 1, signerSignatureHash: isTest ? testSignatureHash(req.user) : req.user.signature_hash, documentHash });
+    signatureHash = sha256Json({ algorithm: 'SHA-256', version: 1, signerSignatureHash: req.user.signature_hash, documentHash });
     await client.query(
       `UPDATE epi_processes SET signature_document_hash = $1, signature_hash = $2 WHERE id = $3`,
       [documentHash, signatureHash, processId],
@@ -3615,14 +3616,13 @@ app.post('/api/epi/processes/:id/validate', auth, async (req, res) => {
   const decision = String(req.body.decision || 'validado') === 'reprovado' ? 'reprovado' : 'validado';
   const validationNotes = cleanText(req.body.notes, 500) || null;
   const isValidatorValidation = isChecklistValidatorRole(req.user.role);
-  const testSuperadminValidation = row.is_test === true && isSuperadminRole(req.user.role);
-  if (isValidatorValidation && !testSuperadminValidation && !req.user.signature_data) {
+  if (isValidatorValidation && !req.user.signature_data) {
     return res.status(409).json({ code: 'VALIDATOR_SIGNATURE_REQUIRED', error: 'Cadastre sua assinatura padrão antes de validar este processo.' });
   }
-  if (isValidatorValidation && !testSuperadminValidation && req.body.signatureConfirmed !== true) {
+  if (isValidatorValidation && req.body.signatureConfirmed !== true) {
     return res.status(400).json({ code: 'VALIDATOR_SIGNATURE_CONFIRMATION_REQUIRED', error: 'Confirme o uso da sua assinatura padrão para validar este processo.' });
   }
-  if (isValidatorValidation && !testSuperadminValidation) {
+  if (isValidatorValidation) {
     const expectedUserSignatureHash = sha256Json({ algorithm: 'SHA-256', version: 1, userId: String(req.user.id), signatureData: req.user.signature_data });
     if (!equalHash(req.user.signature_hash, expectedUserSignatureHash)) {
       return res.status(409).json({ code: 'VALIDATOR_SIGNATURE_INVALID', error: 'A assinatura padrão do responsável não confere. Cadastre-a novamente em Segurança.' });
@@ -3681,7 +3681,7 @@ app.post('/api/epi/processes/:id/validate', auth, async (req, res) => {
   const validationSignatureHash = isValidatorValidation ? sha256Json({
     algorithm: 'SHA-256',
     version: 1,
-    signerSignatureHash: testSuperadminValidation ? testSignatureHash(req.user) : req.user.signature_hash,
+    signerSignatureHash: req.user.signature_hash,
     documentHash: validationSignatureDocumentHash,
   }) : null;
   let validationMedia = null;
@@ -3710,7 +3710,7 @@ app.post('/api/epi/processes/:id/validate', auth, async (req, res) => {
            validation_signature_validated_at = $5
        WHERE id = $4 AND status = 'pendente_validacao'
        RETURNING id, status, validated_at`,
-      [decision, req.user.id, validationNotes, row.id, validationSignatureAt, isValidatorValidation ? (testSuperadminValidation ? testSignatureData(req.user) : req.user.signature_data) : null, validationSignatureHash, isValidatorValidation ? req.user.name : null, validationSignatureDocumentHash],
+      [decision, req.user.id, validationNotes, row.id, validationSignatureAt, isValidatorValidation ? req.user.signature_data : null, validationSignatureHash, isValidatorValidation ? req.user.name : null, validationSignatureDocumentHash],
     );
     if (!updated.rows[0]) {
       await client.query('ROLLBACK');
@@ -5153,10 +5153,7 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
   const mileage = req.body.mileage === null || req.body.mileage === undefined || req.body.mileage === '' ? null : Number(req.body.mileage);
   const targetUserId = isTest ? null : req.body.targetUserId === null || req.body.targetUserId === undefined || req.body.targetUserId === '' ? null : Number(req.body.targetUserId);
   const submittedItems = Array.isArray(req.body.items) ? req.body.items : [];
-  const testLocation = isTest ? parseVehicleLocation(req.body) : null;
-  const signatureRequest = isTest
-    ? { ...testLocation, typedName: cleanText(req.user.name, 160), signatureData: testSignatureData(req.user), error: testLocation.error }
-    : parseRegisteredVehicleSignature(req.user, req.body);
+  const signatureRequest = parseRegisteredVehicleSignature(req.user, req.body);
   const submittedSelfie = req.body.selfie && typeof req.body.selfie === 'object' ? req.body.selfie : null;
   const submittedPhotos = Array.isArray(req.body.photos) ? req.body.photos : [];
   let target = null;
@@ -5501,10 +5498,7 @@ app.post('/api/vehicles/checklists/:id/validate', auth, requireRole('admin', 'vi
   const decision = String(req.body.decision || '');
   const validationNotes = cleanText(req.body.notes, 700);
   if (!['validado', 'reprovado'].includes(decision)) return res.status(400).json({ error: 'Informe se a vistoria foi validada ou reprovada.' });
-  const testLocation = testMode ? parseVehicleLocation(req.body) : null;
-  const signatureRequest = testMode
-    ? { ...testLocation, typedName: cleanText(req.user.name, 160), signatureData: testSignatureData(req.user), error: testLocation.error }
-    : parseRegisteredVehicleSignature(req.user, req.body);
+  const signatureRequest = parseRegisteredVehicleSignature(req.user, req.body);
   if (signatureRequest.error) return res.status(400).json({ error: signatureRequest.error });
   const validationSelfie = req.body.validationSelfie && typeof req.body.validationSelfie === 'object' ? req.body.validationSelfie : null;
   if (!validationSelfie || validationSelfie.captureMode !== 'camera' || !validationSelfie.imageData) return res.status(400).json({ code: 'VALIDATOR_SELFIE_REQUIRED', error: 'Capture uma selfie pela câmera antes de validar este checklist.' });
