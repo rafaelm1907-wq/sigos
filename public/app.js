@@ -621,7 +621,21 @@ function pdfDownloadStatus(button) {
   return status;
 }
 
+function isAndroidWebView() {
+  const userAgent = navigator.userAgent || '';
+  return /Android/i.test(userAgent) && (/;\s*wv\)/i.test(userAgent) || /Version\/4\.0.*Chrome\//i.test(userAgent));
+}
 
+function openPdfOnMobile(objectUrl, status, cancelledShare = false) {
+  const message = cancelledShare
+    ? 'Compartilhamento cancelado. O PDF foi aberto para você salvar no dispositivo.'
+    : 'PDF aberto. Use o menu do dispositivo para salvar ou compartilhar.';
+  const opened = window.open(objectUrl, '_blank', 'noopener,noreferrer');
+  if (!opened) window.location.assign(objectUrl);
+  if (status) status.textContent = message;
+}
+
+async function downloadPdfFile(url, filename, button) {
   if (!button || button.disabled) return;
   const status = pdfDownloadStatus(button);
   const originalLabel = button.textContent;
@@ -652,13 +666,28 @@ function pdfDownloadStatus(button) {
         if (status) status.textContent = 'PDF pronto para salvar ou compartilhar.';
         return;
       } catch (error) {
-        function isAndroidWebView() {  const userAgent = navigator.userAgent || '';  return /Android/i.test(userAgent) && (/;\s*wv\)/i.test(userAgent) || /Version\/4\.0.*Chrome\//i.test(userAgent));}function openPdfOnMobile(objectUrl, status, cancelledShare = false) {  const message = cancelledShare    ? 'Compartilhamento cancelado. O PDF foi aberto para você salvar no dispositivo.'    : 'PDF aberto. Use o menu do dispositivo para salvar ou compartilhar.';  const opened = window.open(objectUrl, '_blank', 'noopener,noreferrer');  if (!opened) window.location.assign(objectUrl);  if (status) status.textContent = message;}async function downloadPdfFile(url, filename, button) {
+        if (error?.name === 'AbortError') {
+          // O usuário pode fechar a folha de compartilhamento e ainda salvar o PDF pelo visualizador.
+        }
         // Alguns WebViews expõem o Web Share, mas recusam arquivos após o await do download.
         // Nesse caso, continua para o fallback de download/abertura do PDF.
       }
     }
-    if (error?.name === 'AbortError') { /* Continue to the mobile PDF fallback. */ }
-    const objectUrl = URL.createObjectURL(blob);    if (isAndroidWebView()) {      // Android WebView normalmente ignora o atributo download para blob URLs.      // A URL autenticada deixa o DownloadManager/visualizador nativo assumir o arquivo.      window.location.assign(new URL(url, window.location.href).toString());      if (status) status.textContent = 'Abrindo o PDF para download no dispositivo…';      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);      return;    }
+    const objectUrl = URL.createObjectURL(blob);
+    if (isAndroidWebView()) {
+      // Android WebView normalmente ignora o atributo download para blob URLs.
+      // A URL autenticada do endpoint deixa o DownloadManager/visualizador nativo assumir o arquivo.
+      window.location.assign(new URL(url, window.location.href).toString());
+      if (status) status.textContent = 'Abrindo o PDF para download no dispositivo…';
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      return;
+    }
+    if (isIosDevice() || isPwaStandalone()) {
+      openPdfOnMobile(objectUrl, status, false);
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      return;
+    }
+    const link = document.createElement('a');
     link.href = objectUrl;
     link.download = filename;
     link.target = '_blank';
