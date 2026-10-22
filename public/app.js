@@ -156,7 +156,7 @@ let epiAttentionSelfieDraft = null;
 let validationSelfieDraft = null;
 let epiWizardIndex = 0;
 let epiWizardItems = [];
-let epiDailyPhotoDrafts = {}; epiPhotoDrafts = []; renderEpiPhotoDrafts();
+let epiDailyPhotoDrafts = {};
 let mobileChecklistActive = false;
 let mobileChecklistKind = null;
 let mobileWorkflowParent = null;
