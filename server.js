@@ -2984,6 +2984,7 @@ async function storeVehicleChecklistMedia({ req, checklistId, imageData, kind = 
 const epiProcessQuery = `
   SELECT p.*,
     creator.name AS creator_name, creator.email AS creator_email,
+    creator.role AS creator_role,
     creator.signature_data AS creator_signature_data,
     validator.name AS validator_name, validator.role AS validator_role,
     target.name AS target_name, target.role AS target_role,
@@ -4050,19 +4051,23 @@ function pdfMediaSource(media) {
   return filePath && fs.existsSync(filePath) ? filePath : null;
 }
 
-function pdfMediaLabel(media, index) {
+function pdfMediaLabel(media, index, labelByKey = null) {
   const kind = media?.kind || '';
   const context = media?.captureContext || media?.capture_context || 'original';
   if (kind === 'selfie' && context === 'validation') return `Selfie do validador ${index}`;
   if (kind === 'selfie' && context === 'attention_correction') return `Selfie após correção ${index}`;
   if (kind === 'selfie') return `Selfie do responsável ${index}`;
-  if (media?.itemKey || media?.item_key) return `Foto do item ${media.itemKey || media.item_key}`;
+  const itemKey = media?.itemKey || media?.item_key;
+  if (itemKey && labelByKey?.get(String(itemKey))) return `Foto · ${labelByKey.get(String(itemKey))}`;
+  if (itemKey) return `Foto do item ${itemKey}`;
   return `Foto registrada ${index}`;
 }
 
-function pdfMediaSection(doc, media, title = 'Fotos registradas') {
+function pdfMediaSection(doc, media, title = 'Fotos registradas', options = {}) {
   const photos = (media || []).filter((item) => pdfMediaSource(item));
   if (!photos.length) return;
+  const startOnNewPage = options.startOnNewPage === true;
+  const labelByKey = options.labelByKey || null;
   const gap = 12;
   const cellWidth = (pdfContentWidth(doc) - gap) / 2;
   const imageHeight = 150;
@@ -4072,7 +4077,8 @@ function pdfMediaSection(doc, media, title = 'Fotos registradas') {
     doc.font('Helvetica-Bold').fontSize(10).fillColor('#172033').text(title, doc.page.margins.left, doc.y, { width: pdfContentWidth(doc) });
     doc.moveDown(.35);
   };
-  pdfEnsureSpace(doc, rowHeight + 38);
+  if (startOnNewPage) doc.addPage();
+  else pdfEnsureSpace(doc, rowHeight + 38);
   drawTitle();
   photos.forEach((photo, index) => {
     if (index % 2 === 0) {
@@ -4090,8 +4096,53 @@ function pdfMediaSection(doc, media, title = 'Fotos registradas') {
       doc.rect(columnX, rowY, cellWidth, imageHeight).stroke('#9ca3af');
       doc.font('Helvetica').fontSize(8).fillColor('#6b7280').text('Imagem indisponível', columnX, rowY + imageHeight / 2 - 5, { width: cellWidth, align: 'center' });
     }
-    doc.font('Helvetica').fontSize(8).fillColor('#4b5563').text(pdfMediaLabel(photo, index + 1), columnX, rowY + imageHeight + 5, { width: cellWidth, align: 'center' });
+    doc.font('Helvetica').fontSize(8).fillColor('#4b5563').text(pdfMediaLabel(photo, index + 1, labelByKey), columnX, rowY + imageHeight + 5, { width: cellWidth, align: 'center' });
     if (index % 2 === 1 || index === photos.length - 1) doc.y = rowY + rowHeight;
+  });
+  doc.moveDown(.35);
+}
+
+function pdfSignatureSection(doc, signatures, title = 'Assinaturas eletrônicas') {
+  const entries = (signatures || []).filter((signature) => signature && (signature.signatureData || signature.typedName || signature.signerName));
+  if (!entries.length) return;
+  const gap = 12;
+  const cellWidth = (pdfContentWidth(doc) - gap) / 2;
+  const cardHeight = 166;
+  const drawTitle = () => {
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#172033').text(title, doc.page.margins.left, doc.y, { width: pdfContentWidth(doc) });
+    doc.moveDown(.35);
+  };
+  pdfEnsureSpace(doc, cardHeight + 38);
+  drawTitle();
+  let rowY = null;
+  entries.forEach((signature, index) => {
+    if (index % 2 === 0) {
+      if (doc.y + cardHeight > doc.page.height - doc.page.margins.bottom) {
+        doc.addPage();
+        drawTitle();
+      }
+      rowY = doc.y;
+    }
+    const columnX = doc.page.margins.left + (index % 2) * (cellWidth + gap);
+    doc.roundedRect(columnX, rowY, cellWidth, cardHeight, 5).stroke('#9ca3af');
+    doc.font('Helvetica-Bold').fontSize(8).fillColor('#172033').text(signature.label || 'Assinatura', columnX + 8, rowY + 8, { width: cellWidth - 16 });
+    const identitySource = pdfMediaSource(signature.identityMedia);
+    if (identitySource) {
+      try { doc.image(identitySource, columnX + 8, rowY + 28, { fit: [42, 58], align: 'center', valign: 'center' }); } catch { /* Selfie inválida não impede o PDF. */ }
+    }
+    const textX = columnX + (identitySource ? 58 : 8);
+    const textWidth = cellWidth - (identitySource ? 66 : 16);
+    doc.font('Helvetica').fontSize(8).fillColor('#172033').text(`Nome: ${signature.typedName || signature.signerName || '–'}`, textX, rowY + 28, { width: textWidth, lineBreak: false });
+    doc.text(`Data: ${signature.signedAt ? new Date(signature.signedAt).toLocaleString('pt-BR') : '–'}`, textX, rowY + 41, { width: textWidth, lineBreak: false });
+    const signatureImage = pdfImageBuffer(signature.signatureData);
+    if (signatureImage) {
+      try { doc.image(signatureImage, textX, rowY + 56, { fit: [textWidth, 48], align: 'center', valign: 'center' }); } catch { /* Assinatura inválida não impede o PDF. */ }
+    }
+    const lineY = rowY + 108;
+    doc.moveTo(columnX + 8, lineY).lineTo(columnX + cellWidth - 8, lineY).stroke('#4b5563');
+    doc.font('Helvetica').fontSize(8).text(signature.signerName || signature.typedName || 'Responsável', columnX + 8, lineY + 5, { width: textWidth, align: 'center', lineBreak: false });
+    doc.fontSize(6.5).fillColor('#4b5563').text(`Hash: ${signature.signatureHash || '–'}`, textX, rowY + 130, { width: textWidth, height: 24, lineGap: 0 });
+    if (index % 2 === 1 || index === entries.length - 1) doc.y = rowY + cardHeight;
   });
   doc.moveDown(.35);
 }
@@ -4325,8 +4376,6 @@ function renderEpiProcessPdf(doc, process) {
     })));
   }
 
-  pdfMediaSection(doc, process.pdfMedia || process.media, 'Fotos do checklist');
-
   if (processType === 'checklist_diario') {
     pdfParagraph(doc, TERM_LEGAL_TEXT.clt);
     pdfParagraph(doc, TERM_LEGAL_TEXT.nr06);
@@ -4341,20 +4390,16 @@ function renderEpiProcessPdf(doc, process) {
     doc.moveDown(.5);
   }
   doc.font('Helvetica-Bold').fontSize(9).fillColor('#172033').text(`Status: ${process.status || '–'}`);
-  const signature = pdfImageBuffer(process.creator_signature_data);
-  if (signature) {
-    const signatureWidth = 220;
-    try { doc.image(signature, (doc.page.width - signatureWidth) / 2, doc.y + 8, { fit: [signatureWidth, 82] }); } catch { /* Assinatura inválida não impede o PDF. */ }
-    doc.y += 92;
-  }
-  const signatureLineWidth = 210;
-  const signatureLineX = (doc.page.width - signatureLineWidth) / 2;
-  doc.moveTo(signatureLineX, doc.y).lineTo(signatureLineX + signatureLineWidth, doc.y).stroke('#4b5563');
-  doc.font('Helvetica').fontSize(9).text(`Assinatura do responsável · ${process.creator_name || '–'}`, signatureLineX, doc.y + 5, { width: signatureLineWidth, align: 'center' });
-  doc.y += 30;
-  doc.fontSize(8).fillColor('#4b5563').text(`Assinatura validada em: ${process.signature_validated_at ? new Date(process.signature_validated_at).toLocaleString('pt-BR') : 'Não informada'}`);
-  doc.text(`Hash da assinatura: ${process.signature_hash || '–'}`);
-  doc.text(`Hash do documento: ${process.signature_document_hash || '–'}`);
+  const processMedia = process.pdfMedia || process.media || [];
+  const signatures = [{
+    label: 'Assinatura do responsável',
+    signerName: process.creator_name,
+    typedName: process.creator_name,
+    signedAt: process.signature_validated_at,
+    signatureData: process.creator_signature_data,
+    signatureHash: process.signature_hash,
+    identityMedia: processMedia.find((item) => item.kind === 'selfie' && (item.capture_context || item.captureContext) === 'original'),
+  }];
   if (attentionOpen) {
     doc.text(`Tratamento da atenção: ${attentionStatus}`);
     if (process.attention_returned_at) doc.text(`Confirmação do técnico: ${new Date(process.attention_returned_at).toLocaleString('pt-BR')} · revisão ${process.attention_revision || 0}`);
@@ -4363,26 +4408,22 @@ function renderEpiProcessPdf(doc, process) {
   }
   if (process.validated_by_name || process.validated_at) {
     doc.text(`Processo validado por: ${process.validated_by_name || '–'} · ${process.validated_at ? new Date(process.validated_at).toLocaleString('pt-BR') : '–'}`);
-    pdfEnsureSpace(doc, 150);
     const validationLabel = isAdminRole(process.validated_by_role) ? 'Assinatura do Admin validador' : process.validated_by_role === 'vistoriador' ? 'Assinatura do Supervisor validador' : 'Assinatura do responsável pela validação';
-    doc.moveDown(.7);
-    doc.font('Helvetica-Bold').fontSize(9).fillColor('#172033').text(validationLabel);
-    const validationSignature = pdfImageBuffer(process.validation_signature_data);
-    if (validationSignature) {
-      const signatureWidth = 220;
-      try { doc.image(validationSignature, (doc.page.width - signatureWidth) / 2, doc.y + 8, { fit: [signatureWidth, 82] }); } catch { /* Assinatura inválida não impede o PDF. */ }
-      doc.y += 92;
-    }
-    const validationLineWidth = 210;
-    const validationLineX = (doc.page.width - validationLineWidth) / 2;
-    doc.moveTo(validationLineX, doc.y).lineTo(validationLineX + validationLineWidth, doc.y).stroke('#4b5563');
-    doc.font('Helvetica').fontSize(9).text(`${validationLabel} · ${process.validation_signature_typed_name || process.validated_by_name || '–'}`, validationLineX, doc.y + 5, { width: validationLineWidth, align: 'center' });
-    doc.y += 30;
-    doc.fontSize(8).fillColor('#4b5563').text(`Validação registrada em: ${process.validation_signature_validated_at ? new Date(process.validation_signature_validated_at).toLocaleString('pt-BR') : process.validated_at ? new Date(process.validated_at).toLocaleString('pt-BR') : 'Não informada'}`);
-    doc.text(`Hash da assinatura do validador: ${process.validation_signature_hash || '–'}`);
-    doc.text(`Hash do documento validado: ${process.validation_signature_document_hash || '–'}`);
+    signatures.push({
+      label: validationLabel,
+      signerName: process.validated_by_name,
+      typedName: process.validation_signature_typed_name || process.validated_by_name,
+      signedAt: process.validation_signature_validated_at || process.validated_at,
+      signatureData: process.validation_signature_data,
+      signatureHash: process.validation_signature_hash,
+      identityMedia: processMedia.find((item) => item.kind === 'selfie' && (item.capture_context || item.captureContext) === 'validation'),
+    });
   }
   if (process.validation_notes) pdfParagraph(doc, `Observação da validação: ${process.validation_notes}`);
+  pdfSignatureSection(doc, signatures);
+  const itemLabels = new Map((process.items || []).map((item) => [String(item.item_key || item.itemKey || ''), item.equipment_name || item.equipmentName || 'EPI']));
+  const epiPhotos = processMedia.filter((item) => item.kind === 'epi_photo');
+  pdfMediaSection(doc, epiPhotos, 'Fotos dos EPIs', { startOnNewPage: true, labelByKey: itemLabels });
 }
 
 function renderVehicleChecklistPdf(doc, checklist, company) {
@@ -4436,26 +4477,15 @@ function renderVehicleChecklistPdf(doc, checklist, company) {
       afterDescription: item.afterDescription || '–',
     })));
   }
-  pdfMediaSection(doc, checklist.pdfMedia || checklist.media, 'Fotos do checklist');
   if (checklist.validationNotes) pdfParagraph(doc, `Observação da validação: ${checklist.validationNotes}`);
-
-  (checklist.signatures || []).forEach((signature) => {
-    pdfEnsureSpace(doc, 155);
-    doc.font('Helvetica-Bold').fontSize(9).fillColor('#172033').text(`Assinatura · ${vehicleSignatureRoleLabelForPdf(signature.signerRole, signature.signatureContext)}`);
-    const signatureImage = pdfImageBuffer(signature.signatureData);
-    if (signatureImage) {
-      const signatureWidth = 220;
-      try { doc.image(signatureImage, (doc.page.width - signatureWidth) / 2, doc.y + 8, { fit: [signatureWidth, 82] }); } catch { /* Assinatura inválida não impede o PDF. */ }
-      doc.y += 92;
-    }
-    const signatureLineWidth = 210;
-    const signatureLineX = (doc.page.width - signatureLineWidth) / 2;
-    doc.moveTo(signatureLineX, doc.y).lineTo(signatureLineX + signatureLineWidth, doc.y).stroke('#4b5563');
-    doc.font('Helvetica').fontSize(9).text(`${signature.typedName || '–'} · ${signature.signedAt ? new Date(signature.signedAt).toLocaleString('pt-BR') : '–'}`, signatureLineX, doc.y + 5, { width: signatureLineWidth, align: 'center' });
-    doc.y += 28;
-    doc.fontSize(8).fillColor('#4b5563').text(`IP: ${signature.signerIp || 'não informado'} · Dispositivo: ${signature.signerDevice || signature.signerUserAgent || 'não informado'}`);
-    doc.text(`Coordenadas: ${signature.signerLatitude ?? '–'}, ${signature.signerLongitude ?? '–'} · Hash: ${signature.signatureHash || '–'}`);
-  });
+  const signatures = (checklist.signatures || []).map((signature) => ({
+    ...signature,
+    label: `Assinatura · ${vehicleSignatureRoleLabelForPdf(signature.signerRole, signature.signatureContext)}`,
+  }));
+  pdfSignatureSection(doc, signatures);
+  const itemLabels = new Map((checklist.items || []).map((item) => [String(item.itemKey || item.item_key || ''), item.itemName || item.item_name || 'item do veículo']));
+  const vehiclePhotos = (checklist.pdfMedia || checklist.media || []).filter((item) => item.kind === 'vehicle_photo');
+  pdfMediaSection(doc, vehiclePhotos, 'Fotos do veículo', { startOnNewPage: true, labelByKey: itemLabels });
 }
 
 function vehicleChecklistTypeLabelForPdf(type) {
