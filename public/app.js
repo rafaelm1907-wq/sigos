@@ -2098,7 +2098,7 @@ async function openEpiProcess(id) {
       stopEpiCamera('#epi-validation-selfie-video');
       $('#epi-validation-selfie-camera').classList.add('hidden');
       await requestEpiProcessLocation();
-      validationSelfieDraft = { imageData, captureMode: 'camera', latitude: epiProcessLocation.latitude, longitude: epiProcessLocation.longitude };
+      validationSelfieDraft = { imageData, captureMode: 'camera', deviceInfo: navigator.userAgent, latitude: epiProcessLocation.latitude, longitude: epiProcessLocation.longitude };
       $('#epi-validation-selfie-preview').innerHTML = `<div><img src="${imageData}" alt="Selfie do responsável pela validação" /></div>`;
       status.textContent = 'Selfie capturada. Ela será anexada à validação.';
       status.className = 'success-message';
@@ -3320,7 +3320,8 @@ $('#epi-process-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const message = $('#epi-process-form-message');
   try {
-    const data = await api('/api/epi/processes', { method: 'POST', body: JSON.stringify({ testMode: isSuperadminRole(), processType: $('#epi-process-type').value, validatorUserId: $('#epi-validator-user').value || null, targetUserId: $('#epi-target-user').value || null, signatureConfirmed: $('#epi-signature-confirm')?.checked === true, items: readEpiProcessItems() }) });
+    await requestEpiProcessLocation();
+    const data = await api('/api/epi/processes', { method: 'POST', body: JSON.stringify({ testMode: isSuperadminRole(), processType: $('#epi-process-type').value, validatorUserId: $('#epi-validator-user').value || null, targetUserId: $('#epi-target-user').value || null, signatureConfirmed: $('#epi-signature-confirm')?.checked === true, deviceInfo: navigator.userAgent, latitude: epiProcessLocation.latitude, longitude: epiProcessLocation.longitude, items: readEpiProcessItems() }) });
     currentEpiProcess = data.process;
     epiProcessLocation = { latitude: null, longitude: null };
     $('#epi-process-form').classList.add('hidden');

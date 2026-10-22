@@ -1447,6 +1447,11 @@ async function initSchema() {
       company_logo_data TEXT,
       company_logo_mime_type TEXT,
       signature_validated_at TIMESTAMPTZ,
+      signer_ip INET,
+      signer_user_agent TEXT,
+      signer_device TEXT,
+      signer_latitude NUMERIC(9, 6),
+      signer_longitude NUMERIC(9, 6),
       signer_signature_hash TEXT,
       signature_document_hash TEXT,
       signature_hash TEXT,
@@ -1472,6 +1477,11 @@ async function initSchema() {
       validation_signature_typed_name TEXT,
       validation_signature_document_hash TEXT,
       validation_signature_validated_at TIMESTAMPTZ,
+      validation_signer_ip INET,
+      validation_signer_user_agent TEXT,
+      validation_signer_device TEXT,
+      validation_signer_latitude NUMERIC(9, 6),
+      validation_signer_longitude NUMERIC(9, 6),
       is_test BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -1515,12 +1525,22 @@ async function initSchema() {
     ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS attention_confirmed_by BIGINT REFERENCES users(id) ON DELETE SET NULL;
     ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS attention_document_hash TEXT;
     ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS attention_signature_hash TEXT;
+    ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS signer_ip INET;
+    ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS signer_user_agent TEXT;
+    ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS signer_device TEXT;
+    ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS signer_latitude NUMERIC(9, 6);
+    ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS signer_longitude NUMERIC(9, 6);
     UPDATE epi_processes SET attention_status = 'pending_admin' WHERE admin_attention_required = TRUE AND status = 'pendente_validacao' AND attention_status = 'none';
     ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS validation_signature_data TEXT;
     ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS validation_signature_hash TEXT;
     ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS validation_signature_typed_name TEXT;
     ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS validation_signature_document_hash TEXT;
     ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS validation_signature_validated_at TIMESTAMPTZ;
+    ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS validation_signer_ip INET;
+    ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS validation_signer_user_agent TEXT;
+    ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS validation_signer_device TEXT;
+    ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS validation_signer_latitude NUMERIC(9, 6);
+    ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS validation_signer_longitude NUMERIC(9, 6);
     ALTER TABLE epi_processes ADD COLUMN IF NOT EXISTS is_test BOOLEAN NOT NULL DEFAULT FALSE;
 
     CREATE TABLE IF NOT EXISTS epi_process_media (
@@ -3269,7 +3289,8 @@ app.get('/api/epi/processes/:id/pdf', auth, async (req, res) => {
   const row = await getEpiProcess(req.params.id, req.user);
   if (!row) return res.status(404).json({ error: 'Processo de EPI não encontrado.' });
   const mediaResult = await pool.query(
-    `SELECT id, kind, item_key, capture_context, file_path, mime_type, created_at
+    `SELECT id, kind, item_key, capture_context, file_path, mime_type, device_info, ip_address,
+            user_agent, latitude, longitude, location_label, created_at
      FROM epi_process_media
      WHERE process_id = $1
      ORDER BY created_at, id`,
@@ -3406,6 +3427,11 @@ app.post('/api/epi/processes', auth, requireRole('tecnico', 'superadmin'), async
 
   const legalText = EPI_PROCESS_LEGAL_TEXT[processType];
   const companySettings = publicCompanySettings(await getCompanySettings());
+  const signerIp = clientIp(req);
+  const signerUserAgent = req.get('user-agent') || null;
+  const signerDevice = cleanText(req.body.deviceInfo, 500) || signerUserAgent;
+  const signerLatitude = capturedCoordinate(req.body.latitude, -90, 90);
+  const signerLongitude = capturedCoordinate(req.body.longitude, -180, 180);
   const client = await pool.connect();
   let processId;
   let documentHash;
@@ -3432,10 +3458,12 @@ app.post('/api/epi/processes', auth, requireRole('tecnico', 'superadmin'), async
     const created = await client.query(
       `INSERT INTO epi_processes
         (process_type, created_by, validator_user_id, target_user_id, status, term_version,
-         company_logo_data, company_logo_mime_type, signature_validated_at, signer_signature_hash, is_test)
-       VALUES ($1, $2, $3, $4, 'aguarda_selfie', $5, $6, $7, NOW(), $8, $9)
+         company_logo_data, company_logo_mime_type, signature_validated_at,
+         signer_ip, signer_user_agent, signer_device, signer_latitude, signer_longitude,
+         signer_signature_hash, is_test)
+       VALUES ($1, $2, $3, $4, 'aguarda_selfie', $5, $6, $7, NOW(), $8, $9, $10, $11, $12, $13, $14)
        RETURNING id`,
-      [processType, req.user.id, validator?.id || null, target?.id || null, legalText.version, companySettings.logoData, companySettings.logoMimeType, req.user.signature_hash, isTest],
+      [processType, req.user.id, validator?.id || null, target?.id || null, legalText.version, companySettings.logoData, companySettings.logoMimeType, signerIp, signerUserAgent, signerDevice, signerLatitude, signerLongitude, req.user.signature_hash, isTest],
     );
     processId = created.rows[0].id;
     for (const item of normalizedItems) {
@@ -3685,6 +3713,11 @@ app.post('/api/epi/processes/:id/validate', auth, async (req, res) => {
     signerSignatureHash: req.user.signature_hash,
     documentHash: validationSignatureDocumentHash,
   }) : null;
+  const validationSignerIp = clientIp(req);
+  const validationSignerUserAgent = req.get('user-agent') || null;
+  const validationSignerDevice = cleanText(validationSelfie?.deviceInfo || req.body.deviceInfo, 500) || validationSignerUserAgent;
+  const validationSignerLatitude = capturedCoordinate(validationSelfie?.latitude ?? req.body.latitude, -90, 90);
+  const validationSignerLongitude = capturedCoordinate(validationSelfie?.longitude ?? req.body.longitude, -180, 180);
   let validationMedia = null;
   if (isValidatorValidation) {
     validationMedia = await storeEpiProcessMedia({
@@ -3708,10 +3741,13 @@ app.post('/api/epi/processes/:id/validate', auth, async (req, res) => {
            validated_by = $2, validated_at = $5, validation_notes = $3,
             validation_signature_data = $6, validation_signature_hash = $7,
            validation_signature_typed_name = $8, validation_signature_document_hash = $9,
-           validation_signature_validated_at = $5
+           validation_signature_validated_at = $5,
+           validation_signer_ip = $10, validation_signer_user_agent = $11,
+           validation_signer_device = $12, validation_signer_latitude = $13,
+           validation_signer_longitude = $14
        WHERE id = $4 AND status = 'pendente_validacao'
        RETURNING id, status, validated_at`,
-      [decision, req.user.id, validationNotes, row.id, validationSignatureAt, isValidatorValidation ? req.user.signature_data : null, validationSignatureHash, isValidatorValidation ? req.user.name : null, validationSignatureDocumentHash],
+      [decision, req.user.id, validationNotes, row.id, validationSignatureAt, isValidatorValidation ? req.user.signature_data : null, validationSignatureHash, isValidatorValidation ? req.user.name : null, validationSignatureDocumentHash, validationSignerIp, validationSignerUserAgent, validationSignerDevice, validationSignerLatitude, validationSignerLongitude],
     );
     if (!updated.rows[0]) {
       await client.query('ROLLBACK');
@@ -4102,12 +4138,47 @@ function pdfMediaSection(doc, media, title = 'Fotos registradas', options = {}) 
   doc.moveDown(.35);
 }
 
+function pdfMetadataValue(source, camelKey, snakeKey = null) {
+  if (!source) return null;
+  const value = source[camelKey] ?? (snakeKey ? source[snakeKey] : undefined);
+  return value === null || value === undefined || value === '' ? null : String(value);
+}
+
+function pdfShortMetadata(value, max = 48) {
+  const text = String(value || '').trim();
+  if (!text) return 'Não informado';
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function pdfMetadataDate(source, camelKey = 'createdAt', snakeKey = 'created_at') {
+  const value = pdfMetadataValue(source, camelKey, snakeKey);
+  if (!value) return 'Não informado';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('pt-BR');
+}
+
+function pdfMetadataCoordinates(source, latitudeKey = 'latitude', longitudeKey = 'longitude') {
+  const latitude = source?.[latitudeKey] ?? source?.signerLatitude;
+  const longitude = source?.[longitudeKey] ?? source?.signerLongitude;
+  if (latitude === null || latitude === undefined || longitude === null || longitude === undefined || latitude === '' || longitude === '') return 'Não informado';
+  return `${Number(latitude).toFixed(6)}, ${Number(longitude).toFixed(6)}`;
+}
+
+function pdfMetadataLocation(source) {
+  return pdfMetadataValue(source, 'locationLabel', 'location_label') || pdfMetadataCoordinates(source);
+}
+
+function pdfMetadataDevice(source, preferSignature = false) {
+  if (preferSignature) return pdfMetadataValue(source, 'signerDevice') || pdfMetadataValue(source, 'signerUserAgent') || 'Não informado';
+  return pdfMetadataValue(source, 'deviceInfo', 'device_info') || pdfMetadataValue(source, 'userAgent', 'user_agent') || 'Não informado';
+}
+
 function pdfSignatureSection(doc, signatures, title = 'Assinaturas eletrônicas') {
   const entries = (signatures || []).filter((signature) => signature && (signature.signatureData || signature.typedName || signature.signerName));
   if (!entries.length) return;
   const gap = 12;
   const cellWidth = (pdfContentWidth(doc) - gap) / 2;
-  const cardHeight = 166;
+  const cardHeight = 270;
   const drawTitle = () => {
     doc.font('Helvetica-Bold').fontSize(10).fillColor('#172033').text(title, doc.page.margins.left, doc.y, { width: pdfContentWidth(doc) });
     doc.moveDown(.35);
@@ -4128,20 +4199,36 @@ function pdfSignatureSection(doc, signatures, title = 'Assinaturas eletrônicas'
     doc.font('Helvetica-Bold').fontSize(8).fillColor('#172033').text(signature.label || 'Assinatura', columnX + 8, rowY + 8, { width: cellWidth - 16 });
     const identitySource = pdfMediaSource(signature.identityMedia);
     if (identitySource) {
-      try { doc.image(identitySource, columnX + 8, rowY + 28, { fit: [42, 58], align: 'center', valign: 'center' }); } catch { /* Selfie inválida não impede o PDF. */ }
+      try { doc.image(identitySource, columnX + 8, rowY + 30, { fit: [58, 72], align: 'center', valign: 'center' }); } catch { /* Selfie inválida não impede o PDF. */ }
     }
-    const textX = columnX + (identitySource ? 58 : 8);
-    const textWidth = cellWidth - (identitySource ? 66 : 16);
-    doc.font('Helvetica').fontSize(8).fillColor('#172033').text(`Nome: ${signature.typedName || signature.signerName || '–'}`, textX, rowY + 28, { width: textWidth, lineBreak: false });
-    doc.text(`Data: ${signature.signedAt ? new Date(signature.signedAt).toLocaleString('pt-BR') : '–'}`, textX, rowY + 41, { width: textWidth, lineBreak: false });
+    const textX = columnX + (identitySource ? 74 : 8);
+    const textWidth = cellWidth - (identitySource ? 82 : 16);
+    const photo = signature.identityMedia || {};
+    doc.font('Helvetica').fontSize(6.5).fillColor('#172033');
+    doc.text(`Nome: ${pdfShortMetadata(signature.typedName || signature.signerName || '–', 42)}`, textX, rowY + 30, { width: textWidth, lineBreak: false });
+    doc.text(`Foto: ${pdfMetadataDate(photo)}`, textX, rowY + 41, { width: textWidth, lineBreak: false });
+    doc.text(`Foto local: ${pdfShortMetadata(pdfMetadataLocation(photo), 34)}`, textX, rowY + 52, { width: textWidth, lineBreak: false });
+    doc.text(`Foto IP: ${pdfShortMetadata(pdfMetadataValue(photo, 'ipAddress', 'ip_address'), 30)}`, textX, rowY + 63, { width: textWidth, lineBreak: false });
+    doc.text(`Foto dispositivo: ${pdfShortMetadata(pdfMetadataDevice(photo), 30)}`, textX, rowY + 74, { width: textWidth, lineBreak: false });
+    doc.text(`Foto coord.: ${pdfShortMetadata(pdfMetadataCoordinates(photo), 30)}`, textX, rowY + 85, { width: textWidth, lineBreak: false });
     const signatureImage = pdfImageBuffer(signature.signatureData);
     if (signatureImage) {
-      try { doc.image(signatureImage, textX, rowY + 56, { fit: [textWidth, 48], align: 'center', valign: 'center' }); } catch { /* Assinatura inválida não impede o PDF. */ }
+      try { doc.image(signatureImage, columnX + 8, rowY + 102, { fit: [cellWidth - 16, 64], align: 'center', valign: 'center' }); } catch { /* Assinatura inválida não impede o PDF. */ }
     }
-    const lineY = rowY + 108;
+    const lineY = rowY + 174;
     doc.moveTo(columnX + 8, lineY).lineTo(columnX + cellWidth - 8, lineY).stroke('#4b5563');
-    doc.font('Helvetica').fontSize(8).text(signature.signerName || signature.typedName || 'Responsável', columnX + 8, lineY + 5, { width: textWidth, align: 'center', lineBreak: false });
-    doc.fontSize(6.5).fillColor('#4b5563').text(`Hash: ${signature.signatureHash || '–'}`, textX, rowY + 130, { width: textWidth, height: 24, lineGap: 0 });
+    doc.font('Helvetica').fontSize(8).fillColor('#172033').text(signature.signerName || signature.typedName || 'Responsável', columnX + 8, lineY + 5, { width: cellWidth - 16, align: 'center', lineBreak: false });
+    const signatureIp = pdfMetadataValue(signature, 'signerIp') || pdfMetadataValue(photo, 'ipAddress', 'ip_address');
+    const signatureDevice = pdfMetadataDevice(signature, true) !== 'Não informado' ? pdfMetadataDevice(signature, true) : pdfMetadataDevice(photo);
+    const signatureCoordinates = pdfMetadataCoordinates(signature) !== 'Não informado' ? pdfMetadataCoordinates(signature) : pdfMetadataCoordinates(photo);
+    const signatureLocation = pdfMetadataValue(signature, 'signerLocation') || pdfMetadataValue(photo, 'locationLabel', 'location_label') || signatureCoordinates;
+    doc.font('Helvetica').fontSize(6.5).fillColor('#4b5563');
+    doc.text(`Assinatura: ${pdfMetadataDate(signature, 'signedAt', 'signed_at')}`, columnX + 8, rowY + 198, { width: cellWidth - 16, lineBreak: false });
+    doc.text(`Local: ${pdfShortMetadata(signatureLocation, 48)}`, columnX + 8, rowY + 209, { width: cellWidth - 16, lineBreak: false });
+    doc.text(`IP: ${pdfShortMetadata(signatureIp, 48)}`, columnX + 8, rowY + 220, { width: cellWidth - 16, lineBreak: false });
+    doc.text(`Dispositivo: ${pdfShortMetadata(signatureDevice, 48)}`, columnX + 8, rowY + 231, { width: cellWidth - 16, lineBreak: false });
+    doc.text(`Coordenadas: ${pdfShortMetadata(signatureCoordinates, 42)}`, columnX + 8, rowY + 242, { width: cellWidth - 16, lineBreak: false });
+    doc.text(`Hash: ${signature.signatureHash || '–'}`, columnX + 8, rowY + 249, { width: cellWidth - 16, height: 18, lineGap: 0 });
     if (index % 2 === 1 || index === entries.length - 1) doc.y = rowY + cardHeight;
   });
   doc.moveDown(.35);
@@ -4398,6 +4485,11 @@ function renderEpiProcessPdf(doc, process) {
     signedAt: process.signature_validated_at,
     signatureData: process.creator_signature_data,
     signatureHash: process.signature_hash,
+    signerIp: process.signer_ip,
+    signerUserAgent: process.signer_user_agent,
+    signerDevice: process.signer_device,
+    signerLatitude: process.signer_latitude,
+    signerLongitude: process.signer_longitude,
     identityMedia: processMedia.find((item) => item.kind === 'selfie' && (item.capture_context || item.captureContext) === 'original'),
   }];
   if (attentionOpen) {
@@ -4416,6 +4508,11 @@ function renderEpiProcessPdf(doc, process) {
       signedAt: process.validation_signature_validated_at || process.validated_at,
       signatureData: process.validation_signature_data,
       signatureHash: process.validation_signature_hash,
+      signerIp: process.validation_signer_ip,
+      signerUserAgent: process.validation_signer_user_agent,
+      signerDevice: process.validation_signer_device,
+      signerLatitude: process.validation_signer_latitude,
+      signerLongitude: process.validation_signer_longitude,
       identityMedia: processMedia.find((item) => item.kind === 'selfie' && (item.capture_context || item.captureContext) === 'validation'),
     });
   }
@@ -4478,13 +4575,25 @@ function renderVehicleChecklistPdf(doc, checklist, company) {
     })));
   }
   if (checklist.validationNotes) pdfParagraph(doc, `Observação da validação: ${checklist.validationNotes}`);
+  const checklistMedia = checklist.pdfMedia || checklist.media || [];
+  const findSignatureIdentityMedia = (signature) => {
+    const signatureUserId = String(signature.signerUserId || '');
+    const stage = signature.signatureContext?.stage;
+    const expectedContext = stage === 'validation' ? 'validation' : 'original';
+    return checklistMedia.find((media) => media.kind === 'selfie'
+      && String(media.uploadedBy || media.uploaded_by || '') === signatureUserId
+      && (media.captureContext || media.capture_context || 'original') === expectedContext)
+      || checklistMedia.find((media) => media.kind === 'selfie'
+        && (media.captureContext || media.capture_context || 'original') === expectedContext);
+  };
   const signatures = (checklist.signatures || []).map((signature) => ({
     ...signature,
     label: `Assinatura · ${vehicleSignatureRoleLabelForPdf(signature.signerRole, signature.signatureContext)}`,
+    identityMedia: findSignatureIdentityMedia(signature),
   }));
   pdfSignatureSection(doc, signatures);
   const itemLabels = new Map((checklist.items || []).map((item) => [String(item.itemKey || item.item_key || ''), item.itemName || item.item_name || 'item do veículo']));
-  const vehiclePhotos = (checklist.pdfMedia || checklist.media || []).filter((item) => item.kind === 'vehicle_photo');
+  const vehiclePhotos = checklistMedia.filter((item) => item.kind === 'vehicle_photo');
   pdfMediaSection(doc, vehiclePhotos, 'Fotos do veículo', { startOnNewPage: true, labelByKey: itemLabels });
 }
 
@@ -5143,7 +5252,8 @@ app.get('/api/vehicles/checklists/:id/pdf', auth, async (req, res) => {
   const company = publicCompanySettings(await getCompanySettings());
   const checklist = publicVehicleChecklist(result.rows[0], true);
   const mediaResult = await pool.query(
-    `SELECT id, kind, item_key, capture_context, file_path, mime_type, created_at
+    `SELECT id, kind, item_key, capture_context, uploaded_by, file_path, mime_type,
+            device_info, ip_address, user_agent, latitude, longitude, location_label, created_at
      FROM vehicle_checklist_media
      WHERE checklist_id = $1
      ORDER BY created_at, id`,
