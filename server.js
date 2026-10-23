@@ -4058,6 +4058,33 @@ function pdfImageBuffer(data) {
   return match ? Buffer.from(match[2], 'base64') : null;
 }
 
+function pdfAttachPageHashHeader(doc, { documentHash, documentLabel }) {
+  if (doc.__sigosPdfPageHashHeader) return;
+  const baseHash = documentHash || sha256Json({ schema: 'sigos-pdf-document-hash-v1', documentLabel });
+  doc.__sigosPdfPageNumber = 1;
+  const drawPageHash = () => {
+    const pageHash = sha256Json({ schema: 'sigos-pdf-page-hash-v1', documentHash: baseHash, documentLabel, pageNumber: doc.__sigosPdfPageNumber });
+    const previousX = doc.x;
+    const previousY = doc.y;
+    doc.save();
+    doc.font('Helvetica').fontSize(5.5).fillColor('#6b7280').text(
+      `Hash página ${doc.__sigosPdfPageNumber}: ${pageHash}`,
+      doc.page.width - doc.page.margins.right - 235,
+      17,
+      { width: 235, align: 'right', lineBreak: false },
+    );
+    doc.restore();
+    doc.x = previousX;
+    doc.y = previousY;
+  };
+  doc.__sigosPdfPageHashHeader = drawPageHash;
+  doc.on('pageAdded', () => {
+    doc.__sigosPdfPageNumber += 1;
+    drawPageHash();
+  });
+  drawPageHash();
+}
+
 function pdfEnsureSpace(doc, height = 80) {
   if (doc.y + height > doc.page.height - doc.page.margins.bottom) doc.addPage();
 }
@@ -4343,6 +4370,10 @@ function pdfTable(doc, columns, rows) {
 }
 
 function renderEpiTermPdf(doc, term) {
+  pdfAttachPageHashHeader(doc, {
+    documentHash: term.document_hash || term.signature_hash,
+    documentLabel: `termo-epi-${term.id}`,
+  });
   const logo = pdfImageBuffer(term.company_logo_data || term.company_display_logo_data);
   doc.info.Title = `Termo de EPI #${term.id}`;
   doc.info.Author = 'SIGOS';
@@ -4403,6 +4434,10 @@ function renderEpiProcessPdf(doc, process) {
   const attentionOpen = process.is_test !== true && process.admin_attention_required === true && ['pending_admin', 'awaiting_technician'].includes(attentionStatus);
   const companyName = process.company_trade_name || process.company_legal_name || DEFAULT_COMPANY_SETTINGS.tradeName;
   const companyCnpj = process.company_cnpj || DEFAULT_COMPANY_SETTINGS.cnpj;
+  pdfAttachPageHashHeader(doc, {
+    documentHash: process.attention_document_hash || process.signature_document_hash || process.signature_hash,
+    documentLabel: `processo-epi-${process.id}`,
+  });
   const logo = pdfCompanyHeader(doc, {
     companyName,
     companyCnpj,
@@ -4528,6 +4563,11 @@ function renderVehicleChecklistPdf(doc, checklist, company) {
   const vehicleDocumentLabel = vehicleChecklistTypeLabelForPdf(checklist.checklistType);
   const companyName = company.tradeName || company.legalName || DEFAULT_COMPANY_SETTINGS.tradeName;
   const companyCnpj = company.cnpj || DEFAULT_COMPANY_SETTINGS.cnpj;
+  const signatureDocumentHash = (checklist.signatures || []).map((signature) => signature.documentHash).filter(Boolean).slice(-1)[0];
+  pdfAttachPageHashHeader(doc, {
+    documentHash: signatureDocumentHash,
+    documentLabel: `checklist-veiculo-${checklist.id}`,
+  });
   pdfCompanyHeader(doc, {
     companyName,
     companyCnpj,
