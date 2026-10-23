@@ -4060,15 +4060,13 @@ function pdfImageBuffer(data) {
 
 function pdfAttachPageHashHeader(doc, { documentHash, documentLabel }) {
   if (doc.__sigosPdfPageHashHeader) return;
-  const baseHash = documentHash || sha256Json({ schema: 'sigos-pdf-document-hash-v1', documentLabel });
-  doc.__sigosPdfPageNumber = 1;
-  const drawPageHash = () => {
-    const pageHash = sha256Json({ schema: 'sigos-pdf-page-hash-v1', documentHash: baseHash, documentLabel, pageNumber: doc.__sigosPdfPageNumber });
+  const documentHashValue = documentHash || sha256Json({ schema: 'sigos-pdf-document-hash-v1', documentLabel });
+  const drawDocumentHash = () => {
     const previousX = doc.x;
     const previousY = doc.y;
     doc.save();
     doc.font('Helvetica').fontSize(5.5).fillColor('#6b7280').text(
-      `Hash página ${doc.__sigosPdfPageNumber}: ${pageHash}`,
+      `Hash do documento: ${documentHashValue}`,
       doc.page.width - doc.page.margins.right - 235,
       17,
       { width: 235, align: 'right', lineBreak: false },
@@ -4077,12 +4075,9 @@ function pdfAttachPageHashHeader(doc, { documentHash, documentLabel }) {
     doc.x = previousX;
     doc.y = previousY;
   };
-  doc.__sigosPdfPageHashHeader = drawPageHash;
-  doc.on('pageAdded', () => {
-    doc.__sigosPdfPageNumber += 1;
-    drawPageHash();
-  });
-  drawPageHash();
+  doc.__sigosPdfPageHashHeader = drawDocumentHash;
+  doc.on('pageAdded', drawDocumentHash);
+  drawDocumentHash();
 }
 
 function pdfEnsureSpace(doc, height = 80) {
