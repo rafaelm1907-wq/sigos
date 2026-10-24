@@ -1043,6 +1043,7 @@ table { max-width: 100%; }
 .overview-filters { display: grid; grid-template-columns: minmax(150px, .55fr) minmax(180px, .7fr) auto; gap: 10px; align-items: end; margin-bottom: 18px; padding: 14px 16px; border: 1px solid rgba(148, 163, 184, .14); border-radius: 13px; background: rgba(7, 15, 31, .3); }
 .overview-filters button { min-width: 150px; }
 .overview-dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(380px, .85fr); gap: 18px; align-items: start; }
+.overview-main-column { display: grid; gap: 18px; min-width: 0; align-content: start; }
 .overview-summary-card { min-width: 0; padding: 18px; }
 .overview-summary-card .overview-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0; }
 .overview-summary-card .stat { min-width: 0; padding: 15px; gap: 8px; }
@@ -1065,6 +1066,7 @@ table { max-width: 100%; }
 
 @media (max-width: 1050px) {
   .overview-dashboard-grid { grid-template-columns: 1fr; }
+  .overview-main-column { gap: 18px; }
   .overview-alerts-card { max-height: none; }
   .overview-alerts-card #compliance-alerts-list { max-height: 360px; }
 }

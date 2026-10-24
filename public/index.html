@@ -101,23 +101,25 @@
                 <button id="refresh-overview" type="button">Atualizar painel</button>
               </div>
               <div class="overview-dashboard-grid">
-                <section class="card overview-summary-card">
-                  <div class="section-heading"><div><div class="eyebrow">INDICADORES</div><h2>Resumo do período</h2></div></div>
-                  <div class="stats-grid overview-stats">
-                    <article class="stat card dashboard-link-card" role="button" tabindex="0" data-dashboard-view="report-view" data-report-tab="checklists"><span>Checklists realizados</span><strong id="overview-total-checklists">–</strong><small>Ver detalhes de checklists</small></article>
-                    <article class="stat card dashboard-link-card" role="button" tabindex="0" data-dashboard-view="report-view" data-report-tab="checklists" data-report-checklist-tab="epi"><span>Checklists EPI</span><strong id="overview-daily-checklists">–</strong><small>Checklists diários</small></article>
-                    <article class="stat card dashboard-link-card" role="button" tabindex="0" data-dashboard-view="report-view" data-report-tab="vehicles"><span>Checklists de veículos</span><strong id="overview-vehicle-checklists">–</strong><small>Ver veículos</small></article>
-                    <article class="stat card dashboard-link-card" role="button" tabindex="0" data-dashboard-view="report-view" data-report-tab="summary"><span>Atividades registradas</span><strong id="overview-activity">–</strong><small>Ver resumo e atividade</small></article>
-                    <article class="stat card dashboard-link-card" role="button" tabindex="0" data-dashboard-view="validation-view"><span>Validações pendentes</span><strong id="overview-validations">–</strong><small>Abrir validações</small></article>
-                    <article class="stat card dashboard-link-card" role="button" tabindex="0" data-dashboard-view="pending-view"><span>Pendências abertas</span><strong id="overview-open-items">–</strong><small>Abrir pendências</small></article>
-                  </div>
-                </section>
+                <div class="overview-main-column">
+                  <section class="card overview-summary-card">
+                    <div class="section-heading"><div><div class="eyebrow">INDICADORES</div><h2>Resumo do período</h2></div></div>
+                    <div class="stats-grid overview-stats">
+                      <article class="stat card dashboard-link-card" role="button" tabindex="0" data-dashboard-view="report-view" data-report-tab="checklists"><span>Checklists realizados</span><strong id="overview-total-checklists">–</strong><small>Ver detalhes de checklists</small></article>
+                      <article class="stat card dashboard-link-card" role="button" tabindex="0" data-dashboard-view="report-view" data-report-tab="checklists" data-report-checklist-tab="epi"><span>Checklists EPI</span><strong id="overview-daily-checklists">–</strong><small>Checklists diários</small></article>
+                      <article class="stat card dashboard-link-card" role="button" tabindex="0" data-dashboard-view="report-view" data-report-tab="vehicles"><span>Checklists de veículos</span><strong id="overview-vehicle-checklists">–</strong><small>Ver veículos</small></article>
+                      <article class="stat card dashboard-link-card" role="button" tabindex="0" data-dashboard-view="report-view" data-report-tab="summary"><span>Atividades registradas</span><strong id="overview-activity">–</strong><small>Ver resumo e atividade</small></article>
+                      <article class="stat card dashboard-link-card" role="button" tabindex="0" data-dashboard-view="validation-view"><span>Validações pendentes</span><strong id="overview-validations">–</strong><small>Abrir validações</small></article>
+                      <article class="stat card dashboard-link-card" role="button" tabindex="0" data-dashboard-view="pending-view"><span>Pendências abertas</span><strong id="overview-open-items">–</strong><small>Abrir pendências</small></article>
+                    </div>
+                  </section>
+                  <section class="card activity-card"><div class="section-heading"><div><div class="eyebrow">ATIVIDADE · PERÍODO SELECIONADO</div><h2>Últimos eventos</h2></div><button type="button" class="secondary small-button" data-dashboard-view="report-view" data-report-tab="summary">Ver relatório</button></div><div class="table-wrap"><table><thead><tr><th>Quando</th><th>Evento</th><th>Responsável</th><th>Registro</th></tr></thead><tbody id="activity-table"></tbody></table></div></section>
+                </div>
                 <section id="compliance-alerts-card" class="card compliance-alerts-card overview-alerts-card hidden">
                   <div class="section-heading"><div><div class="eyebrow">AUTOMAÇÃO · CONFORMIDADE</div><h2>Alertas</h2><p class="muted">Pendências geradas pelos prazos de checklist.</p></div><div class="overview-alert-actions"><button id="refresh-compliance-alerts" type="button" class="secondary small-button">Atualizar</button><button type="button" class="secondary small-button" data-dashboard-view="pending-view">Ver pendências</button></div></div>
                   <div id="compliance-alerts-list" class="compliance-alerts-list"><p class="muted">Nenhum alerta pendente.</p></div>
                 </section>
               </div>
-              <section class="card activity-card"><div class="section-heading"><div><div class="eyebrow">ATIVIDADE · PERÍODO SELECIONADO</div><h2>Últimos eventos</h2></div><button type="button" class="secondary small-button" data-dashboard-view="report-view" data-report-tab="summary">Ver relatório</button></div><div class="table-wrap"><table><thead><tr><th>Quando</th><th>Evento</th><th>Responsável</th><th>Registro</th></tr></thead><tbody id="activity-table"></tbody></table></div></section>
             </section>
 
             <section id="report-view" class="app-section hidden">
