@@ -1165,6 +1165,18 @@ function complianceAlertTypeLabel(type) {
   }[type] || 'Pendência de checklist');
 }
 
+function syncOverviewAlertsHeight() {
+  const alertsCard = $('#compliance-alerts-card');
+  const mainColumn = $('.overview-main-column');
+  if (!alertsCard || !mainColumn) return;
+  if (alertsCard.classList.contains('hidden') || window.innerWidth <= 1050) {
+    alertsCard.style.removeProperty('height');
+    return;
+  }
+  const height = Math.ceil(mainColumn.getBoundingClientRect().height);
+  if (height > 0) alertsCard.style.height = `${height}px`;
+}
+
 async function loadComplianceAlerts() {
   const container = $('#compliance-alerts-list');
   if (!container || !isAdminRole()) return;
@@ -1176,6 +1188,7 @@ async function loadComplianceAlerts() {
     const data = await api('/api/admin/compliance-alerts');
     if (!data.alerts.length) {
       container.innerHTML = '<p class="muted">Nenhum alerta pendente.</p>';
+      syncOverviewAlertsHeight();
       return;
     }
     container.innerHTML = data.alerts.map((alert) => {
@@ -1214,8 +1227,10 @@ async function loadComplianceAlerts() {
         button.disabled = false;
       }
     }));
+    syncOverviewAlertsHeight();
   } catch (error) {
     container.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
+    syncOverviewAlertsHeight();
   }
 }
 
@@ -3303,6 +3318,7 @@ $('#notifications-read-all').addEventListener('click', async () => { try { await
 $('#refresh-overview').addEventListener('click', () => loadOverview());
 $('#overview-period-filter')?.addEventListener('change', () => loadOverview());
 $('#overview-date-filter')?.addEventListener('change', () => loadOverview());
+window.addEventListener('resize', () => syncOverviewAlertsHeight());
 $('#refresh-report').addEventListener('click', () => loadReport());
 $('#generate-report').addEventListener('click', () => loadReport());
 $('#refresh-compliance-alerts').addEventListener('click', () => loadComplianceAlerts());

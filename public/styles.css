@@ -1053,7 +1053,7 @@ table { max-width: 100%; }
 .dashboard-link-card:hover, .dashboard-link-card:focus-visible { transform: translateY(-2px); border-color: rgba(110, 231, 183, .5); background: rgba(21, 51, 68, .92); }
 .dashboard-link-card:focus-visible { outline: 3px solid rgba(110, 231, 183, .65); outline-offset: 2px; }
 .dashboard-link-card small { color: #a7f3d0; font-size: .72rem; }
-.overview-alerts-card { align-self: stretch; grid-template-rows: auto minmax(0, 1fr); min-width: 0; max-height: none; padding: 20px; }
+.overview-alerts-card { align-self: stretch; grid-template-rows: auto minmax(0, 1fr); min-width: 0; max-height: none; min-height: 0; overflow: hidden; padding: 20px; }
 .overview-alerts-card #compliance-alerts-list { min-height: 0; max-height: none; overflow-y: auto; padding-right: 3px; }
 .overview-alert-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .report-tabs { margin-bottom: 14px; }
