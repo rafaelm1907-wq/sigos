@@ -1000,7 +1000,7 @@ function setStockPanel(panel) {
 function setReportTab(tab, { render = true } = {}) {
   const allowedTabs = ['summary', 'vehicles', 'checklists', 'users', 'pending'];
   selectedReportTab = allowedTabs.includes(tab) ? tab : 'summary';
-  document.querySelectorAll('.report-tabs [data-report-tab]').forEach((button) => {
+  document.querySelectorAll('#reports-subnav [data-report-tab]').forEach((button) => {
     const active = button.dataset.reportTab === selectedReportTab;
     button.classList.toggle('active', active);
     button.setAttribute('aria-selected', String(active));
@@ -1023,6 +1023,7 @@ function setReportChecklistTab(tab, { render = true } = {}) {
 
 function updateNavigationActive() {
   document.querySelectorAll('.nav-item').forEach((button) => {
+    if (button.closest('#reports-subnav')) return;
     const settingsMatch = !button.dataset.settingsTab || button.dataset.settingsTab === selectedSettingsTab;
     const stockMatch = !button.dataset.stockPanel || button.dataset.stockPanel === selectedStockPanel;
     button.classList.toggle('active', button.dataset.view === activeViewId && settingsMatch && stockMatch);
@@ -1085,6 +1086,7 @@ function configureNavigation(user) {
   $('#nav-epi').classList.remove('hidden');
   $('#nav-validation').classList.toggle('hidden', !isChecklistValidatorRole(user.role));
   $('#nav-reports').classList.toggle('hidden', !isAdminRole(user.role));
+  $('#reports-subnav')?.classList.toggle('hidden', !isAdminRole(user.role));
   $('#nav-stock-fleet').classList.toggle('hidden', !isAdminRole(user.role));
   $('#nav-stock-ppe').classList.toggle('hidden', !isAdminRole(user.role));
   $('#nav-admin-users').classList.toggle('hidden', !isAdminRole(user.role));
@@ -3295,7 +3297,7 @@ function navigateFromDashboard(element) {
 $('#login-form').addEventListener('submit', async (event) => { event.preventDefault(); $('#login-error').textContent = ''; try { const data = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: $('#login-email').value, password: $('#login-password').value }) }); showApp(data.user); } catch (error) { $('#login-error').textContent = error.message; } });
 $('#logout').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); window.location.reload(); });
 document.querySelectorAll('.nav-item').forEach((button) => button.addEventListener('click', () => setView(button.dataset.view, { settingsTab: button.dataset.settingsTab, stockPanel: button.dataset.stockPanel })));
-document.querySelectorAll('.report-tabs [data-report-tab]').forEach((button) => button.addEventListener('click', () => setReportTab(button.dataset.reportTab)));
+document.querySelectorAll('#reports-subnav [data-report-tab]').forEach((button) => button.addEventListener('click', () => setView('report-view', { reportTab: button.dataset.reportTab })));
 document.querySelectorAll('#report-checklist-tabs [data-report-checklist-tab]').forEach((button) => button.addEventListener('click', () => setReportChecklistTab(button.dataset.reportChecklistTab)));
 document.querySelectorAll('[data-dashboard-view]').forEach((element) => {
   element.addEventListener('click', () => navigateFromDashboard(element));

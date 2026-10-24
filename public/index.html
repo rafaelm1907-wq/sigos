@@ -11,7 +11,7 @@
     <link rel="apple-touch-icon" href="/assets/sigos-symbol.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>SIGOS · Gestão operacional</title>
-      <link rel="stylesheet" href="/styles.css?v=dashboard-reports-20261023-4" />
+      <link rel="stylesheet" href="/styles.css?v=dashboard-reports-20261023-5" />
   </head>
   <body>
     <main class="shell">
@@ -74,6 +74,13 @@
               <button id="nav-stock-fleet" class="nav-item nav-subitem hidden" data-view="stock-view" data-stock-panel="fleet"><span>▣</span> Frota</button>
               <div class="nav-label">RELATÓRIOS</div>
               <button id="nav-reports" class="nav-item nav-subitem hidden" data-view="report-view"><span>▥</span> Relatórios</button>
+              <div id="reports-subnav" class="reports-subnav hidden" role="tablist" aria-label="Áreas de relatórios">
+                <button type="button" class="nav-item nav-subitem" role="tab" aria-selected="true" data-report-tab="summary">Resumo</button>
+                <button type="button" class="nav-item nav-subitem" role="tab" aria-selected="false" data-report-tab="vehicles">Veículos</button>
+                <button type="button" class="nav-item nav-subitem" role="tab" aria-selected="false" data-report-tab="checklists">Checklists</button>
+                <button type="button" class="nav-item nav-subitem" role="tab" aria-selected="false" data-report-tab="users">Usuários</button>
+                <button type="button" class="nav-item nav-subitem" role="tab" aria-selected="false" data-report-tab="pending">Pendências</button>
+              </div>
               <div class="nav-label">ADMINISTRAÇÃO</div>
               <button id="nav-pending" class="nav-item nav-subitem" data-view="pending-view"><span>!</span> Pendências <span id="pending-count" class="notification-count hidden">0</span></button>
               <button id="nav-validation" class="nav-item hidden" data-view="validation-view"><span>◈</span> Validações</button>
@@ -125,13 +132,6 @@
             <section id="report-view" class="app-section hidden">
               <section class="card report-module">
                 <div class="section-heading"><div><div class="eyebrow">GESTÃO · RELATÓRIOS</div><h2>Relatórios operacionais</h2><p class="muted">Navegue por cada área e filtre o período analisado.</p></div><button id="refresh-report" type="button" class="secondary">Atualizar</button></div>
-                <div class="subtabs report-tabs" role="tablist" aria-label="Tipos de relatório">
-                  <button type="button" class="subtab-button active" role="tab" aria-selected="true" data-report-tab="summary">Resumo</button>
-                  <button type="button" class="subtab-button" role="tab" aria-selected="false" data-report-tab="vehicles">Veículos</button>
-                  <button type="button" class="subtab-button" role="tab" aria-selected="false" data-report-tab="checklists">Checklists</button>
-                  <button type="button" class="subtab-button" role="tab" aria-selected="false" data-report-tab="users">Usuários</button>
-                  <button type="button" class="subtab-button" role="tab" aria-selected="false" data-report-tab="pending">Pendências</button>
-                </div>
                 <div class="report-filters">
                   <label>Período<select id="report-period"><option value="diario">Diário</option><option value="semanal">Semanal</option><option value="mensal">Mensal</option></select></label>
                   <label>Data de referência<input id="report-date" type="date" /></label>
