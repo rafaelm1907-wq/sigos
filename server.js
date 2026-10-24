@@ -619,7 +619,7 @@ async function resolveCompletedComplianceAlerts() {
            AND p.process_type = 'checklist_diario'
             AND p.is_test = FALSE
            AND p.submitted_at IS NOT NULL
-           AND timezone('America/Fortaleza', p.submitted_at)::date = a.period_key::date
+           AND timezone('America/Fortaleza', p.submitted_at)::date = CASE WHEN a.period_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN a.period_key::date ELSE NULL END
        )`,
   );
   await pool.query(
@@ -635,7 +635,7 @@ async function resolveCompletedComplianceAlerts() {
            AND vc.daily_period = 'fim'
            AND vc.driver_user_id = a.subject_id
            AND vc.submitted_at IS NOT NULL
-           AND timezone('America/Fortaleza', vc.submitted_at)::date = a.period_key::date
+           AND timezone('America/Fortaleza', vc.submitted_at)::date = CASE WHEN a.period_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN a.period_key::date ELSE NULL END
            AND a.alert_key = 'vehicle-daily-end:' || a.period_key || ':vehicle:' || vc.vehicle_id || ':user:' || vc.driver_user_id
        )`,
   );
@@ -752,7 +752,8 @@ async function checkDailyChecklistReminders() {
      ), morning AS (
        SELECT DISTINCT ON (vc.vehicle_id, vc.driver_user_id)
               vc.vehicle_id, vc.driver_user_id, vc.plate, vc.model,
-              u.name AS driver_name, clock.local_date
+              u.name AS driver_name, clock.local_date,
+              to_char(clock.local_date, 'YYYY-MM-DD') AS local_date_key
        FROM vehicle_checklists vc
        JOIN users u ON u.id = vc.driver_user_id AND u.active = TRUE
        CROSS JOIN local_clock clock
@@ -782,7 +783,7 @@ async function checkDailyChecklistReminders() {
   );
 
   for (const row of vehicleDailyEnd.rows) {
-    const periodKey = String(row.local_date).slice(0, 10);
+    const periodKey = row.local_date_key || String(row.local_date).slice(0, 10);
     const alertKey = `vehicle-daily-end:${periodKey}:vehicle:${row.vehicle_id}:user:${row.driver_user_id}`;
     const subjectLabel = `${row.driver_name} · ${row.plate}${row.model ? ` · ${row.model}` : ''}`;
     await ensureComplianceAlert({
