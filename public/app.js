@@ -1085,7 +1085,6 @@ function configureNavigation(user) {
   $('#user-role').textContent = roleLabels[user.role] || user.role;
   $('#nav-epi').classList.remove('hidden');
   $('#nav-validation').classList.toggle('hidden', !isChecklistValidatorRole(user.role));
-  $('#nav-reports').classList.toggle('hidden', !isAdminRole(user.role));
   $('#reports-subnav')?.classList.toggle('hidden', !isAdminRole(user.role));
   $('#nav-stock-fleet').classList.toggle('hidden', !isAdminRole(user.role));
   $('#nav-stock-ppe').classList.toggle('hidden', !isAdminRole(user.role));
