@@ -2689,6 +2689,7 @@ app.get('/api/overview', auth, async (req, res) => {
   const vehicleRangeClause = canReviewAll ? '' : ' AND vc.driver_user_id = $3';
   const pendingProcessClause = canReviewAll ? '' : ' AND (p.created_by = $1 OR p.validator_user_id = $1 OR p.target_user_id = $1)';
   const pendingParams = canReviewAll ? [] : [req.user.id];
+  const pendingTermParams = isAdmin ? [] : params;
   const dashboardParams = canReviewAll ? params.slice(0, 2) : params;
 
   const [activity, eventCount, termCount, pendingTerms, pendingValidations, dashboardStats] = await Promise.all([
@@ -2718,7 +2719,7 @@ app.get('/api/overview', auth, async (req, res) => {
     pool.query(
       `SELECT COUNT(*)::int AS count FROM epi_terms t
        WHERE t.status IN ('rascunho', 'pendente_assinatura')${termClause}`,
-      params,
+      pendingTermParams,
     ),
     pool.query(
       `SELECT (
