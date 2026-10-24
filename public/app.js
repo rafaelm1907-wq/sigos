@@ -184,6 +184,9 @@ let webPushPublicKey = null;
 let webPushServiceWorkerRegistration = null;
 let selectedSettingsTab = 'company';
 let selectedStockPanel = 'fleet';
+let selectedReportTab = 'summary';
+let selectedReportChecklistTab = 'all';
+let lastReportData = null;
 let activeViewId = 'home-view';
 let technicianCalendarMonth = '';
 let technicianCalendarDays = [];
@@ -994,6 +997,30 @@ function setStockPanel(panel) {
   updateNavigationActive();
 }
 
+function setReportTab(tab, { render = true } = {}) {
+  const allowedTabs = ['summary', 'vehicles', 'checklists', 'users', 'pending'];
+  selectedReportTab = allowedTabs.includes(tab) ? tab : 'summary';
+  document.querySelectorAll('.report-tabs [data-report-tab]').forEach((button) => {
+    const active = button.dataset.reportTab === selectedReportTab;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  const checklistTabs = $('#report-checklist-tabs');
+  checklistTabs?.classList.toggle('hidden', selectedReportTab !== 'checklists');
+  if (render && lastReportData) renderReport(lastReportData);
+}
+
+function setReportChecklistTab(tab, { render = true } = {}) {
+  const allowedTabs = ['all', 'epi', 'vehicle'];
+  selectedReportChecklistTab = allowedTabs.includes(tab) ? tab : 'all';
+  document.querySelectorAll('#report-checklist-tabs [data-report-checklist-tab]').forEach((button) => {
+    const active = button.dataset.reportChecklistTab === selectedReportChecklistTab;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  if (render && lastReportData) renderReport(lastReportData);
+}
+
 function updateNavigationActive() {
   document.querySelectorAll('.nav-item').forEach((button) => {
     const settingsMatch = !button.dataset.settingsTab || button.dataset.settingsTab === selectedSettingsTab;
@@ -1021,9 +1048,12 @@ function setView(viewId, options = {}) {
   activeViewId = viewId;
   if (options.settingsTab) selectedSettingsTab = options.settingsTab;
   if (options.stockPanel) selectedStockPanel = options.stockPanel;
+  if (options.reportTab) selectedReportTab = options.reportTab;
+  if (options.reportChecklistTab) selectedReportChecklistTab = options.reportChecklistTab;
   document.querySelectorAll('.app-section').forEach((section) => section.classList.toggle('hidden', section.id !== viewId));
+  scrollToInteraction(`#${viewId}`);
   if (viewId === 'home-view') loadOverview();
-  if (viewId === 'report-view' && isAdminRole()) loadReport();
+  if (viewId === 'report-view' && isAdminRole()) { setReportTab(selectedReportTab, { render: false }); setReportChecklistTab(selectedReportChecklistTab, { render: false }); loadReport(); }
   if (viewId === 'pending-view' && currentUser) loadPendingTasks();
   if (viewId === 'epi-view' && currentUser) {
     loadEpiProcesses();
@@ -1048,6 +1078,8 @@ function configureCadastroHeading() {
 
 function configureNavigation(user) {
   initializeSubtabs();
+  setReportTab(selectedReportTab, { render: false });
+  setReportChecklistTab(selectedReportChecklistTab, { render: false });
   $('#sidebar-role').textContent = roleLabels[user.role] || user.role;
   $('#user-role').textContent = roleLabels[user.role] || user.role;
   $('#nav-epi').classList.remove('hidden');
@@ -1224,13 +1256,25 @@ async function loadPendingTasks() {
 }
 
 async function loadOverview() {
+  const periodField = $('#overview-period-filter');
+  const dateField = $('#overview-date-filter');
+  if (dateField && !dateField.value) dateField.value = currentFortalezaDate();
+  const period = periodField?.value || 'diario';
+  const referenceDate = dateField?.value || currentFortalezaDate();
   try {
-    const data = await api('/api/overview');
-    $('#overview-period').textContent = data.period;
-    $('#overview-activity').textContent = data.stats.activity;
-    $('#overview-terms').textContent = data.stats.epiTerms;
-    $('#overview-pending-terms').textContent = data.stats.pendingEpiTerms;
-    $('#overview-validations').textContent = data.stats.pendingValidations;
+    const data = await api(`/api/overview?period=${encodeURIComponent(period)}&date=${encodeURIComponent(referenceDate)}`);
+    const periodNames = { diario: 'dia', semanal: 'semana' };
+    const periodLabel = $('#overview-period');
+    if (periodLabel) periodLabel.textContent = `${periodNames[data.period] || data.period} · ${reportDateLabel(data.startDate)}`;
+    const setOverviewValue = (id, value) => { const element = $(`#${id}`); if (element) element.textContent = String(value ?? 0); };
+    setOverviewValue('overview-total-checklists', data.stats.totalChecklists);
+    setOverviewValue('overview-daily-checklists', data.stats.dailyChecklists);
+    setOverviewValue('overview-vehicle-checklists', data.stats.vehicleChecklists);
+    setOverviewValue('overview-activity', data.stats.activity);
+    setOverviewValue('overview-terms', data.stats.epiTerms);
+    setOverviewValue('overview-pending-terms', data.stats.pendingEpiTerms);
+    setOverviewValue('overview-validations', data.stats.pendingValidations);
+    setOverviewValue('overview-open-items', Number(data.stats.openAlerts || 0) + Number(data.stats.openTasks || 0));
     $('#activity-table').innerHTML = data.activity.length ? data.activity.map((item) => `<tr><td>${escapeHtml(formatDate(item.created_at))}</td><td>${escapeHtml(eventLabel(item.event_type))}</td><td>${escapeHtml(item.actor_name || 'Sistema')}</td><td>${escapeHtml(item.entity_type ? `${item.entity_type} #${item.entity_id || '–'}` : '–')}</td></tr>`).join('') : '<tr><td colspan="4" class="muted">Nenhuma atividade registrada no período.</td></tr>';
     if (isAdminRole()) await loadComplianceAlerts();
     await loadPendingTasks();
@@ -1254,24 +1298,72 @@ function reportAlertStatus(status) {
   return ({ aberto: 'Aberto', justificado: 'Justificado', resolvido: 'Resolvido' }[status] || status || '–');
 }
 
+function reportMetric(label, value, description = '') {
+  return `<article class="stat card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value ?? 0)}</strong>${description ? `<small>${escapeHtml(description)}</small>` : ''}</article>`;
+}
+
+function reportTechnicianTable(technicians) {
+  if (!technicians.length) return '<p class="muted">Nenhum técnico elegível no período.</p>';
+  return `<div class="table-wrap"><table><thead><tr><th>Técnico</th><th>Status</th><th>Checklists</th><th>Com atenção</th><th>Último registro</th></tr></thead><tbody>${technicians.map((technician) => `<tr><td><strong>${escapeHtml(technician.name)}</strong><small class="table-subtext">${escapeHtml(technician.email)}</small></td><td>${reportChecklistStatus(technician)}</td><td>${escapeHtml(technician.checklistCount)}</td><td>${escapeHtml(technician.attentionCount)}</td><td>${escapeHtml(formatDate(technician.lastChecklistAt))}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+function reportVehicleTable(vehicles) {
+  if (!vehicles.length) return '<p class="muted">Nenhum veículo ativo cadastrado.</p>';
+  return `<div class="table-wrap"><table><thead><tr><th>Veículo</th><th>Registros</th><th>Diário</th><th>Recorrente</th><th>Transferência</th><th>Entrega/recebimento</th><th>Pend. validação</th><th>Último registro</th></tr></thead><tbody>${vehicles.map((vehicle) => `<tr><td><strong>${escapeHtml(vehicle.plate)}</strong><small class="table-subtext">${escapeHtml(vehicle.model || '–')}</small></td><td>${reportVehicleChecklistSummary(vehicle)}</td><td>${escapeHtml(vehicle.dailyCount)}</td><td>${escapeHtml(vehicle.fortnightlyCount)}</td><td>${escapeHtml(vehicle.transferCount)}</td><td>${escapeHtml(vehicle.deliveryCount)}</td><td>${escapeHtml(vehicle.pendingValidationCount)}</td><td>${escapeHtml(formatDate(vehicle.lastChecklistAt))}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+function reportUsersTable(users) {
+  if (!users.length) return '<p class="muted">Nenhum usuário cadastrado.</p>';
+  return `<div class="table-wrap"><table><thead><tr><th>Usuário</th><th>Perfil</th><th>Status</th><th>Checklists EPI</th><th>Veículos</th><th>Com atenção</th><th>Última atividade</th></tr></thead><tbody>${users.map((user) => `<tr><td><strong>${escapeHtml(user.name)}</strong><small class="table-subtext">${escapeHtml(user.email)}</small></td><td>${escapeHtml(roleLabels[user.role] || user.role)}</td><td><span class="report-status ${user.active ? 'report-status-ok' : 'report-status-missing'}">${user.active ? 'Ativo' : 'Desativado'}</span></td><td>${escapeHtml(user.epiChecklistCount)}</td><td>${escapeHtml(user.vehicleChecklistCount)}</td><td>${escapeHtml(user.attentionCount)}</td><td>${escapeHtml(formatDate(user.lastActivityAt))}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+function reportAlertsList(alerts) {
+  if (!alerts.length) return '<p class="muted">Nenhum alerta gerado no período.</p>';
+  return `<div class="report-list">${alerts.map((alert) => `<article class="report-list-item"><div><strong>${escapeHtml(alert.title)}</strong><span>${escapeHtml(alert.subject_label || '–')} · ${escapeHtml(reportAlertStatus(alert.status))}</span></div><p>${escapeHtml(alert.message || '–')}</p><small>${escapeHtml(formatDate(alert.created_at))}</small></article>`).join('')}</div>`;
+}
+
+function reportTasksList(openTasks) {
+  if (!openTasks.length) return '<p class="muted">Nenhuma tarefa pendente.</p>';
+  return `<div class="report-list">${openTasks.map((task) => `<article class="report-list-item"><div><strong>${escapeHtml(task.title)}</strong><span>${escapeHtml(task.subject_label || '–')} · Responsável: ${escapeHtml(task.assigned_to_name || '–')}</span></div><p>${escapeHtml(task.instruction || '–')}</p><small>Enviada em ${escapeHtml(formatDate(task.assigned_at))}</small></article>`).join('')}</div>`;
+}
+
+function reportActivityTable(activity) {
+  if (!activity.length) return '<p class="muted">Nenhuma atividade registrada no período.</p>';
+  return `<div class="table-wrap"><table><thead><tr><th>Quando</th><th>Evento</th><th>Responsável</th><th>Registro</th></tr></thead><tbody>${activity.map((item) => `<tr><td>${escapeHtml(formatDate(item.created_at))}</td><td>${escapeHtml(eventLabel(item.event_type))}</td><td>${escapeHtml(item.actor_name || 'Sistema')}</td><td>${escapeHtml(item.entity_type ? `${item.entity_type} #${item.entity_id || '–'}` : '–')}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
 function renderReport(data) {
   const content = $('#report-content');
   if (!content) return;
+  lastReportData = data;
   const periodNames = { diario: 'Diário', semanal: 'Semanal', mensal: 'Mensal' };
   const periodText = `${periodNames[data.period] || data.period} · ${reportDateLabel(data.startDate)} a ${reportDateLabel(data.endDate)}`;
-  $('#report-period-label').textContent = `Período analisado: ${periodText}`;
+  const periodLabel = $('#report-period-label');
+  if (periodLabel) periodLabel.textContent = `Período analisado: ${periodText}`;
   const technicians = data.technicians || [];
   const missingTechnicians = technicians.filter((technician) => !technician.completed);
   const vehicles = data.vehicles || [];
+  const users = data.users || [];
   const alerts = data.alerts || [];
   const openTasks = data.openTasks || [];
   const activity = data.activity || [];
   const stats = data.stats || {};
-  const metric = (label, value) => `<article class="stat card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value ?? 0)}</strong></article>`;
-  content.innerHTML = `<div class="stats-grid report-stats">${metric('Checklists diários EPI', stats.dailyEpiChecklists)}${metric('Checklists de veículos', stats.vehicleChecklists)}${metric('Termos EPI assinados', stats.signedEpiTerms)}${metric('Técnicos que fizeram', technicians.filter((technician) => technician.completed).length)}${metric('Técnicos que faltaram', missingTechnicians.length)}${metric('Pendências abertas agora', Number(stats.openAlerts || 0) + Number(stats.openTasks || 0))}</div><div class="report-grid"><section class="report-subcard"><div class="section-heading"><div><h3>Checklist diário dos técnicos</h3><p class="muted">Quem realizou e quem não registrou no período.</p></div><span class="badge">${technicians.length} técnico${technicians.length === 1 ? '' : 's'}</span></div>${technicians.length ? `<div class="table-wrap"><table><thead><tr><th>Técnico</th><th>Status</th><th>Checklists</th><th>Com atenção</th><th>Último registro</th></tr></thead><tbody>${technicians.map((technician) => `<tr><td><strong>${escapeHtml(technician.name)}</strong><small class="table-subtext">${escapeHtml(technician.email)}</small></td><td>${reportChecklistStatus(technician)}</td><td>${escapeHtml(technician.checklistCount)}</td><td>${escapeHtml(technician.attentionCount)}</td><td>${escapeHtml(formatDate(technician.lastChecklistAt))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhum técnico elegível no período.</p>'}</section><section class="report-subcard"><div class="section-heading"><div><h3>Veículos</h3><p class="muted">Movimentações e checklists registrados no período.</p></div><span class="badge">${vehicles.length} veículo${vehicles.length === 1 ? '' : 's'}</span></div>${vehicles.length ? `<div class="table-wrap"><table><thead><tr><th>Veículo</th><th>Registros</th><th>Diário</th><th>Quinzenal</th><th>Transf.</th><th>Entrega/recebimento</th><th>Pend. validação</th></tr></thead><tbody>${vehicles.map((vehicle) => `<tr><td><strong>${escapeHtml(vehicle.plate)}</strong><small class="table-subtext">${escapeHtml(vehicle.model || '–')}</small></td><td>${reportVehicleChecklistSummary(vehicle)}</td><td>${escapeHtml(vehicle.dailyCount)}</td><td>${escapeHtml(vehicle.fortnightlyCount)}</td><td>${escapeHtml(vehicle.transferCount)}</td><td>${escapeHtml(vehicle.deliveryCount)}</td><td>${escapeHtml(vehicle.pendingValidationCount)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhum veículo ativo cadastrado.</p>'}</section></div><div class="report-grid"><section class="report-subcard"><div class="section-heading"><div><h3>Pendências do período</h3><p class="muted">Alertas de conformidade gerados na faixa selecionada.</p></div><span class="badge">${alerts.length}</span></div>${alerts.length ? `<div class="report-list">${alerts.map((alert) => `<article class="report-list-item"><div><strong>${escapeHtml(alert.title)}</strong><span>${escapeHtml(alert.subject_label || '–')} · ${escapeHtml(reportAlertStatus(alert.status))}</span></div><p>${escapeHtml(alert.message || '–')}</p><small>${escapeHtml(formatDate(alert.created_at))}</small></article>`).join('')}</div>` : '<p class="muted">Nenhum alerta gerado no período.</p>'}</section><section class="report-subcard"><div class="section-heading"><div><h3>Tarefas pendentes</h3><p class="muted">Pendências atribuídas que ainda aguardam conclusão.</p></div><span class="badge">${openTasks.length}</span></div>${openTasks.length ? `<div class="report-list">${openTasks.map((task) => `<article class="report-list-item"><div><strong>${escapeHtml(task.title)}</strong><span>${escapeHtml(task.subject_label || '–')} · Responsável: ${escapeHtml(task.assigned_to_name || '–')}</span></div><p>${escapeHtml(task.instruction || '–')}</p><small>Enviada em ${escapeHtml(formatDate(task.assigned_at))}</small></article>`).join('')}</div>` : '<p class="muted">Nenhuma tarefa pendente.</p>'}</section></div><section class="report-subcard"><div class="section-heading"><div><h3>Atividades do período</h3><p class="muted">Últimos registros de auditoria relacionados ao intervalo.</p></div><span class="badge">${activity.length}</span></div>${activity.length ? `<div class="table-wrap"><table><thead><tr><th>Quando</th><th>Evento</th><th>Responsável</th><th>Registro</th></tr></thead><tbody>${activity.map((item) => `<tr><td>${escapeHtml(formatDate(item.created_at))}</td><td>${escapeHtml(eventLabel(item.event_type))}</td><td>${escapeHtml(item.actor_name || 'Sistema')}</td><td>${escapeHtml(item.entity_type ? `${item.entity_type} #${item.entity_id || '–'}` : '–')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhuma atividade registrada no período.</p>'}</section>`;
-  content.querySelectorAll('th').forEach((header) => {
-    if (header.textContent.trim() === 'Quinzenal') header.textContent = 'Recorrente';
-  });
+  const reportMetrics = `<div class="stats-grid report-stats">${reportMetric('Checklists diários EPI', stats.dailyEpiChecklists)}${reportMetric('Checklists de veículos', stats.vehicleChecklists)}${reportMetric('Termos EPI assinados', stats.signedEpiTerms)}${reportMetric('Técnicos que fizeram', technicians.filter((technician) => technician.completed).length)}${reportMetric('Técnicos que faltaram', missingTechnicians.length)}${reportMetric('Pendências abertas agora', Number(stats.openAlerts || 0) + Number(stats.openTasks || 0))}</div>`;
+  const techniciansCard = `<section class="report-subcard"><div class="section-heading"><div><h3>Checklist diário dos técnicos</h3><p class="muted">Quem realizou e quem não registrou no período.</p></div><span class="badge">${technicians.length} técnico${technicians.length === 1 ? '' : 's'}</span></div>${reportTechnicianTable(technicians)}</section>`;
+  const vehiclesCard = `<section class="report-subcard"><div class="section-heading"><div><h3>Veículos</h3><p class="muted">Movimentações e checklists registrados no período.</p></div><span class="badge">${vehicles.length} veículo${vehicles.length === 1 ? '' : 's'}</span></div>${reportVehicleTable(vehicles)}</section>`;
+  const activityCard = `<section class="report-subcard report-wide-card"><div class="section-heading"><div><h3>Atividades do período</h3><p class="muted">Registros de auditoria relacionados ao intervalo selecionado.</p></div><span class="badge">${activity.length}</span></div>${reportActivityTable(activity)}</section>`;
+  const pendingCards = `<div class="report-grid"><section class="report-subcard"><div class="section-heading"><div><h3>Pendências do período</h3><p class="muted">Alertas de conformidade gerados na faixa selecionada.</p></div><span class="badge">${alerts.length}</span></div>${reportAlertsList(alerts)}</section><section class="report-subcard"><div class="section-heading"><div><h3>Tarefas pendentes</h3><p class="muted">Pendências atribuídas que ainda aguardam conclusão.</p></div><span class="badge">${openTasks.length}</span></div>${reportTasksList(openTasks)}</section></div>`;
+  if (selectedReportTab === 'vehicles') content.innerHTML = `<div class="report-page-heading"><div><h3>Relatório de veículos</h3><p class="muted">Acompanhe os registros por veículo, tipo e situação de validação.</p></div></div>${vehiclesCard}`;
+  else if (selectedReportTab === 'users') content.innerHTML = `<div class="report-page-heading"><div><h3>Relatório de usuários</h3><p class="muted">Atividade de cada usuário no período filtrado, incluindo checklists e situações de atenção.</p></div><span class="badge">${users.length} usuário${users.length === 1 ? '' : 's'}</span></div><section class="report-subcard report-wide-card">${reportUsersTable(users)}</section>`;
+  else if (selectedReportTab === 'checklists') {
+    const checklistContent = selectedReportChecklistTab === 'epi'
+      ? `${reportMetrics}${techniciansCard}`
+      : selectedReportChecklistTab === 'vehicle'
+        ? `${reportMetrics}${vehiclesCard}`
+        : `${reportMetrics}<div class="report-grid">${techniciansCard}${vehiclesCard}</div>`;
+    content.innerHTML = `<div class="report-page-heading"><div><h3>Relatório de checklists</h3><p class="muted">Escolha acima se deseja visualizar checklists de EPI, veículos ou todos.</p></div></div>${checklistContent}`;
+  } else if (selectedReportTab === 'pending') content.innerHTML = `<div class="report-page-heading"><div><h3>Relatório de pendências</h3><p class="muted">Alertas e tarefas vinculados ao período selecionado.</p></div></div>${pendingCards}`;
+  else content.innerHTML = `${reportMetrics}<div class="report-grid">${techniciansCard}${vehiclesCard}</div>${pendingCards}${activityCard}`;
 }
 
 async function loadReport() {
@@ -3176,9 +3268,24 @@ function renderTermDetail(term) {
 
 async function openTerm(id) { activateSubtab('epi-main', 'terms'); const detail = $('#term-detail'); detail?.classList.remove('hidden'); scrollToInteraction(detail); const data = await api(`/api/epi/terms/${id}`); renderTermDetail(data.term); scrollToInteraction('#term-detail'); }
 
+function navigateFromDashboard(element) {
+  const view = element?.dataset.dashboardView;
+  if (!view) return;
+  setView(view, {
+    reportTab: element.dataset.reportTab,
+    reportChecklistTab: element.dataset.reportChecklistTab,
+  });
+}
+
 $('#login-form').addEventListener('submit', async (event) => { event.preventDefault(); $('#login-error').textContent = ''; try { const data = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: $('#login-email').value, password: $('#login-password').value }) }); showApp(data.user); } catch (error) { $('#login-error').textContent = error.message; } });
 $('#logout').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); window.location.reload(); });
 document.querySelectorAll('.nav-item').forEach((button) => button.addEventListener('click', () => setView(button.dataset.view, { settingsTab: button.dataset.settingsTab, stockPanel: button.dataset.stockPanel })));
+document.querySelectorAll('.report-tabs [data-report-tab]').forEach((button) => button.addEventListener('click', () => setReportTab(button.dataset.reportTab)));
+document.querySelectorAll('#report-checklist-tabs [data-report-checklist-tab]').forEach((button) => button.addEventListener('click', () => setReportChecklistTab(button.dataset.reportChecklistTab)));
+document.querySelectorAll('[data-dashboard-view]').forEach((element) => {
+  element.addEventListener('click', () => navigateFromDashboard(element));
+  if (element.getAttribute('role') === 'button') element.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigateFromDashboard(element); } });
+});
 document.querySelectorAll('.settings-tab-button').forEach((button) => button.addEventListener('click', () => setSettingsTab(button.dataset.settingsTab)));
 $('#pwa-install-ios')?.addEventListener('click', () => {
   $('#pwa-ios-instructions')?.classList.toggle('hidden');
@@ -3194,6 +3301,8 @@ $('#notifications-close').addEventListener('click', () => { $('#notifications-pa
 $('#enable-browser-notifications').addEventListener('click', () => requestBrowserNotifications());
 $('#notifications-read-all').addEventListener('click', async () => { try { await api('/api/notifications/read-all', { method: 'POST' }); await loadNotifications(); } catch (error) { $('#notifications-list').innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`; } });
 $('#refresh-overview').addEventListener('click', () => loadOverview());
+$('#overview-period-filter')?.addEventListener('change', () => loadOverview());
+$('#overview-date-filter')?.addEventListener('change', () => loadOverview());
 $('#refresh-report').addEventListener('click', () => loadReport());
 $('#generate-report').addEventListener('click', () => loadReport());
 $('#refresh-compliance-alerts').addEventListener('click', () => loadComplianceAlerts());

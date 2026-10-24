@@ -1037,3 +1037,39 @@ table { max-width: 100%; }
   .report-list,
   .pending-list { max-height: 56vh; padding: 6px; }
 }
+
+/* Dashboard and report navigation */
+.overview-page-intro { margin-bottom: 14px; }
+.overview-filters { display: grid; grid-template-columns: minmax(150px, .55fr) minmax(180px, .7fr) auto; gap: 10px; align-items: end; margin-bottom: 18px; padding: 14px 16px; border: 1px solid rgba(148, 163, 184, .14); border-radius: 13px; background: rgba(7, 15, 31, .3); }
+.overview-filters button { min-width: 150px; }
+.overview-dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(300px, .75fr); gap: 18px; align-items: start; }
+.overview-summary-card { min-width: 0; padding: 22px; }
+.overview-summary-card .overview-stats { margin: 0; }
+.dashboard-link-card { cursor: pointer; transition: transform .16s ease, border-color .16s ease, background .16s ease; }
+.dashboard-link-card:hover, .dashboard-link-card:focus-visible { transform: translateY(-2px); border-color: rgba(110, 231, 183, .5); background: rgba(21, 51, 68, .92); }
+.dashboard-link-card:focus-visible { outline: 3px solid rgba(110, 231, 183, .65); outline-offset: 2px; }
+.dashboard-link-card small { color: #a7f3d0; font-size: .72rem; }
+.overview-alerts-card { max-height: 536px; min-width: 0; padding: 20px; }
+.overview-alerts-card #compliance-alerts-list { max-height: 402px; overflow-y: auto; padding-right: 3px; }
+.overview-alert-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.report-tabs { margin-bottom: 14px; }
+.report-checklist-tabs { margin-top: 16px; margin-bottom: 0; }
+.report-page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin: 20px 0 12px; }
+.report-page-heading h3 { margin: 0 0 4px; }
+.report-page-heading p { margin: 0; }
+.report-wide-card { margin-top: 18px; }
+.report-wide-card .table-wrap { margin-top: 0; }
+
+@media (max-width: 1050px) {
+  .overview-dashboard-grid { grid-template-columns: 1fr; }
+  .overview-alerts-card { max-height: none; }
+  .overview-alerts-card #compliance-alerts-list { max-height: 360px; }
+}
+
+@media (max-width: 760px) {
+  .overview-filters { grid-template-columns: 1fr; }
+  .overview-filters button { width: 100%; }
+  .overview-alert-actions { justify-content: stretch; width: 100%; }
+  .overview-alert-actions button { flex: 1 1 150px; }
+  .report-page-heading { flex-direction: column; }
+}

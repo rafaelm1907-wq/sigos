@@ -2676,34 +2676,42 @@ app.get('/api/dashboard', auth, async (_req, res) => {
 });
 
 app.get('/api/overview', auth, async (req, res) => {
+  const range = reportDateRange(String(req.query.period || 'diario'), req.query.date);
+  if (!range) return res.status(400).json({ error: 'Informe um período e uma data de referência válidos.' });
   const isAdmin = isAdminRole(req.user.role);
   const canReviewAll = isChecklistValidatorRole(req.user.role);
-  const params = isAdmin ? [] : [req.user.id];
-  const actorClause = isAdmin ? '' : ' AND a.actor_user_id = $1';
-  const termClause = isAdmin ? '' : ' AND (t.created_by = $1 OR t.signer_user_id = $1)';
-  const processClause = ` AND p.is_test = FALSE${canReviewAll ? '' : ' AND (p.created_by = $1 OR p.validator_user_id = $1 OR p.target_user_id = $1)'}`;
+  const params = [range.startDate, range.endDateExclusive];
+  if (!isAdmin) params.push(req.user.id);
+  const actorClause = isAdmin ? '' : ' AND a.actor_user_id = $3';
+  const termClause = isAdmin ? '' : ' AND (t.created_by = $3 OR t.signer_user_id = $3)';
+  const processRangeClause = canReviewAll ? '' : ' AND (p.created_by = $3 OR p.validator_user_id = $3 OR p.target_user_id = $3)';
+  const vehicleRangeClause = canReviewAll ? '' : ' AND vc.driver_user_id = $3';
+  const pendingProcessClause = canReviewAll ? '' : ' AND (p.created_by = $1 OR p.validator_user_id = $1 OR p.target_user_id = $1)';
   const pendingParams = canReviewAll ? [] : [req.user.id];
+  const dashboardParams = canReviewAll ? params.slice(0, 2) : params;
 
-  const [activity, eventCount, termCount, pendingTerms, pendingValidations] = await Promise.all([
+  const [activity, eventCount, termCount, pendingTerms, pendingValidations, dashboardStats] = await Promise.all([
     pool.query(
       `SELECT a.id, a.event_type, a.entity_type, a.entity_id, a.ip_address,
               a.user_agent, a.metadata, a.created_at, u.name AS actor_name
        FROM audit_logs a
        LEFT JOIN users u ON u.id = a.actor_user_id
-       WHERE a.created_at >= CURRENT_DATE
-         AND a.created_at < CURRENT_DATE + INTERVAL '1 day'${actorClause}
+       WHERE timezone('America/Fortaleza', a.created_at)::date >= $1::date
+         AND timezone('America/Fortaleza', a.created_at)::date < $2::date${actorClause}
        ORDER BY a.created_at DESC
        LIMIT 15`,
       params,
     ),
     pool.query(
       `SELECT COUNT(*)::int AS count FROM audit_logs a
-       WHERE a.created_at >= NOW() - INTERVAL '7 days'${actorClause}`,
+       WHERE timezone('America/Fortaleza', a.created_at)::date >= $1::date
+         AND timezone('America/Fortaleza', a.created_at)::date < $2::date${actorClause}`,
       params,
     ),
     pool.query(
       `SELECT COUNT(*)::int AS count FROM epi_terms t
-       WHERE t.created_at >= NOW() - INTERVAL '7 days'${termClause}`,
+       WHERE timezone('America/Fortaleza', t.created_at)::date >= $1::date
+         AND timezone('America/Fortaleza', t.created_at)::date < $2::date${termClause}`,
       params,
     ),
     pool.query(
@@ -2714,22 +2722,48 @@ app.get('/api/overview', auth, async (req, res) => {
     pool.query(
       `SELECT (
          (SELECT COUNT(*) FROM vehicle_checklists
-          WHERE is_test = FALSE AND status = 'pendente_validacao'${isAdmin || req.user.role === 'vistoriador' ? '' : ' AND driver_user_id = $1'})
+          WHERE is_test = FALSE AND status = 'pendente_validacao'${canReviewAll ? '' : ' AND driver_user_id = $1'})
          +
          (SELECT COUNT(*) FROM epi_processes p
-          WHERE p.status = 'pendente_validacao'${processClause})
+          WHERE p.status = 'pendente_validacao' AND p.is_test = FALSE${pendingProcessClause})
        )::int AS count`,
       pendingParams,
     ),
+    pool.query(
+      `SELECT
+         (SELECT COUNT(*)::int FROM epi_processes p
+          WHERE p.process_type = 'checklist_diario'
+            AND p.is_test = FALSE
+            AND p.submitted_at IS NOT NULL
+            AND timezone('America/Fortaleza', p.submitted_at)::date >= $1::date
+            AND timezone('America/Fortaleza', p.submitted_at)::date < $2::date${processRangeClause}) AS daily_checklists,
+         (SELECT COUNT(*)::int FROM vehicle_checklists vc
+          WHERE vc.is_test = FALSE
+            AND vc.submitted_at IS NOT NULL
+            AND timezone('America/Fortaleza', vc.submitted_at)::date >= $1::date
+            AND timezone('America/Fortaleza', vc.submitted_at)::date < $2::date${vehicleRangeClause}) AS vehicle_checklists,
+         (SELECT COUNT(*)::int FROM compliance_alerts WHERE status = 'aberto') AS open_alerts,
+         (SELECT COUNT(*)::int FROM compliance_pending_tasks WHERE status = 'pendente') AS open_tasks`,
+      dashboardParams,
+    ),
   ]);
 
+  const dashboard = dashboardStats.rows[0] || {};
   res.json({
-    period: 'últimos 7 dias',
+    period: range.period,
+    referenceDate: range.referenceDate,
+    startDate: range.startDate,
+    endDate: range.endDate,
     stats: {
       activity: eventCount.rows[0].count,
       epiTerms: termCount.rows[0].count,
       pendingEpiTerms: pendingTerms.rows[0].count,
       pendingValidations: pendingValidations.rows[0].count,
+      dailyChecklists: dashboard.daily_checklists,
+      vehicleChecklists: dashboard.vehicle_checklists,
+      totalChecklists: Number(dashboard.daily_checklists || 0) + Number(dashboard.vehicle_checklists || 0),
+      openAlerts: dashboard.open_alerts,
+      openTasks: dashboard.open_tasks,
     },
     activity: activity.rows,
   });
@@ -2740,7 +2774,7 @@ app.get('/api/reports', auth, requireRole('admin'), async (req, res) => {
   if (!range) return res.status(400).json({ error: 'Informe um período e uma data de referência válidos.' });
   const params = [range.startDate, range.endDateExclusive];
 
-  const [summary, technicians, vehicles, periodAlerts, openTasks, activity] = await Promise.all([
+  const [summary, technicians, users, vehicles, periodAlerts, openTasks, activity] = await Promise.all([
     pool.query(
       `SELECT
          (SELECT COUNT(*)::int FROM audit_logs a
@@ -2789,6 +2823,29 @@ app.get('/api/reports', auth, requireRole('admin'), async (req, res) => {
          AND timezone('America/Fortaleza', u.created_at)::date < $2::date
        GROUP BY u.id, u.name, u.email
        ORDER BY u.name ASC`,
+      params,
+    ),
+    pool.query(
+      `SELECT u.id, u.name, u.email, u.role, u.active, u.created_at,
+              COUNT(DISTINCT p.id)::int AS epi_checklist_count,
+              COUNT(DISTINCT vc.id)::int AS vehicle_checklist_count,
+              COUNT(DISTINCT p.id) FILTER (WHERE p.admin_attention_required)::int AS attention_count,
+              MAX(GREATEST(p.submitted_at, vc.submitted_at)) AS last_activity_at
+       FROM users u
+       LEFT JOIN epi_processes p
+         ON p.created_by = u.id
+        AND p.is_test = FALSE
+        AND p.submitted_at IS NOT NULL
+        AND timezone('America/Fortaleza', p.submitted_at)::date >= $1::date
+        AND timezone('America/Fortaleza', p.submitted_at)::date < $2::date
+       LEFT JOIN vehicle_checklists vc
+         ON vc.driver_user_id = u.id
+        AND vc.is_test = FALSE
+        AND vc.submitted_at IS NOT NULL
+        AND timezone('America/Fortaleza', vc.submitted_at)::date >= $1::date
+        AND timezone('America/Fortaleza', vc.submitted_at)::date < $2::date
+       GROUP BY u.id, u.name, u.email, u.role, u.active, u.created_at
+       ORDER BY u.active DESC, u.name ASC`,
       params,
     ),
     pool.query(
@@ -2871,6 +2928,18 @@ app.get('/api/reports', auth, requireRole('admin'), async (req, res) => {
       attentionCount: row.attention_count,
       completed: Number(row.checklist_count) > 0,
       lastChecklistAt: row.last_checklist_at,
+    })),
+    users: users.rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      role: row.role,
+      active: row.active,
+      createdAt: row.created_at,
+      epiChecklistCount: row.epi_checklist_count,
+      vehicleChecklistCount: row.vehicle_checklist_count,
+      attentionCount: row.attention_count,
+      lastActivityAt: row.last_activity_at,
     })),
     vehicles: vehicles.rows.map((row) => ({
       id: row.id,

@@ -11,7 +11,7 @@
     <link rel="apple-touch-icon" href="/assets/sigos-symbol.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>SIGOS · Gestão operacional</title>
-      <link rel="stylesheet" href="/styles.css?v=mobile-frame-20261021-1" />
+      <link rel="stylesheet" href="/styles.css?v=dashboard-reports-20261023-1" />
   </head>
   <body>
     <main class="shell">
@@ -72,8 +72,9 @@
               <button id="nav-admin-users" class="nav-item nav-subitem hidden" data-view="settings-view" data-settings-tab="users"><span>♙</span> Usuários</button>
               <button id="nav-stock-ppe" class="nav-item nav-subitem hidden" data-view="stock-view" data-stock-panel="ppe"><span>✓</span> EPIs</button>
               <button id="nav-stock-fleet" class="nav-item nav-subitem hidden" data-view="stock-view" data-stock-panel="fleet"><span>▣</span> Frota</button>
+              <div class="nav-label">RELATÓRIOS</div>
+              <button id="nav-reports" class="nav-item nav-subitem hidden" data-view="report-view"><span>▥</span> Relatórios</button>
               <div class="nav-label">ADMINISTRAÇÃO</div>
-              <button id="nav-reports" class="nav-item nav-subitem hidden" data-view="report-view"><span>▥</span> Relatório</button>
               <button id="nav-pending" class="nav-item nav-subitem" data-view="pending-view"><span>!</span> Pendências <span id="pending-count" class="notification-count hidden">0</span></button>
               <button id="nav-validation" class="nav-item hidden" data-view="validation-view"><span>◈</span> Validações</button>
               <button id="nav-admin-company" class="nav-item nav-subitem hidden" data-view="settings-view" data-settings-tab="company"><span>▤</span> Empresa</button>
@@ -93,26 +94,53 @@
             </header>
 
             <section id="home-view" class="app-section">
-              <div class="page-intro"><div><div class="eyebrow">RESUMO OPERACIONAL</div><h2>O que aconteceu recentemente · <span id="overview-period">últimos 7 dias</span></h2></div><button id="refresh-overview" type="button" class="secondary">Atualizar</button></div>
-              <section class="stats-grid overview-stats">
-                <article class="stat card"><span>Atividades registradas</span><strong id="overview-activity">–</strong></article>
-                <article class="stat card"><span>Termos EPI emitidos</span><strong id="overview-terms">–</strong></article>
-                <article class="stat card"><span>Termos pendentes</span><strong id="overview-pending-terms">–</strong></article>
-                <article class="stat card"><span>Validações pendentes</span><strong id="overview-validations">–</strong></article>
-              </section>
-              <section id="compliance-alerts-card" class="card compliance-alerts-card hidden"><div class="section-heading"><div><div class="eyebrow">AUTOMAÇÃO · CONFORMIDADE</div><h2>Alertas pendentes</h2><p class="muted">Pendências geradas automaticamente pelos prazos de checklist.</p></div><button id="refresh-compliance-alerts" type="button" class="secondary">Atualizar</button></div><div id="compliance-alerts-list"><p class="muted">Nenhum alerta pendente.</p></div></section>
-              <section class="card activity-card"><div class="section-heading"><div><div class="eyebrow">LOG RECENTE · HOJE</div><h2>Últimos 15 eventos</h2></div></div><div class="table-wrap"><table><thead><tr><th>Quando</th><th>Evento</th><th>Responsável</th><th>Registro</th></tr></thead><tbody id="activity-table"></tbody></table></div></section>
+              <div class="page-intro overview-page-intro"><div><div class="eyebrow">RESUMO OPERACIONAL</div><h2>Panorama do <span id="overview-period">dia</span></h2><p class="muted">Acompanhe os checklists e pendências do período selecionado.</p></div></div>
+              <div class="overview-filters" aria-label="Filtros do painel principal">
+                <label>Período<select id="overview-period-filter"><option value="diario">Diário</option><option value="semanal">Semanal</option></select></label>
+                <label>Data de referência<input id="overview-date-filter" type="date" /></label>
+                <button id="refresh-overview" type="button">Atualizar painel</button>
+              </div>
+              <div class="overview-dashboard-grid">
+                <section class="card overview-summary-card">
+                  <div class="section-heading"><div><div class="eyebrow">INDICADORES</div><h2>Resumo do período</h2></div></div>
+                  <div class="stats-grid overview-stats">
+                    <article class="stat card dashboard-link-card" role="button" tabindex="0" data-dashboard-view="report-view" data-report-tab="checklists"><span>Checklists realizados</span><strong id="overview-total-checklists">–</strong><small>Ver detalhes de checklists</small></article>
+                    <article class="stat card dashboard-link-card" role="button" tabindex="0" data-dashboard-view="report-view" data-report-tab="checklists" data-report-checklist-tab="epi"><span>Checklists EPI</span><strong id="overview-daily-checklists">–</strong><small>Checklists diários</small></article>
+                    <article class="stat card dashboard-link-card" role="button" tabindex="0" data-dashboard-view="report-view" data-report-tab="vehicles"><span>Checklists de veículos</span><strong id="overview-vehicle-checklists">–</strong><small>Ver veículos</small></article>
+                    <article class="stat card dashboard-link-card" role="button" tabindex="0" data-dashboard-view="report-view" data-report-tab="summary"><span>Atividades registradas</span><strong id="overview-activity">–</strong><small>Ver resumo e atividade</small></article>
+                    <article class="stat card dashboard-link-card" role="button" tabindex="0" data-dashboard-view="validation-view"><span>Validações pendentes</span><strong id="overview-validations">–</strong><small>Abrir validações</small></article>
+                    <article class="stat card dashboard-link-card" role="button" tabindex="0" data-dashboard-view="pending-view"><span>Pendências abertas</span><strong id="overview-open-items">–</strong><small>Abrir pendências</small></article>
+                  </div>
+                </section>
+                <section id="compliance-alerts-card" class="card compliance-alerts-card overview-alerts-card hidden">
+                  <div class="section-heading"><div><div class="eyebrow">AUTOMAÇÃO · CONFORMIDADE</div><h2>Alertas</h2><p class="muted">Pendências geradas pelos prazos de checklist.</p></div><div class="overview-alert-actions"><button id="refresh-compliance-alerts" type="button" class="secondary small-button">Atualizar</button><button type="button" class="secondary small-button" data-dashboard-view="pending-view">Ver pendências</button></div></div>
+                  <div id="compliance-alerts-list" class="compliance-alerts-list"><p class="muted">Nenhum alerta pendente.</p></div>
+                </section>
+              </div>
+              <section class="card activity-card"><div class="section-heading"><div><div class="eyebrow">ATIVIDADE · PERÍODO SELECIONADO</div><h2>Últimos eventos</h2></div><button type="button" class="secondary small-button" data-dashboard-view="report-view" data-report-tab="summary">Ver relatório</button></div><div class="table-wrap"><table><thead><tr><th>Quando</th><th>Evento</th><th>Responsável</th><th>Registro</th></tr></thead><tbody id="activity-table"></tbody></table></div></section>
             </section>
 
             <section id="report-view" class="app-section hidden">
               <section class="card report-module">
-                <div class="section-heading"><div><div class="eyebrow">GESTÃO · RELATÓRIO</div><h2>Relatório operacional</h2><p class="muted">Consolide checklists, faltas, pendências, veículos e atividades por período.</p></div><button id="refresh-report" type="button" class="secondary">Atualizar</button></div>
+                <div class="section-heading"><div><div class="eyebrow">GESTÃO · RELATÓRIOS</div><h2>Relatórios operacionais</h2><p class="muted">Navegue por cada área e filtre o período analisado.</p></div><button id="refresh-report" type="button" class="secondary">Atualizar</button></div>
+                <div class="subtabs report-tabs" role="tablist" aria-label="Tipos de relatório">
+                  <button type="button" class="subtab-button active" role="tab" aria-selected="true" data-report-tab="summary">Resumo</button>
+                  <button type="button" class="subtab-button" role="tab" aria-selected="false" data-report-tab="vehicles">Veículos</button>
+                  <button type="button" class="subtab-button" role="tab" aria-selected="false" data-report-tab="checklists">Checklists</button>
+                  <button type="button" class="subtab-button" role="tab" aria-selected="false" data-report-tab="users">Usuários</button>
+                  <button type="button" class="subtab-button" role="tab" aria-selected="false" data-report-tab="pending">Pendências</button>
+                </div>
                 <div class="report-filters">
                   <label>Período<select id="report-period"><option value="diario">Diário</option><option value="semanal">Semanal</option><option value="mensal">Mensal</option></select></label>
                   <label>Data de referência<input id="report-date" type="date" /></label>
                   <button id="generate-report" type="button">Gerar relatório</button>
                 </div>
                 <p id="report-period-label" class="report-period-label muted"></p>
+                <div id="report-checklist-tabs" class="subtabs report-checklist-tabs hidden" role="tablist" aria-label="Tipos de checklist no relatório">
+                  <button type="button" class="subtab-button active" role="tab" aria-selected="true" data-report-checklist-tab="all">Todos</button>
+                  <button type="button" class="subtab-button" role="tab" aria-selected="false" data-report-checklist-tab="epi">EPI</button>
+                  <button type="button" class="subtab-button" role="tab" aria-selected="false" data-report-checklist-tab="vehicle">Veículos</button>
+                </div>
                 <div id="report-content"><p class="muted">Selecione um período para gerar o relatório.</p></div>
               </section>
             </section>
@@ -225,6 +253,6 @@
         </div>
       </section>
     </main>
-    <script src="/app.js?v=vehicle-checklist-tabs-20261021-1"></script>
+    <script src="/app.js?v=dashboard-reports-20261023-1"></script>
   </body>
 </html>
