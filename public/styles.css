@@ -156,8 +156,8 @@ th { color: #9aa8c2; font-weight: 600; }
 .nav-item span { width: 18px; color: #6ee7b7; text-align: center; }
 .nav-item .notification-count { width: auto; margin-left: auto; color: #062218; }
 .nav-item:hover, .nav-item.active { background: rgba(52, 211, 153, .13); color: #ecfdf5; }
-.reports-subnav { display: grid; gap: 3px; margin: -1px 0 8px 14px; padding: 3px 0 3px 9px; border-left: 1px solid rgba(110, 231, 183, .28); }
-.reports-subnav .nav-item { min-height: 36px; padding: 8px 10px; font-size: .82rem; }
+.reports-subnav { display: grid; gap: 3px; margin: -1px 0 8px; padding: 3px 0; }
+.reports-subnav .nav-item { min-height: 40px; padding: 10px 11px; font-size: .9rem; }
 .reports-subnav .nav-item.active { background: rgba(52, 211, 153, .18); color: #ecfdf5; }
 .sidebar-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; padding: 16px 7px 2px; border-top: 1px solid rgba(148, 163, 184, .12); }
 .sidebar-footer .badge { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
