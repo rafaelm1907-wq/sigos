@@ -1050,6 +1050,7 @@ table { max-width: 100%; }
 .overview-summary-card { min-width: 0; padding: 18px; }
 .overview-summary-card .overview-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0; }
 .overview-summary-card .stat { min-width: 0; padding: 15px; gap: 8px; }
+.overview-summary-card .overview-stats .stat + .stat { margin-top: 0; }
 .overview-summary-card .stat span { line-height: 1.25; }
 .overview-summary-card .stat strong { font-size: 1.85rem; }
 .dashboard-link-card { cursor: pointer; transition: transform .16s ease, border-color .16s ease, background .16s ease; }

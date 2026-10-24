@@ -1286,7 +1286,7 @@ async function loadOverview() {
     setOverviewValue('overview-total-checklists', data.stats.totalChecklists);
     setOverviewValue('overview-daily-checklists', data.stats.dailyChecklists);
     setOverviewValue('overview-vehicle-checklists', data.stats.vehicleChecklists);
-    setOverviewValue('overview-activity', data.stats.activity);
+    setOverviewValue('overview-technician-coverage', `${Number(data.stats.techniciansCompleted || 0)} / ${Number(data.stats.techniciansMissing || 0)}`);
     setOverviewValue('overview-terms', data.stats.epiTerms);
     setOverviewValue('overview-pending-terms', data.stats.pendingEpiTerms);
     setOverviewValue('overview-validations', data.stats.pendingValidations);

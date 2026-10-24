@@ -2744,6 +2744,20 @@ app.get('/api/overview', auth, async (req, res) => {
             AND vc.submitted_at IS NOT NULL
             AND timezone('America/Fortaleza', vc.submitted_at)::date >= $1::date
             AND timezone('America/Fortaleza', vc.submitted_at)::date < $2::date${vehicleRangeClause}) AS vehicle_checklists,
+          (SELECT COUNT(*)::int FROM users u
+           WHERE u.active = TRUE
+             AND u.role = 'tecnico'
+             AND timezone('America/Fortaleza', u.created_at)::date < $2::date) AS eligible_technicians,
+          (SELECT COUNT(DISTINCT p.created_by)::int
+           FROM epi_processes p
+           JOIN users u ON u.id = p.created_by
+           WHERE p.process_type = 'checklist_diario'
+             AND p.is_test = FALSE
+             AND p.submitted_at IS NOT NULL
+             AND u.active = TRUE
+             AND u.role = 'tecnico'
+             AND timezone('America/Fortaleza', p.submitted_at)::date >= $1::date
+             AND timezone('America/Fortaleza', p.submitted_at)::date < $2::date${processRangeClause}) AS technicians_completed,
          (SELECT COUNT(*)::int FROM compliance_alerts WHERE status = 'aberto') AS open_alerts,
          (SELECT COUNT(*)::int FROM compliance_pending_tasks WHERE status = 'pendente') AS open_tasks`,
       dashboardParams,
@@ -2763,6 +2777,8 @@ app.get('/api/overview', auth, async (req, res) => {
       pendingValidations: pendingValidations.rows[0].count,
       dailyChecklists: dashboard.daily_checklists,
       vehicleChecklists: dashboard.vehicle_checklists,
+      techniciansCompleted: Number(dashboard.technicians_completed || 0),
+      techniciansMissing: Math.max(Number(dashboard.eligible_technicians || 0) - Number(dashboard.technicians_completed || 0), 0),
       totalChecklists: Number(dashboard.daily_checklists || 0) + Number(dashboard.vehicle_checklists || 0),
       openAlerts: dashboard.open_alerts,
       openTasks: dashboard.open_tasks,
