@@ -191,6 +191,80 @@ let activeViewId = 'home-view';
 let technicianCalendarMonth = '';
 let technicianCalendarDays = [];
 let complianceAssignableUsers = [];
+const appearanceStorageKey = 'sigos-appearance-preferences';
+const appearanceDefaults = { theme: 'dark', palette: 'emerald' };
+let appearancePreferences = { ...appearanceDefaults };
+
+function readAppearancePreferences() {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(appearanceStorageKey) || '{}');
+    return {
+      theme: ['dark', 'light'].includes(stored.theme) ? stored.theme : appearanceDefaults.theme,
+      palette: ['emerald', 'ocean'].includes(stored.palette) ? stored.palette : appearanceDefaults.palette,
+    };
+  } catch {
+    return { ...appearanceDefaults };
+  }
+}
+
+function updateAppearanceControls() {
+  const isDark = appearancePreferences.theme === 'dark';
+  const toggle = $('#appearance-toggle');
+  if (toggle) {
+    toggle.setAttribute('aria-label', isDark ? 'Ativar modo diurno' : 'Ativar modo noturno');
+    toggle.title = isDark ? 'Ativar modo diurno' : 'Ativar modo noturno';
+  }
+  if ($('#appearance-toggle-icon')) $('#appearance-toggle-icon').textContent = isDark ? '☀' : '☾';
+  if ($('#appearance-toggle-label')) $('#appearance-toggle-label').textContent = isDark ? 'Modo diurno' : 'Modo noturno';
+  document.querySelectorAll('[data-appearance-theme]').forEach((button) => {
+    const active = button.dataset.appearanceTheme === appearancePreferences.theme;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  document.querySelectorAll('[data-appearance-palette]').forEach((button) => {
+    const active = button.dataset.appearancePalette === appearancePreferences.palette;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  const summary = $('#appearance-settings-summary');
+  if (summary) summary.textContent = `${isDark ? 'Modo noturno' : 'Modo diurno'} · Paleta ${appearancePreferences.palette === 'ocean' ? 'Oceano' : 'Esmeralda'}`;
+}
+
+function applyAppearance(nextPreferences = appearancePreferences) {
+  appearancePreferences = {
+    theme: ['dark', 'light'].includes(nextPreferences.theme) ? nextPreferences.theme : appearanceDefaults.theme,
+    palette: ['emerald', 'ocean'].includes(nextPreferences.palette) ? nextPreferences.palette : appearanceDefaults.palette,
+  };
+  document.documentElement.dataset.theme = appearancePreferences.theme;
+  document.documentElement.dataset.palette = appearancePreferences.palette;
+  const themeColor = document.querySelector('meta[name="theme-color"]');
+  if (themeColor) themeColor.content = appearancePreferences.theme === 'light' ? '#eef4fb' : appearancePreferences.palette === 'ocean' ? '#102a4c' : '#0b1020';
+  try { window.localStorage.setItem(appearanceStorageKey, JSON.stringify(appearancePreferences)); } catch { /* preferência visual é opcional */ }
+  updateAppearanceControls();
+}
+
+function ensureAppearanceControls() {
+  const userRole = $('#user-role');
+  if (userRole && !$('#appearance-toggle')) {
+    userRole.insertAdjacentHTML('beforebegin', '<button id="appearance-toggle" type="button" class="secondary appearance-toggle" aria-label="Alternar modo de exibição"><span id="appearance-toggle-icon" aria-hidden="true">☾</span><span id="appearance-toggle-label">Modo diurno</span></button>');
+    $('#appearance-toggle').addEventListener('click', () => applyAppearance({ ...appearancePreferences, theme: appearancePreferences.theme === 'dark' ? 'light' : 'dark' }));
+  }
+  const applicationsNav = $('#nav-admin-applications');
+  if (applicationsNav && !$('#nav-appearance')) applicationsNav.insertAdjacentHTML('afterend', '<button id="nav-appearance" class="nav-item nav-subitem" data-view="settings-view" data-settings-tab="appearance"><span>◌</span> Aparência</button>');
+  const appearanceNav = $('#nav-appearance');
+  if (appearanceNav && !appearanceNav.dataset.navigationBound) { appearanceNav.dataset.navigationBound = 'true'; appearanceNav.addEventListener('click', () => setView('settings-view', { settingsTab: 'appearance' })); }
+  const settingsTabs = $('.settings-tabs');
+  if (settingsTabs && !$('#settings-tab-appearance')) settingsTabs.insertAdjacentHTML('beforeend', '<button id="settings-tab-appearance" class="settings-tab-button" type="button" role="tab" aria-selected="false" data-settings-tab="appearance">Aparência</button>');
+  const appearanceTab = $('#settings-tab-appearance');
+  if (appearanceTab && !appearanceTab.dataset.settingsBound) { appearanceTab.dataset.settingsBound = 'true'; appearanceTab.addEventListener('click', () => setSettingsTab('appearance')); }
+  const securityPanel = $('#security-settings-panel');
+  if (securityPanel && !$('#appearance-settings-panel')) {
+    securityPanel.insertAdjacentHTML('afterend', '<section id="appearance-settings-panel" class="card profile-card settings-panel hidden" data-settings-panel="appearance" role="tabpanel"><div class="section-heading"><div><div class="eyebrow">CONFIGURAÇÕES</div><h2>Aparência</h2><p class="muted">Escolha como o SIGOS será exibido neste dispositivo.</p></div></div><div class="appearance-settings-grid"><section class="appearance-option-card"><div><h3>Modo de exibição</h3><p class="muted">Alterne entre uma interface clara e uma interface noturna.</p></div><div class="appearance-choice-group" role="group" aria-label="Modo de exibição"><button type="button" class="secondary appearance-choice" data-appearance-theme="light" aria-pressed="false">☀ Modo diurno</button><button type="button" class="secondary appearance-choice" data-appearance-theme="dark" aria-pressed="false">☾ Modo noturno</button></div></section><section class="appearance-option-card"><div><h3>Paleta de cores</h3><p class="muted">As duas paletas mantêm contraste adequado entre texto, fundo e ações.</p></div><div class="appearance-choice-group" role="group" aria-label="Paleta de cores"><button type="button" class="secondary appearance-choice palette-emerald" data-appearance-palette="emerald" aria-pressed="false"><span aria-hidden="true">●</span> Esmeralda</button><button type="button" class="secondary appearance-choice palette-ocean" data-appearance-palette="ocean" aria-pressed="false"><span aria-hidden="true">●</span> Oceano</button></div></section></div><p id="appearance-settings-summary" class="muted appearance-settings-summary" aria-live="polite"></p></section>');
+  }
+  document.querySelectorAll('[data-appearance-theme]').forEach((button) => { if (!button.dataset.appearanceBound) { button.dataset.appearanceBound = 'true'; button.addEventListener('click', () => applyAppearance({ ...appearancePreferences, theme: button.dataset.appearanceTheme })); } });
+  document.querySelectorAll('[data-appearance-palette]').forEach((button) => { if (!button.dataset.appearanceBound) { button.dataset.appearanceBound = 'true'; button.addEventListener('click', () => applyAppearance({ ...appearancePreferences, palette: button.dataset.appearancePalette })); } });
+  updateAppearanceControls();
+}
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[char]));
@@ -973,7 +1047,8 @@ async function loadCompanySettings() {
 }
 
 function setSettingsTab(tab) {
-  const allowedTabs = isAdminRole() ? ['company', 'security', 'users', 'applications'] : ['security', 'applications'];
+  ensureAppearanceControls();
+  const allowedTabs = isAdminRole() ? ['company', 'security', 'users', 'applications', 'appearance'] : ['security', 'applications', 'appearance'];
   const selectedTab = allowedTabs.includes(tab) ? tab : allowedTabs[0];
   selectedSettingsTab = selectedTab;
   document.querySelectorAll('.settings-tab-button').forEach((button) => {
@@ -1078,6 +1153,7 @@ function configureCadastroHeading() {
 }
 
 function configureNavigation(user) {
+  ensureAppearanceControls();
   initializeSubtabs();
   setReportTab(selectedReportTab, { render: false });
   setReportChecklistTab(selectedReportChecklistTab, { render: false });
@@ -1122,6 +1198,8 @@ function configureNavigation(user) {
 
 function showApp(user) {
   currentUser = user;
+  ensureAppearanceControls();
+  applyAppearance(readAppearancePreferences());
   browserNotificationBaselineReady = false;
   loadBrowserNotificationState();
   registerNativePushToken();
@@ -3706,4 +3784,5 @@ $('#stock-ppe-form').addEventListener('submit', async (event) => {
 
 $('#stock-ppe-cancel').addEventListener('click', () => { resetStockPpeForm(); $('#stock-ppe-message').textContent = ''; });
 
+applyAppearance(readAppearancePreferences());
 api('/api/me').then(({ user }) => showApp(user)).catch(() => {});
