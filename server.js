@@ -1329,12 +1329,17 @@ async function initSchema() {
       vehicle_id BIGINT NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       quantity INTEGER NOT NULL CHECK (quantity > 0),
+      is_compound BOOLEAN NOT NULL DEFAULT FALSE,
+      parent_id BIGINT REFERENCES vehicle_equipment(id) ON DELETE CASCADE,
       active BOOLEAN NOT NULL DEFAULT TRUE,
       created_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (vehicle_id, name)
     );
+
+    ALTER TABLE vehicle_equipment ADD COLUMN IF NOT EXISTS is_compound BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE vehicle_equipment ADD COLUMN IF NOT EXISTS parent_id BIGINT REFERENCES vehicle_equipment(id) ON DELETE CASCADE;
 
     CREATE INDEX IF NOT EXISTS vehicle_equipment_vehicle_idx ON vehicle_equipment (vehicle_id, active, name);
 
@@ -1645,6 +1650,10 @@ async function initSchema() {
       item_name TEXT NOT NULL,
       item_kind TEXT NOT NULL DEFAULT 'vehicle_item',
       expected_quantity INTEGER,
+      parent_item_key TEXT,
+      is_compound BOOLEAN NOT NULL DEFAULT FALSE,
+      quantity_status TEXT,
+      condition_status TEXT,
       before_status TEXT NOT NULL DEFAULT 'ok' CHECK (before_status IN ('ok', 'defeito', 'quebrado')),
       before_description TEXT,
       after_status TEXT NOT NULL DEFAULT 'ok' CHECK (after_status IN ('ok', 'defeito', 'quebrado')),
@@ -1654,8 +1663,16 @@ async function initSchema() {
 
     ALTER TABLE vehicle_checklist_items ADD COLUMN IF NOT EXISTS item_kind TEXT NOT NULL DEFAULT 'vehicle_item';
     ALTER TABLE vehicle_checklist_items ADD COLUMN IF NOT EXISTS expected_quantity INTEGER;
+    ALTER TABLE vehicle_checklist_items ADD COLUMN IF NOT EXISTS parent_item_key TEXT;
+    ALTER TABLE vehicle_checklist_items ADD COLUMN IF NOT EXISTS is_compound BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE vehicle_checklist_items ADD COLUMN IF NOT EXISTS quantity_status TEXT;
+    ALTER TABLE vehicle_checklist_items ADD COLUMN IF NOT EXISTS condition_status TEXT;
     ALTER TABLE vehicle_checklist_items DROP CONSTRAINT IF EXISTS vehicle_checklist_items_item_kind_check;
     ALTER TABLE vehicle_checklist_items ADD CONSTRAINT vehicle_checklist_items_item_kind_check CHECK (item_kind IN ('vehicle_item', 'daily_photo', 'vehicle_equipment'));
+    ALTER TABLE vehicle_checklist_items DROP CONSTRAINT IF EXISTS vehicle_checklist_items_quantity_status_check;
+    ALTER TABLE vehicle_checklist_items ADD CONSTRAINT vehicle_checklist_items_quantity_status_check CHECK (quantity_status IS NULL OR quantity_status IN ('ok', 'nao'));
+    ALTER TABLE vehicle_checklist_items DROP CONSTRAINT IF EXISTS vehicle_checklist_items_condition_status_check;
+    ALTER TABLE vehicle_checklist_items ADD CONSTRAINT vehicle_checklist_items_condition_status_check CHECK (condition_status IS NULL OR condition_status IN ('ok', 'avariado'));
 
     CREATE TABLE IF NOT EXISTS vehicle_checklist_signatures (
       id BIGSERIAL PRIMARY KEY,
@@ -4673,28 +4690,47 @@ function renderVehicleChecklistPdf(doc, checklist, company) {
   doc.moveDown(.8);
   if (isDaily) {
     pdfTable(doc, [
-      { label: 'Ponto', width: 170, key: 'item' },
-      { label: 'Status', width: 85, key: 'status' },
-      { label: 'Observação', width: 238, key: 'observation' },
+      { label: 'Item', width: 150, key: 'item' },
+      { label: 'Quantidade / status', width: 105, key: 'quantity' },
+      { label: 'Conservação', width: 95, key: 'condition' },
+      { label: 'Observação', width: 143, key: 'observation' },
     ], (checklist.items || []).map((item) => ({
-      item: item.itemKind === 'vehicle_equipment' && item.expectedQuantity ? `${item.itemName || '–'} (Qtd. cadastrada: ${item.expectedQuantity})` : item.itemName || '–',
-      status: item.itemKind === 'vehicle_equipment' ? (item.beforeStatus === 'ok' ? 'SIM' : 'NÃO') : item.beforeStatus || '–',
+      item: `${item.parentItemKey ? '  - ' : ''}${item.itemName || '–'}${item.itemKind === 'vehicle_equipment' && item.expectedQuantity ? ` (esperada: ${item.expectedQuantity})` : ''}`,
+      quantity: item.itemKind === 'vehicle_equipment' ? (item.quantityStatus ? (item.quantityStatus === 'ok' ? 'OK' : 'NAO') : (item.beforeStatus === 'ok' ? 'OK' : 'NAO')) : item.beforeStatus || '–',
+      condition: item.itemKind === 'vehicle_equipment' ? (item.conditionStatus ? (item.conditionStatus === 'ok' ? 'OK' : 'AVARIADO') : '–') : '–',
       observation: item.beforeDescription || '–',
     })));
   } else {
+    const visualItems = (checklist.items || []).filter((item) => item.itemKind !== 'vehicle_equipment');
+    const equipmentItems = (checklist.items || []).filter((item) => item.itemKind === 'vehicle_equipment');
     pdfTable(doc, [
       { label: 'Item', width: 145, key: 'item' },
       { label: 'Antes', width: 58, key: 'before' },
       { label: 'Descrição', width: 116, key: 'beforeDescription' },
       { label: 'Depois', width: 58, key: 'after' },
       { label: 'Descrição', width: 116, key: 'afterDescription' },
-    ], (checklist.items || []).map((item) => ({
+    ], visualItems.map((item) => ({
       item: item.itemName || '–',
       before: item.beforeStatus || '–',
       beforeDescription: item.beforeDescription || '–',
       after: item.afterStatus || '–',
       afterDescription: item.afterDescription || '–',
     })));
+    if (equipmentItems.length) {
+      doc.moveDown(.8);
+      doc.font('Helvetica-Bold').fontSize(10).fillColor('#172033').text('Itens do veículo');
+      pdfTable(doc, [
+        { label: 'Item', width: 165, key: 'item' },
+        { label: 'Quantidade', width: 95, key: 'quantity' },
+        { label: 'Conservação', width: 95, key: 'condition' },
+        { label: 'Observação', width: 164, key: 'observation' },
+      ], equipmentItems.map((item) => ({
+        item: `${item.parentItemKey ? '  - ' : ''}${item.itemName || '–'}${item.expectedQuantity ? ` (esperada: ${item.expectedQuantity})` : ''}`,
+        quantity: item.quantityStatus ? (item.quantityStatus === 'ok' ? 'OK' : 'NAO') : (item.beforeStatus === 'ok' ? 'OK' : 'NAO'),
+        condition: item.conditionStatus ? (item.conditionStatus === 'ok' ? 'OK' : 'AVARIADO') : '–',
+        observation: item.beforeDescription || '–',
+      })));
+    }
   }
   if (checklist.validationNotes) pdfParagraph(doc, `Observação da validação: ${checklist.validationNotes}`);
   const checklistMedia = checklist.pdfMedia || checklist.media || [];
@@ -5106,6 +5142,10 @@ function vehicleSignatureItems(items) {
       itemName: item.item_name ?? item.itemName ?? null,
       ...(itemKind && itemKind !== 'vehicle_item' ? { itemKind } : {}),
       ...(expectedQuantity !== null && expectedQuantity !== undefined ? { expectedQuantity: Number(expectedQuantity) } : {}),
+      ...(item.parent_item_key || item.parentItemKey ? { parentItemKey: item.parent_item_key ?? item.parentItemKey } : {}),
+      ...(item.is_compound || item.isCompound ? { isCompound: true } : {}),
+      ...(item.quantity_status || item.quantityStatus ? { quantityStatus: item.quantity_status ?? item.quantityStatus } : {}),
+      ...(item.condition_status || item.conditionStatus ? { conditionStatus: item.condition_status ?? item.conditionStatus } : {}),
       beforeStatus: item.before_status ?? item.beforeStatus ?? null,
       beforeDescription: item.before_description ?? item.beforeDescription ?? null,
       afterStatus: item.after_status ?? item.afterStatus ?? null,
@@ -5193,6 +5233,10 @@ const vehicleChecklistQuery = `
           'itemName', i.item_name,
           'itemKind', i.item_kind,
           'expectedQuantity', i.expected_quantity,
+          'parentItemKey', i.parent_item_key,
+          'isCompound', i.is_compound,
+          'quantityStatus', i.quantity_status,
+          'conditionStatus', i.condition_status,
           'beforeStatus', i.before_status,
           'beforeDescription', i.before_description,
           'afterStatus', i.after_status,
@@ -5292,6 +5336,38 @@ app.get('/api/vehicles/targets', auth, requireRole('admin', 'tecnico', 'vistoria
   res.json({ users: result.rows });
 });
 
+function flattenVehicleEquipmentRows(rows) {
+  const items = rows.map((row) => ({
+    ...row,
+    id: Number(row.id),
+    parent_id: row.parent_id === null || row.parent_id === undefined ? null : Number(row.parent_id),
+    is_compound: Boolean(row.is_compound),
+  }));
+  const byParent = new Map();
+  items.forEach((item) => {
+    const key = item.parent_id === null || !items.some((candidate) => candidate.id === item.parent_id) ? null : item.parent_id;
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key).push(item);
+  });
+  byParent.forEach((children) => children.sort((a, b) => String(a.name).localeCompare(String(b.name), 'pt-BR') || a.id - b.id));
+  const result = [];
+  const visited = new Set();
+  const visit = (item, depth, parentItem = null) => {
+    if (!item || visited.has(item.id)) return;
+    visited.add(item.id);
+    result.push({
+      ...item,
+      parentItemKey: parentItem ? `vehicle_equipment_${parentItem.id}` : null,
+      parentItemName: parentItem?.name || null,
+      depth,
+    });
+    (byParent.get(item.id) || []).forEach((child) => visit(child, depth + 1, item));
+  };
+  (byParent.get(null) || []).forEach((item) => visit(item, 0));
+  items.forEach((item) => visit(item, 0));
+  return result;
+}
+
 app.get('/api/vehicles/catalog', auth, requireRole('admin', 'tecnico', 'vistoriador'), async (_req, res) => {
   const result = await pool.query(
     `SELECT v.id, v.plate, v.model, v.vehicle_year, v.color,
@@ -5300,7 +5376,9 @@ app.get('/api/vehicles/catalog', auth, requireRole('admin', 'tecnico', 'vistoria
                 SELECT json_agg(json_build_object(
                   'id', equipment.id,
                   'name', equipment.name,
-                  'quantity', equipment.quantity
+                  'quantity', equipment.quantity,
+                  'isCompound', equipment.is_compound,
+                  'parentId', equipment.parent_id
                 ) ORDER BY equipment.name, equipment.id)
                 FROM vehicle_equipment equipment
                 WHERE equipment.vehicle_id = v.id AND equipment.active = TRUE
@@ -5407,8 +5485,8 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
   const dailyPeriod = checklistType === 'diario' ? String(req.body.dailyPeriod || '') : null;
   if (checklistType === 'diario' && !['inicio', 'fim'].includes(dailyPeriod)) return res.status(400).json({ error: 'Escolha se o checklist diário é do começo ou do fim do dia.' });
   const baseChecklistDefinition = checklistType === 'diario'
-    ? VEHICLE_DAILY_CHECKLIST_ITEMS.map(([itemKey, itemName]) => [itemKey, itemName, 'daily_photo', null])
-    : VEHICLE_CHECKLIST_ITEMS.map(([itemKey, itemName]) => [itemKey, itemName, 'vehicle_item', null]);
+    ? VEHICLE_DAILY_CHECKLIST_ITEMS.map(([itemKey, itemName]) => [itemKey, itemName, 'daily_photo', null, null, false])
+    : VEHICLE_CHECKLIST_ITEMS.map(([itemKey, itemName]) => [itemKey, itemName, 'vehicle_item', null, null, false]);
   const plate = cleanText(req.body.plate, 12).toUpperCase();
   const model = cleanText(req.body.model, 120);
   const vehicleYear = req.body.vehicleYear === null || req.body.vehicleYear === undefined || req.body.vehicleYear === '' ? null : Number(req.body.vehicleYear);
@@ -5428,30 +5506,46 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
     return res.status(400).json({ error: 'O usuário destinatário só pode ser informado em uma transferência ou entrega.' });
   }
   let checklistDefinition = baseChecklistDefinition;
-  if (checklistType === 'diario' && plate) {
+  if (plate) {
     const vehicleResult = await pool.query('SELECT id FROM vehicles WHERE plate = $1 AND status = \'ativo\'', [plate]);
     if (vehicleResult.rows[0]) {
       const equipmentResult = await pool.query(
-        `SELECT id, name, quantity
+        `SELECT id, name, quantity, is_compound, parent_id
          FROM vehicle_equipment
          WHERE vehicle_id = $1 AND active = TRUE
-         ORDER BY name, id`,
+         ORDER BY parent_id NULLS FIRST, name, id`,
         [vehicleResult.rows[0].id],
       );
       checklistDefinition = [
         ...baseChecklistDefinition,
-        ...equipmentResult.rows.map((item) => [`vehicle_equipment_${item.id}`, item.name, 'vehicle_equipment', Number(item.quantity)]),
+        ...flattenVehicleEquipmentRows(equipmentResult.rows).map((item) => [
+          `vehicle_equipment_${item.id}`,
+          item.name,
+          'vehicle_equipment',
+          Number(item.quantity),
+          item.parentItemKey,
+          item.is_compound,
+        ]),
       ];
     }
   }
   const itemMap = new Map(submittedItems.map((item) => [String(item.itemKey || ''), item]));
-  const normalizedItems = checklistDefinition.map(([itemKey, itemName, itemKind = 'vehicle_item', expectedQuantity = null]) => {
+  const normalizedItems = checklistDefinition.map(([itemKey, itemName, itemKind = 'vehicle_item', expectedQuantity = null, parentItemKey = null, isCompound = false]) => {
     const item = itemMap.get(itemKey) || {};
+    if (itemKind === 'vehicle_equipment') {
+      const quantityStatus = ['ok', 'nao'].includes(String(item.quantityStatus ?? item.quantity_status)) ? String(item.quantityStatus ?? item.quantity_status) : 'ok';
+      const conditionStatus = ['ok', 'avariado'].includes(String(item.conditionStatus ?? item.condition_status)) ? String(item.conditionStatus ?? item.condition_status) : 'ok';
+      const status = itemKind === 'vehicle_equipment'
+        ? (quantityStatus === 'ok' && conditionStatus === 'ok' ? 'ok' : 'defeito')
+        : 'ok';
+      const observation = cleanText(item.observation || item.beforeDescription, 500) || null;
+      return { itemKey, itemName, itemKind, expectedQuantity, parentItemKey, isCompound: Boolean(isCompound), quantityStatus, conditionStatus, beforeStatus: status, beforeDescription: observation, afterStatus: status, afterDescription: observation };
+    }
     if (checklistType === 'diario') {
       const dailyStatus = item.status ?? item.beforeStatus;
       const status = ['ok', 'defeito', 'quebrado'].includes(dailyStatus) ? dailyStatus : 'ok';
       const observation = cleanText(item.observation || item.beforeDescription, 500) || null;
-      return { itemKey, itemName, itemKind, expectedQuantity, beforeStatus: status, beforeDescription: observation, afterStatus: status, afterDescription: observation };
+      return { itemKey, itemName, itemKind, expectedQuantity, parentItemKey, isCompound: Boolean(isCompound), quantityStatus: null, conditionStatus: null, beforeStatus: status, beforeDescription: observation, afterStatus: status, afterDescription: observation };
     }
     const beforeStatus = ['ok', 'defeito', 'quebrado'].includes(item.beforeStatus) ? item.beforeStatus : 'ok';
     const afterStatus = ['ok', 'defeito', 'quebrado'].includes(item.afterStatus) ? item.afterStatus : 'ok';
@@ -5460,6 +5554,10 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
       itemName,
       itemKind,
       expectedQuantity,
+      parentItemKey,
+      isCompound: Boolean(isCompound),
+      quantityStatus: null,
+      conditionStatus: null,
       beforeStatus,
       beforeDescription: beforeStatus === 'ok' ? null : cleanText(item.beforeDescription, 500) || null,
       afterStatus,
@@ -5473,7 +5571,7 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
   if (mileage !== null && (!Number.isInteger(mileage) || mileage < 0)) return res.status(400).json({ error: 'Quilometragem inválida.' });
   if (signatureRequest.error) return res.status(400).json({ error: signatureRequest.error });
   if (!submittedSelfie || submittedSelfie.captureMode !== 'camera' || !submittedSelfie.imageData) return res.status(400).json({ error: 'Capture uma selfie pela câmera antes de enviar o checklist.' });
-  const allowedPhotoKeys = new Set(checklistDefinition.filter(([, , itemKind]) => itemKind !== 'vehicle_equipment').map(([itemKey]) => itemKey));
+  const allowedPhotoKeys = new Set(checklistDefinition.map(([itemKey]) => itemKey));
   const expectedPhotoKeys = new Set(checklistDefinition
     .filter(([itemKey, , itemKind]) => itemKind !== 'vehicle_equipment' && (checklistType === 'diario' || !VEHICLE_OPTIONAL_PHOTO_ITEM_KEYS.has(itemKey)))
     .map(([itemKey]) => itemKey));
@@ -5557,13 +5655,13 @@ app.post('/api/vehicles/checklists', auth, uploadRateLimit, requireRole('admin',
     for (const item of normalizedItems) {
       await client.query(
         `INSERT INTO vehicle_checklist_items
-          (checklist_id, item_key, item_name, item_kind, expected_quantity, before_status, before_description, after_status, after_description)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [checklistId, item.itemKey, item.itemName, item.itemKind, item.expectedQuantity, item.beforeStatus, item.beforeDescription, item.afterStatus, item.afterDescription],
+          (checklist_id, item_key, item_name, item_kind, expected_quantity, parent_item_key, is_compound, quantity_status, condition_status, before_status, before_description, after_status, after_description)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        [checklistId, item.itemKey, item.itemName, item.itemKind, item.expectedQuantity, item.parentItemKey, item.isCompound, item.quantityStatus, item.conditionStatus, item.beforeStatus, item.beforeDescription, item.afterStatus, item.afterDescription],
       );
     }
     const persistedItems = await client.query(
-      `SELECT id, item_key, item_name, item_kind, expected_quantity, before_status, before_description, after_status, after_description
+      `SELECT id, item_key, item_name, item_kind, expected_quantity, parent_item_key, is_compound, quantity_status, condition_status, before_status, before_description, after_status, after_description
        FROM vehicle_checklist_items
        WHERE checklist_id = $1
        ORDER BY id`,
@@ -5995,6 +6093,8 @@ app.get('/api/stock', auth, requireRole('admin'), async (_req, res) => {
                    'id', equipment.id,
                    'name', equipment.name,
                    'quantity', equipment.quantity,
+                   'isCompound', equipment.is_compound,
+                   'parentId', equipment.parent_id,
                    'active', equipment.active
                  ) ORDER BY equipment.name, equipment.id)
                  FROM vehicle_equipment equipment
@@ -6303,28 +6403,55 @@ app.post('/api/stock/vehicles/:vehicleId/equipment', auth, requireRole('admin'),
   const id = req.body.id === null || req.body.id === undefined || req.body.id === '' ? null : Number(req.body.id);
   const name = cleanText(req.body.name, 180);
   const quantity = Number(req.body.quantity);
+  const parentId = req.body.parentId === null || req.body.parentId === undefined || req.body.parentId === '' ? null : Number(req.body.parentId);
+  const isCompound = req.body.isCompound === true || String(req.body.isCompound || '').toLowerCase() === 'true';
   if (!Number.isInteger(vehicleId) || vehicleId < 1) return res.status(400).json({ error: 'Veículo inválido.' });
   if (id !== null && (!Number.isInteger(id) || id < 1)) return res.status(400).json({ error: 'Equipamento inválido.' });
+  if (parentId !== null && (!Number.isInteger(parentId) || parentId < 1)) return res.status(400).json({ error: 'Item pai inválido.' });
+  if (id !== null && parentId === id) return res.status(400).json({ error: 'Um item não pode ser pai dele mesmo.' });
   if (!name || !Number.isInteger(quantity) || quantity < 1) return res.status(400).json({ error: 'Informe o equipamento e uma quantidade inteira maior que zero.' });
   const vehicle = await pool.query('SELECT id, plate FROM vehicles WHERE id = $1', [vehicleId]);
   if (!vehicle.rows[0]) return res.status(404).json({ error: 'Veículo não encontrado.' });
+  if (parentId !== null) {
+    const parent = await pool.query('SELECT id, is_compound FROM vehicle_equipment WHERE id = $1 AND vehicle_id = $2 AND active = TRUE', [parentId, vehicleId]);
+    if (!parent.rows[0]) return res.status(404).json({ error: 'Item pai não encontrado neste veículo.' });
+    if (!parent.rows[0].is_compound) return res.status(400).json({ error: 'Marque o item pai como Item composto antes de adicionar sub-itens.' });
+    if (id !== null) {
+      const cycle = await pool.query(
+        `WITH RECURSIVE ancestors(id, parent_id) AS (
+           SELECT id, parent_id FROM vehicle_equipment WHERE id = $1
+           UNION ALL
+           SELECT equipment.id, equipment.parent_id
+           FROM vehicle_equipment equipment
+           JOIN ancestors ON equipment.id = ancestors.parent_id
+         )
+         SELECT 1 FROM ancestors WHERE id = $2 LIMIT 1`,
+        [parentId, id],
+      );
+      if (cycle.rows[0]) return res.status(400).json({ error: 'Não é possível colocar um item dentro de um dos seus próprios sub-itens.' });
+    }
+  }
+  if (id !== null && !isCompound) {
+    const children = await pool.query('SELECT 1 FROM vehicle_equipment WHERE parent_id = $1 AND active = TRUE LIMIT 1', [id]);
+    if (children.rows[0]) return res.status(400).json({ error: 'Este item possui sub-itens. Mantenha-o como Item composto ou remova os sub-itens primeiro.' });
+  }
   try {
     const result = id === null
       ? await pool.query(
-        `INSERT INTO vehicle_equipment (vehicle_id, name, quantity, created_by, updated_at)
-         VALUES ($1, $2, $3, $4, NOW())
-         RETURNING id, vehicle_id, name, quantity, active, created_at, updated_at`,
-        [vehicleId, name, quantity, req.user.id],
+        `INSERT INTO vehicle_equipment (vehicle_id, name, quantity, is_compound, parent_id, created_by, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW())
+         RETURNING id, vehicle_id, name, quantity, is_compound, parent_id, active, created_at, updated_at`,
+        [vehicleId, name, quantity, isCompound, parentId, req.user.id],
       )
       : await pool.query(
         `UPDATE vehicle_equipment
-         SET name = $1, quantity = $2, updated_at = NOW()
-         WHERE id = $3 AND vehicle_id = $4
-         RETURNING id, vehicle_id, name, quantity, active, created_at, updated_at`,
-        [name, quantity, id, vehicleId],
+         SET name = $1, quantity = $2, is_compound = $3, parent_id = $4, updated_at = NOW()
+         WHERE id = $5 AND vehicle_id = $6
+         RETURNING id, vehicle_id, name, quantity, is_compound, parent_id, active, created_at, updated_at`,
+        [name, quantity, isCompound, parentId, id, vehicleId],
       );
     if (!result.rows[0]) return res.status(404).json({ error: 'Equipamento não encontrado neste veículo.' });
-    await audit({ req, actorUserId: req.user.id, eventType: id === null ? 'vehicle_equipment_registered' : 'vehicle_equipment_updated', entityType: 'vehicle_equipment', entityId: result.rows[0].id, metadata: { vehicleId, plate: vehicle.rows[0].plate, name, quantity } });
+    await audit({ req, actorUserId: req.user.id, eventType: id === null ? 'vehicle_equipment_registered' : 'vehicle_equipment_updated', entityType: 'vehicle_equipment', entityId: result.rows[0].id, metadata: { vehicleId, plate: vehicle.rows[0].plate, name, quantity, isCompound, parentId } });
     res.status(id === null ? 201 : 200).json({ equipment: result.rows[0] });
   } catch (error) {
     if (error.code === '23505') return res.status(409).json({ error: 'Este equipamento já está cadastrado neste veículo.' });

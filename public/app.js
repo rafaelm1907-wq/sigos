@@ -2553,16 +2553,38 @@ function resetStockVehicleEquipmentForm() {
   $('#stock-vehicle-equipment-form')?.reset();
   $('#stock-vehicle-equipment-id').value = '';
   $('#stock-vehicle-equipment-vehicle').value = selectedStockVehicleId || '';
+  if ($('#stock-vehicle-equipment-parent')) $('#stock-vehicle-equipment-parent').value = '';
+  if ($('#stock-vehicle-equipment-compound')) $('#stock-vehicle-equipment-compound').checked = false;
   $('#stock-vehicle-equipment-cancel').classList.add('hidden');
+}
+
+function ensureVehicleEquipmentEditorFields() {
+  const form = $('#stock-vehicle-equipment-form');
+  if (!form) return;
+  const nameField = $('#stock-vehicle-equipment-name')?.closest('label');
+  if (nameField && !$('#stock-vehicle-equipment-parent')) nameField.insertAdjacentHTML('afterend', '<label>Item pai (opcional)<select id="stock-vehicle-equipment-parent"><option value="">Item principal</option></select></label>');
+  const quantityField = $('#stock-vehicle-equipment-quantity')?.closest('label');
+  if (quantityField && !$('#stock-vehicle-equipment-compound')) quantityField.insertAdjacentHTML('afterend', '<label class="consent-check"><input id="stock-vehicle-equipment-compound" type="checkbox" /> Item composto (permite sub-itens)</label>');
+  if (nameField?.firstChild) nameField.firstChild.textContent = 'Item';
+  if (quantityField?.firstChild) quantityField.firstChild.textContent = 'Quantidade esperada';
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (submitButton) submitButton.textContent = 'Salvar item';
+  const heading = form.closest('.vehicle-equipment-stock')?.querySelector('h3');
+  const description = form.closest('.vehicle-equipment-stock')?.querySelector('.section-heading .muted');
+  if (heading) heading.textContent = 'Itens que ficam em cada veículo';
+  if (description) description.textContent = 'Cadastre itens simples ou marque um item composto para adicionar sub-itens, como ferramentas dentro de uma maleta.';
+  const tableHead = $('#stock-vehicle-equipment-table')?.closest('table')?.querySelector('thead');
+  if (tableHead) tableHead.innerHTML = '<tr><th>Item</th><th>Tipo</th><th>Quantidade</th><th>Dentro de</th><th>Ações</th></tr>';
 }
 
 function renderStockVehicleEquipment(vehicles) {
   const select = $('#stock-vehicle-equipment-vehicle');
   const table = $('#stock-vehicle-equipment-table');
   if (!select || !table) return;
+  ensureVehicleEquipmentEditorFields();
   if (!vehicles.length) {
     select.innerHTML = '<option value="">Nenhum veículo cadastrado</option>';
-    table.innerHTML = '<tr><td colspan="3" class="muted">Cadastre um veículo antes de incluir equipamentos.</td></tr>';
+    table.innerHTML = '<tr><td colspan="5" class="muted">Cadastre um veículo antes de incluir itens.</td></tr>';
     return;
   }
   if (!vehicles.some((vehicle) => String(vehicle.id) === String(selectedStockVehicleId))) selectedStockVehicleId = String(vehicles[0].id);
@@ -2570,7 +2592,19 @@ function renderStockVehicleEquipment(vehicles) {
   select.value = selectedStockVehicleId;
   const vehicle = vehicles.find((item) => String(item.id) === String(selectedStockVehicleId));
   const equipment = vehicle?.equipmentItems || [];
-  table.innerHTML = equipment.length ? equipment.map((item) => `<tr><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.quantity)}</td><td><div class="table-actions"><button type="button" class="secondary small-button" data-vehicle-equipment-edit="${escapeHtml(item.id)}">Editar</button><button type="button" class="secondary small-button" data-vehicle-equipment-delete="${escapeHtml(item.id)}">Excluir</button></div></td></tr>`).join('') : '<tr><td colspan="3" class="muted">Nenhum equipamento cadastrado para este veículo.</td></tr>';
+  const parentSelect = $('#stock-vehicle-equipment-parent');
+  if (parentSelect) {
+    const selectedParent = parentSelect.value;
+    parentSelect.innerHTML = `<option value="">Item principal</option>${equipment.filter((item) => item.isCompound).map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('')}`;
+    if ([...parentSelect.options].some((option) => option.value === selectedParent)) parentSelect.value = selectedParent;
+  }
+  const byId = new Map(equipment.map((item) => [String(item.id), item]));
+  table.innerHTML = equipment.length ? equipment.map((item) => {
+    const parent = item.parentId ? byId.get(String(item.parentId)) : null;
+    const label = `${parent ? '↳ ' : ''}${escapeHtml(item.name)}`;
+    const type = item.isCompound ? 'Item composto' : parent ? 'Sub-item' : 'Item simples';
+    return `<tr><td>${label}</td><td>${type}</td><td>${escapeHtml(item.quantity)}</td><td>${escapeHtml(parent?.name || '–')}</td><td><div class="table-actions"><button type="button" class="secondary small-button" data-vehicle-equipment-edit="${escapeHtml(item.id)}">Editar</button><button type="button" class="secondary small-button" data-vehicle-equipment-delete="${escapeHtml(item.id)}">Excluir</button></div></td></tr>`;
+  }).join('') : '<tr><td colspan="5" class="muted">Nenhum item cadastrado para este veículo.</td></tr>';
   select.onchange = () => { selectedStockVehicleId = select.value; resetStockVehicleEquipmentForm(); renderStockVehicleEquipment(vehicles); };
   table.querySelectorAll('[data-vehicle-equipment-edit]').forEach((button) => button.addEventListener('click', () => {
     const item = equipment.find((entry) => String(entry.id) === String(button.dataset.vehicleEquipmentEdit));
@@ -2579,6 +2613,8 @@ function renderStockVehicleEquipment(vehicles) {
     $('#stock-vehicle-equipment-vehicle').value = vehicle.id;
     $('#stock-vehicle-equipment-name').value = item.name || '';
     $('#stock-vehicle-equipment-quantity').value = item.quantity || 1;
+    if ($('#stock-vehicle-equipment-parent')) $('#stock-vehicle-equipment-parent').value = item.parentId || '';
+    if ($('#stock-vehicle-equipment-compound')) $('#stock-vehicle-equipment-compound').checked = Boolean(item.isCompound);
     $('#stock-vehicle-equipment-cancel').classList.remove('hidden');
     $('#stock-vehicle-equipment-message').textContent = 'Editando equipamento do veículo.';
     scrollToInteraction('#stock-vehicle-equipment-form', { focusTarget: '#stock-vehicle-equipment-name' });
@@ -2604,6 +2640,29 @@ function resetStockPpeForm() {
 
 function vehicleStatusLabel(status) { return ({ ok: 'OK', defeito: 'Defeito', quebrado: 'Quebrado' }[status] || status); }
 
+function flattenVehicleEquipment(items = []) {
+  const byId = new Map(items.map((item) => [String(item.id), item]));
+  const children = new Map();
+  items.forEach((item) => {
+    const parentId = item.parentId === null || item.parentId === undefined ? null : String(item.parentId);
+    const key = parentId && byId.has(parentId) ? parentId : null;
+    if (!children.has(key)) children.set(key, []);
+    children.get(key).push(item);
+  });
+  children.forEach((entries) => entries.sort((a, b) => String(a.name).localeCompare(String(b.name), 'pt-BR') || Number(a.id) - Number(b.id)));
+  const output = [];
+  const visited = new Set();
+  const visit = (item, depth, parent = null) => {
+    if (!item || visited.has(String(item.id))) return;
+    visited.add(String(item.id));
+    output.push({ ...item, depth, parentItemKey: parent ? `vehicle_equipment_${parent.id}` : null, parentItemName: parent?.name || null });
+    (children.get(String(item.id)) || []).forEach((child) => visit(child, depth + 1, item));
+  };
+  (children.get(null) || []).forEach((item) => visit(item, 0));
+  items.forEach((item) => visit(item, 0));
+  return output;
+}
+
 function updateVehicleDescriptionCell(row, side) {
   const status = row.querySelector(`[data-side="${side}-status"]`);
   const toggle = row.querySelector(`[data-side="${side}-description-toggle"]`);
@@ -2617,11 +2676,13 @@ function updateVehicleDescriptionCell(row, side) {
 }
 
 function vehicleChecklistDefinition() {
-  if (selectedVehicleChecklistType !== 'diario') return vehicleItems.map(([itemKey, itemName]) => [itemKey, itemName, 'vehicle_item', null]);
   const selectedId = $('#vehicle-select')?.value;
   const vehicle = vehicleCatalog.find((item) => String(item.id) === String(selectedId));
-  const equipmentItems = (vehicle?.equipmentItems || []).map((item) => [`vehicle_equipment_${item.id}`, item.name, 'vehicle_equipment', Number(item.quantity)]);
-  return [...vehicleDailyItems.map(([itemKey, itemName]) => [itemKey, itemName, 'daily_photo', null]), ...equipmentItems];
+  const equipmentItems = flattenVehicleEquipment(vehicle?.equipmentItems || []).map((item) => [`vehicle_equipment_${item.id}`, item.name, 'vehicle_equipment', Number(item.quantity), item.parentItemKey, Boolean(item.isCompound), item.depth, item.parentItemName]);
+  const baseItems = selectedVehicleChecklistType === 'diario'
+    ? vehicleDailyItems.map(([itemKey, itemName]) => [itemKey, itemName, 'daily_photo', null])
+    : vehicleItems.map(([itemKey, itemName]) => [itemKey, itemName, 'vehicle_item', null]);
+  return [...baseItems, ...equipmentItems];
 }
 
 function vehicleChecklistItemRequiresPhoto(itemKey, itemKind) {
@@ -2816,7 +2877,7 @@ function startVehicleChecklist() {
     return;
   }
   vehicleWizardIndex = 0;
-  vehicleWizardDraft = vehicleChecklistDefinition().map(([itemKey, itemName, itemKind = 'vehicle_item', expectedQuantity = null]) => ({ itemKey, itemName, itemKind, expectedQuantity, requiresPhoto: vehicleChecklistItemRequiresPhoto(itemKey, itemKind), beforeStatus: 'ok', beforeDescription: '', afterStatus: 'ok', afterDescription: '' }));
+  vehicleWizardDraft = vehicleChecklistDefinition().map(([itemKey, itemName, itemKind = 'vehicle_item', expectedQuantity = null, parentItemKey = null, isCompound = false, depth = 0, parentItemName = null]) => ({ itemKey, itemName, itemKind, expectedQuantity, parentItemKey, isCompound, depth, parentItemName, requiresPhoto: vehicleChecklistItemRequiresPhoto(itemKey, itemKind), quantityStatus: 'ok', conditionStatus: 'ok', beforeStatus: 'ok', beforeDescription: '', afterStatus: 'ok', afterDescription: '' }));
   vehiclePhotoDrafts = [];
   vehicleSelfieDraft = null;
   vehiclePhotoCaptureItemKey = null;
@@ -2826,9 +2887,10 @@ function startVehicleChecklist() {
   $('#vehicle-selected-title').textContent = `${vehicle.plate} · ${vehicle.model || 'Modelo não informado'}`;
   $('#vehicle-selected-details').textContent = [vehicleChecklistTypeLabel(), vehicle.year, vehicle.color].filter(Boolean).join(' · ') || 'Veículo selecionado';
   $('#vehicle-mileage-field').classList.toggle('hidden', selectedVehicleChecklistType === 'diario');
+  const hasEquipment = vehicleWizardDraft.some((item) => item.itemKind === 'vehicle_equipment');
   $('#vehicle-wizard-instruction').textContent = selectedVehicleChecklistType === 'diario'
-    ? (vehicleWizardDraft.some((item) => item.itemKind === 'vehicle_equipment') ? 'Etapa 1: confirme os pontos do veículo com fotos. Etapa 2: confirme se cada equipamento cadastrado está presente.' : 'Marque OK ou Não OK, registre uma observação se quiser e capture a foto.')
-    : 'Confira antes e depois. As fotos são obrigatórias nos itens visuais e opcionais nos itens funcionais, como buzina, ar-condicionado e alarme.';
+    ? (hasEquipment ? 'Etapa 1: confirme os pontos do veículo com fotos. Etapa 2: confirme a quantidade e a conservação de cada item cadastrado. Observação e foto são opcionais.' : 'Marque OK ou Não OK, registre uma observação se quiser e capture a foto.')
+    : (hasEquipment ? 'Confira os itens visuais antes e depois. Para os itens do veículo, informe quantidade e conservação. Observação e foto são opcionais nesses itens.' : 'Confira antes e depois. As fotos são obrigatórias nos itens visuais e opcionais nos itens funcionais, como buzina, ar-condicionado e alarme.');
   $('#vehicle-start-step').classList.add('hidden');
   $('#vehicle-final-step').classList.add('hidden');
   $('#vehicle-checklist-step').classList.remove('hidden');
@@ -2940,6 +3002,14 @@ function saveVehicleWizardItem() {
   const card = $('#vehicle-item-wizard .vehicle-wizard-item');
   const item = vehicleWizardDraft[vehicleWizardIndex];
   if (!card || !item) return;
+  if (item.itemKind === 'vehicle_equipment') {
+    const quantityStatus = card.querySelector('[data-side="quantity-status"]').value;
+    const conditionStatus = card.querySelector('[data-side="condition-status"]').value;
+    const status = quantityStatus === 'ok' && conditionStatus === 'ok' ? 'ok' : 'defeito';
+    const observation = card.querySelector('[data-side="equipment-description"]').value;
+    vehicleWizardDraft[vehicleWizardIndex] = { ...item, quantityStatus, conditionStatus, beforeStatus: status, beforeDescription: observation, afterStatus: status, afterDescription: observation };
+    return;
+  }
   if (selectedVehicleChecklistType === 'diario') {
     const status = card.querySelector('[data-side="daily-status"]').value;
     const observation = card.querySelector('[data-side="daily-description"]').value;
@@ -2957,19 +3027,27 @@ function renderVehicleWizardItem() {
   if (!container || !item) return;
   const photoCount = vehiclePhotoDrafts.filter((photo) => photo.itemKey === item.itemKey).length;
   const isDaily = selectedVehicleChecklistType === 'diario';
-  const isEquipment = isDaily && item.itemKind === 'vehicle_equipment';
-  const stageLabel = isEquipment ? 'Etapa 2 · Equipamentos cadastrados' : isDaily ? 'Etapa 1 · Verificação visual' : 'Conferência do veículo';
-  const fields = isDaily
-    ? `<label>${isEquipment ? 'Está no veículo?' : 'Status'}<select data-side="daily-status"><option value="ok" ${item.beforeStatus === 'ok' ? 'selected' : ''}>${isEquipment ? 'Sim' : 'OK'}</option><option value="defeito" ${item.beforeStatus === 'defeito' ? 'selected' : ''}>${isEquipment ? 'Não' : 'Não OK'}</option></select></label>${isEquipment ? `<p class="muted vehicle-equipment-expected">Quantidade cadastrada: <strong>${escapeHtml(item.expectedQuantity || 0)}</strong></p>` : ''}<label>Observação (opcional)<textarea data-side="daily-description" maxlength="500" placeholder="${isEquipment ? 'Informe se faltou ou houve alguma divergência.' : 'Descreva uma irregularidade, se quiser'}">${escapeHtml(item.beforeDescription)}</textarea></label>`
-    : `<label>Antes<select data-side="before-status"><option value="ok" ${item.beforeStatus === 'ok' ? 'selected' : ''}>OK</option><option value="defeito" ${item.beforeStatus === 'defeito' ? 'selected' : ''}>Com defeito</option><option value="quebrado" ${item.beforeStatus === 'quebrado' ? 'selected' : ''}>Quebrado</option></select></label><label>Depois<select data-side="after-status"><option value="ok" ${item.afterStatus === 'ok' ? 'selected' : ''}>OK</option><option value="defeito" ${item.afterStatus === 'defeito' ? 'selected' : ''}>Com defeito</option><option value="quebrado" ${item.afterStatus === 'quebrado' ? 'selected' : ''}>Quebrado</option></select></label><label data-description-wrap="before" class="hidden">Descrição antes<textarea data-side="before-description" maxlength="500">${escapeHtml(item.beforeDescription)}</textarea></label><label data-description-wrap="after" class="hidden">Descrição depois<textarea data-side="after-description" maxlength="500">${escapeHtml(item.afterDescription)}</textarea></label>`;
-  const canCapturePhoto = !isEquipment;
+  const isEquipment = item.itemKind === 'vehicle_equipment';
+  const stageLabel = isEquipment ? 'Etapa 2 · Itens do veículo' : isDaily ? 'Etapa 1 · Verificação visual' : 'Conferência do veículo';
+  const equipmentFields = `<div class="vehicle-equipment-check-fields"><label>Quantidade<select data-side="quantity-status"><option value="ok" ${item.quantityStatus === 'ok' ? 'selected' : ''}>OK</option><option value="nao" ${item.quantityStatus === 'nao' ? 'selected' : ''}>Não</option></select></label><label>Conservação<select data-side="condition-status"><option value="ok" ${item.conditionStatus === 'ok' ? 'selected' : ''}>OK</option><option value="avariado" ${item.conditionStatus === 'avariado' ? 'selected' : ''}>Avariado</option></select></label></div><p class="muted vehicle-equipment-expected">Quantidade esperada: <strong>${escapeHtml(item.expectedQuantity || 0)}</strong>${item.parentItemName ? ` · Dentro de: ${escapeHtml(item.parentItemName)}` : ''}</p><label>Observação (opcional)<textarea data-side="equipment-description" maxlength="500" placeholder="Informe uma divergência, se quiser">${escapeHtml(item.beforeDescription)}</textarea></label>`;
+  const fields = isEquipment
+    ? equipmentFields
+    : isDaily
+      ? `<label>Status<select data-side="daily-status"><option value="ok" ${item.beforeStatus === 'ok' ? 'selected' : ''}>OK</option><option value="defeito" ${item.beforeStatus === 'defeito' ? 'selected' : ''}>Não OK</option></select></label><label>Observação (opcional)<textarea data-side="daily-description" maxlength="500" placeholder="Descreva uma irregularidade, se quiser">${escapeHtml(item.beforeDescription)}</textarea></label>`
+      : `<label>Antes<select data-side="before-status"><option value="ok" ${item.beforeStatus === 'ok' ? 'selected' : ''}>OK</option><option value="defeito" ${item.beforeStatus === 'defeito' ? 'selected' : ''}>Com defeito</option><option value="quebrado" ${item.beforeStatus === 'quebrado' ? 'selected' : ''}>Quebrado</option></select></label><label>Depois<select data-side="after-status"><option value="ok" ${item.afterStatus === 'ok' ? 'selected' : ''}>OK</option><option value="defeito" ${item.afterStatus === 'defeito' ? 'selected' : ''}>Com defeito</option><option value="quebrado" ${item.afterStatus === 'quebrado' ? 'selected' : ''}>Quebrado</option></select></label><label data-description-wrap="before" class="hidden">Descrição antes<textarea data-side="before-description" maxlength="500">${escapeHtml(item.beforeDescription)}</textarea></label><label data-description-wrap="after" class="hidden">Descrição depois<textarea data-side="after-description" maxlength="500">${escapeHtml(item.afterDescription)}</textarea></label>`;
+  const canCapturePhoto = true;
   const photoBlock = canCapturePhoto
     ? `<button id="vehicle-item-photo-button" type="button" class="secondary">${photoCount ? 'Refazer foto deste item' : 'Capturar foto deste item'}</button><div id="vehicle-item-camera" class="hidden"><video id="vehicle-item-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-item-take-photo" type="button">Capturar foto</button><button id="vehicle-item-cancel-photo" type="button" class="secondary">Cancelar</button></div></div><p id="vehicle-item-photo-message" class="muted" aria-live="polite">${photoCount ? 'Foto deste item preparada.' : item.requiresPhoto ? 'A foto deste item é obrigatória.' : 'Foto deste item opcional.'}</p>`
-    : '<p class="muted vehicle-equipment-photo-note">Este item é conferido na segunda etapa e não exige foto individual.</p>';
-  container.innerHTML = `<div class="vehicle-wizard-item"><div class="wizard-item-heading"><div><span class="eyebrow">${stageLabel}</span><strong>${escapeHtml(item.itemName)}</strong></div><span class="muted">Item ${vehicleWizardIndex + 1} de ${vehicleWizardDraft.length}</span></div><div class="vehicle-wizard-fields">${fields}</div>${photoBlock}</div>`;
-  if (isDaily) {
-    container.querySelector('[data-side="daily-status"]').addEventListener('change', saveVehicleWizardItem);
-    container.querySelector('[data-side="daily-description"]').addEventListener('input', saveVehicleWizardItem);
+    : '';
+  const itemLabel = `${item.depth ? '↳ ' : ''}${item.itemName}`;
+  container.innerHTML = `<div class="vehicle-wizard-item"><div class="wizard-item-heading"><div><span class="eyebrow">${stageLabel}</span><strong>${escapeHtml(itemLabel)}</strong></div><span class="muted">Item ${vehicleWizardIndex + 1} de ${vehicleWizardDraft.length}</span></div><div class="vehicle-wizard-fields">${fields}</div>${photoBlock}</div>`;
+  if (isEquipment) {
+    container.querySelector('[data-side="quantity-status"]')?.addEventListener('change', saveVehicleWizardItem);
+    container.querySelector('[data-side="condition-status"]')?.addEventListener('change', saveVehicleWizardItem);
+    container.querySelector('[data-side="equipment-description"]')?.addEventListener('input', saveVehicleWizardItem);
+  } else if (isDaily) {
+    container.querySelector('[data-side="daily-status"]')?.addEventListener('change', saveVehicleWizardItem);
+    container.querySelector('[data-side="daily-description"]')?.addEventListener('input', saveVehicleWizardItem);
   } else {
     const updateDescription = (side) => { const status = container.querySelector(`[data-side="${side}-status"]`); container.querySelector(`[data-description-wrap="${side}"]`).classList.toggle('hidden', status.value === 'ok'); };
     ['before', 'after'].forEach((side) => { container.querySelector(`[data-side="${side}-status"]`).addEventListener('change', () => { updateDescription(side); saveVehicleWizardItem(); }); updateDescription(side); });
@@ -2989,7 +3067,7 @@ function renderVehicleWizardItem() {
 
 function readVehicleEditor() {
   saveVehicleWizardItem();
-  return vehicleWizardDraft.map((item) => ({ itemKey: item.itemKey, itemKind: item.itemKind, expectedQuantity: item.expectedQuantity, beforeStatus: item.beforeStatus, beforeDescription: item.beforeDescription, afterStatus: item.afterStatus, afterDescription: item.afterDescription }));
+  return vehicleWizardDraft.map((item) => ({ itemKey: item.itemKey, itemKind: item.itemKind, expectedQuantity: item.expectedQuantity, parentItemKey: item.parentItemKey, isCompound: item.isCompound, quantityStatus: item.quantityStatus, conditionStatus: item.conditionStatus, beforeStatus: item.beforeStatus, beforeDescription: item.beforeDescription, afterStatus: item.afterStatus, afterDescription: item.afterDescription }));
 }
 
 function renderVehicleSummary(checklist, includeAction = false) {
@@ -3034,10 +3112,13 @@ function renderVehicleDetail(checklist, containerSelector, canValidate) {
   const isDelivery = ['recebimento', 'entrega'].includes(checklist.checklistType);
   const acceptanceLabel = checklist.checklistType === 'recebimento' ? 'Aceitar recebimento' : isDelivery ? 'Aceitar entrega' : 'Aceitar transferência';
   const transferAcceptanceControls = isRecipientAcceptance ? `<div class="vehicle-transfer-acceptance"><div class="subheading"><h4>${acceptanceLabel}</h4><p class="muted">Confira o veículo e confirme com sua assinatura padrão e uma selfie feita agora.</p></div><div class="epi-signature-preview"><img src="${escapeHtml(currentUser?.signatureData || '')}" alt="Sua assinatura padrão" /></div><label class="consent-check"><input id="vehicle-transfer-signature-confirm" type="checkbox" /> Confirmo minha assinatura e aceito receber este veículo.</label><button id="vehicle-transfer-open-selfie" type="button">Abrir câmera para selfie</button><div id="vehicle-transfer-selfie-camera" class="hidden"><video id="vehicle-transfer-selfie-video" class="capture-video" autoplay playsinline muted></video><div class="form-actions"><button id="vehicle-transfer-take-selfie" type="button">Tirar selfie</button><button id="vehicle-transfer-cancel-selfie" type="button" class="secondary">Cancelar</button></div></div><div id="vehicle-transfer-selfie-preview" class="epi-photo-previews"></div><p id="vehicle-transfer-message" class="muted" aria-live="polite">Nenhuma selfie capturada.</p><button id="vehicle-transfer-accept" type="button">${acceptanceLabel}</button></div>` : '';
-  const media = (checklist.media || []).map((item) => { const isSelfie = item.kind === 'selfie'; const itemName = [...vehicleItems, ...vehicleDailyItems].find(([key]) => key === item.itemKey)?.[1]; const label = isSelfie ? (item.captureContext === 'validation' ? 'Selfie do validador' : 'Selfie do checklist') : itemName ? `Foto · ${itemName}` : 'Foto extra do veículo'; return `<figure class="epi-process-media-item"><img src="/api/vehicles/checklists/${checklist.id}/media/${item.id}" alt="${escapeHtml(label)}" loading="lazy" /><figcaption><strong>${escapeHtml(label)}</strong><span>Data/hora: ${escapeHtml(formatDate(item.createdAt))}</span><span>IP: ${escapeHtml(item.ipAddress || 'Não informado')}</span><span>Navegador: ${escapeHtml(browserLabel(item.userAgent || item.deviceInfo))}</span><span>Dispositivo: ${escapeHtml(deviceLabel(item.userAgent || item.deviceInfo))}</span><span>Cidade: ${escapeHtml(formatMediaLocation(item))}</span><span>Coordenadas: ${escapeHtml(formatMediaCoordinates(item))}</span></figcaption></figure>`; }).join('');
+  const media = (checklist.media || []).map((item) => { const isSelfie = item.kind === 'selfie'; const itemName = checklist.items.find((entry) => entry.itemKey === item.itemKey)?.itemName || [...vehicleItems, ...vehicleDailyItems].find(([key]) => key === item.itemKey)?.[1]; const label = isSelfie ? (item.captureContext === 'validation' ? 'Selfie do validador' : 'Selfie do checklist') : itemName ? `Foto · ${itemName}` : 'Foto extra do veículo'; return `<figure class="epi-process-media-item"><img src="/api/vehicles/checklists/${checklist.id}/media/${item.id}" alt="${escapeHtml(label)}" loading="lazy" /><figcaption><strong>${escapeHtml(label)}</strong><span>Data/hora: ${escapeHtml(formatDate(item.createdAt))}</span><span>IP: ${escapeHtml(item.ipAddress || 'Não informado')}</span><span>Navegador: ${escapeHtml(browserLabel(item.userAgent || item.deviceInfo))}</span><span>Dispositivo: ${escapeHtml(deviceLabel(item.userAgent || item.deviceInfo))}</span><span>Cidade: ${escapeHtml(formatMediaLocation(item))}</span><span>Coordenadas: ${escapeHtml(formatMediaCoordinates(item))}</span></figcaption></figure>`; }).join('');
+  const equipmentItems = checklist.items.filter((item) => item.itemKind === 'vehicle_equipment');
+  const visualItems = checklist.items.filter((item) => item.itemKind !== 'vehicle_equipment');
+  const equipmentTable = equipmentItems.length ? `<h4>Itens do veículo</h4><table class="vehicle-detail-table"><thead><tr><th>Item</th><th>Quantidade</th><th>Conservação</th><th>Observação</th></tr></thead><tbody>${equipmentItems.map((item) => { const itemLabel = `${item.parentItemKey ? '↳ ' : ''}${item.itemName}`; const quantity = item.quantityStatus ? (item.quantityStatus === 'ok' ? 'OK' : 'Não') : (item.beforeStatus === 'ok' ? 'OK' : 'Não'); const condition = item.conditionStatus ? (item.conditionStatus === 'ok' ? 'OK' : 'Avariado') : '–'; return `<tr><td>${escapeHtml(itemLabel)}${item.expectedQuantity ? `<small class="table-subtext">Esperada: ${escapeHtml(item.expectedQuantity)}</small>` : ''}</td><td>${escapeHtml(quantity)}</td><td>${escapeHtml(condition)}</td><td>${escapeHtml(item.beforeDescription || '–')}</td></tr>`; }).join('')}</tbody></table>` : '';
   const table = isDaily
-    ? `<table class="vehicle-detail-table"><thead><tr><th>Ponto</th><th>Status</th><th>Observação</th></tr></thead><tbody>${checklist.items.map((item) => `<tr><td>${escapeHtml(item.itemKind === 'vehicle_equipment' && item.expectedQuantity ? `${item.itemName} (Qtd. cadastrada: ${item.expectedQuantity})` : item.itemName)}</td><td>${escapeHtml(item.itemKind === 'vehicle_equipment' ? (item.beforeStatus === 'ok' ? 'Sim' : 'Não') : vehicleStatusLabel(item.beforeStatus))}</td><td>${escapeHtml(item.beforeDescription || '–')}</td></tr>`).join('')}</tbody></table>`
-    : `<table class="vehicle-detail-table"><thead><tr><th>Item</th><th>Antes</th><th>Descrição</th><th>Depois</th><th>Descrição</th></tr></thead><tbody>${checklist.items.map((item) => `<tr><td>${escapeHtml(item.itemName)}</td><td>${escapeHtml(vehicleStatusLabel(item.beforeStatus))}</td><td>${escapeHtml(item.beforeDescription || '–')}</td><td>${escapeHtml(vehicleStatusLabel(item.afterStatus))}</td><td>${escapeHtml(item.afterDescription || '–')}</td></tr>`).join('')}</tbody></table>`;
+    ? `<table class="vehicle-detail-table"><thead><tr><th>Item</th><th>Quantidade / status</th><th>Conservação</th><th>Observação</th></tr></thead><tbody>${checklist.items.map((item) => { const itemLabel = `${item.parentItemKey ? '↳ ' : ''}${item.itemName}`; const quantity = item.itemKind === 'vehicle_equipment' ? (item.quantityStatus ? (item.quantityStatus === 'ok' ? 'OK' : 'Não') : (item.beforeStatus === 'ok' ? 'OK' : 'Não')) : vehicleStatusLabel(item.beforeStatus); const condition = item.itemKind === 'vehicle_equipment' ? (item.conditionStatus ? (item.conditionStatus === 'ok' ? 'OK' : 'Avariado') : '–') : '–'; return `<tr><td>${escapeHtml(itemLabel)}${item.itemKind === 'vehicle_equipment' && item.expectedQuantity ? `<small class="table-subtext">Esperada: ${escapeHtml(item.expectedQuantity)}</small>` : ''}</td><td>${escapeHtml(quantity)}</td><td>${escapeHtml(condition)}</td><td>${escapeHtml(item.beforeDescription || '–')}</td></tr>`; }).join('')}</tbody></table>`
+    : `<table class="vehicle-detail-table"><thead><tr><th>Item</th><th>Antes</th><th>Descrição</th><th>Depois</th><th>Descrição</th></tr></thead><tbody>${visualItems.map((item) => `<tr><td>${escapeHtml(item.itemName)}</td><td>${escapeHtml(vehicleStatusLabel(item.beforeStatus))}</td><td>${escapeHtml(item.beforeDescription || '–')}</td><td>${escapeHtml(vehicleStatusLabel(item.afterStatus))}</td><td>${escapeHtml(item.afterDescription || '–')}</td></tr>`).join('')}</tbody></table>${equipmentTable}`;
   const statusLabel = { pendente_destinatario: 'Aguardando destinatário', pendente_validacao: 'Aguardando validação', validado: 'Validado', reprovado: 'Reprovado' }[checklist.status] || checklist.status;
   const targetLine = checklist.targetName ? `<p class="muted">${isDelivery ? 'Técnico destinatário' : 'Destinatário'}: ${escapeHtml(checklist.targetName)}</p>` : '';
   const dailyPeriodLine = isDaily && checklist.dailyPeriod ? `<p class="muted">Período: ${checklist.dailyPeriod === 'inicio' ? 'Começo do dia' : 'Fim do dia'}</p>` : '';
@@ -3604,10 +3685,10 @@ $('#stock-vehicle-equipment-form').addEventListener('submit', async (event) => {
   const vehicleId = $('#stock-vehicle-equipment-vehicle').value;
   if (!vehicleId) { message.textContent = 'Selecione um veículo antes de salvar o equipamento.'; return; }
   try {
-    await api(`/api/stock/vehicles/${vehicleId}/equipment`, { method: 'POST', body: JSON.stringify({ id: $('#stock-vehicle-equipment-id').value || null, name: $('#stock-vehicle-equipment-name').value, quantity: $('#stock-vehicle-equipment-quantity').value }) });
+    await api(`/api/stock/vehicles/${vehicleId}/equipment`, { method: 'POST', body: JSON.stringify({ id: $('#stock-vehicle-equipment-id').value || null, name: $('#stock-vehicle-equipment-name').value, quantity: $('#stock-vehicle-equipment-quantity').value, parentId: $('#stock-vehicle-equipment-parent')?.value || null, isCompound: Boolean($('#stock-vehicle-equipment-compound')?.checked) }) });
     selectedStockVehicleId = vehicleId;
     resetStockVehicleEquipmentForm();
-    message.textContent = 'Equipamento do veículo salvo.';
+    message.textContent = 'Item do veículo salvo.';
     await loadStock();
   } catch (error) { message.textContent = error.message; }
 });
