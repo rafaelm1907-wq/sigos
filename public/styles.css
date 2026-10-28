@@ -670,7 +670,7 @@ html[data-palette] .eyebrow,
 html[data-palette] .nav-item span,
 html[data-palette] .calendar-check,
 html[data-palette] .success-message { color: var(--appearance-accent); }
-html[data-palette] button:not(.secondary):not(.danger-button):not(.icon-button):not(.appearance-choice),
+html[data-palette] button:not(.secondary):not(.danger-button):not(.icon-button):not(.appearance-choice):not(.nav-item):not(.settings-tab-button):not(.subtab-button):not(.user-detail-button),
 html[data-palette] .vehicle-checklist-option.active,
 html[data-palette] .epi-process-option.active,
 html[data-palette] .step-number {
