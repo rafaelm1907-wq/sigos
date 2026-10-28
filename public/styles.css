@@ -40,7 +40,7 @@ button.secondary { background: #263653; color: #dbeafe; }
 .notifications-heading .small-button { padding: 7px 9px; font-size: .7rem; }
 .notifications-list { display: grid; gap: 7px; max-height: 430px; overflow-y: auto; padding-top: 9px; }
 .notification-item { display: grid; gap: 5px; width: 100%; padding: 11px; border: 1px solid transparent; border-radius: 10px; background: rgba(30, 58, 95, .24); color: #dbeafe; text-align: left; font-size: .78rem; line-height: 1.35; }
-.notification-item:hover, .notification-item.unread { border-color: rgba(52, 211, 153, .34); background: rgba(52, 211, 153, .1); }
+.notification-item:hover, .notification-item.unread { border-color: rgba(52, 211, 153, .34); background: rgba(52, 211, 153, .08); box-shadow: inset 3px 0 0 rgba(52, 211, 153, .72); }
 .notification-item-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .notification-item-heading small, .notification-link { color: #9aa8c2; font-size: .68rem; }
 .notification-link { color: #a7f3d0; }
@@ -685,7 +685,7 @@ html[data-palette] .eyebrow,
 html[data-palette] .nav-item span,
 html[data-palette] .calendar-check,
 html[data-palette] .success-message { color: var(--appearance-accent); }
-html[data-palette] button:not(.secondary):not(.danger-button):not(.icon-button):not(.appearance-choice):not(.nav-item):not(.settings-tab-button):not(.subtab-button):not(.user-detail-button),
+html[data-palette] button:not(.secondary):not(.danger-button):not(.icon-button):not(.appearance-choice):not(.nav-item):not(.settings-tab-button):not(.subtab-button):not(.user-detail-button):not(.notification-item),
 html[data-palette] .vehicle-checklist-option.active,
 html[data-palette] .epi-process-option.active,
 html[data-palette] .step-number {
