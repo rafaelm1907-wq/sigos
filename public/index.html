@@ -24,6 +24,18 @@
           <button type="submit">Entrar</button>
           <p id="login-error" class="error"></p>
         </form>
+        <section class="login-server-switcher" aria-labelledby="login-server-switcher-title">
+          <button id="login-server-toggle" type="button" class="secondary small-button" aria-expanded="false" aria-controls="login-server-panel">Trocar servidor</button>
+          <div id="login-server-panel" class="login-server-panel hidden">
+            <div>
+              <strong id="login-server-switcher-title">Acessar outro ambiente</strong>
+              <p class="muted">Informe o domínio do SIGOS para abrir este mesmo aplicativo em outro servidor, sem reinstalar o APK.</p>
+            </div>
+            <label>Endereço do servidor<input id="login-server-url" type="url" inputmode="url" autocomplete="url" placeholder="https://sigos.exemplo.com.br" /></label>
+            <button id="login-server-apply" type="button">Abrir este servidor</button>
+            <p id="login-server-message" class="muted" aria-live="polite"></p>
+          </div>
+        </section>
       </section>
 
       <section id="app-view" class="hidden">

@@ -195,6 +195,48 @@ const appearanceStorageKey = 'sigos-appearance-preferences';
 const appearanceDefaults = { theme: 'dark', palette: 'emerald' };
 let appearancePreferences = { ...appearanceDefaults };
 
+function normalizeServerUrl(value) {
+  let raw = String(value || '').trim();
+  if (!raw) throw new Error('Informe o domínio do servidor.');
+  if (!/^https?:\/\//i.test(raw)) raw = `https://${raw}`;
+  let parsed;
+  try { parsed = new URL(raw); } catch { throw new Error('Informe um endereço válido, como https://sigos.exemplo.com.br.'); }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+    throw new Error('Use um endereço HTTP ou HTTPS sem usuário e senha na URL.');
+  }
+  return parsed.origin;
+}
+
+function initializeLoginServerSwitcher() {
+  const toggle = $('#login-server-toggle');
+  const panel = $('#login-server-panel');
+  const input = $('#login-server-url');
+  const message = $('#login-server-message');
+  if (!toggle || !panel || !input || toggle.dataset.bound) return;
+  toggle.dataset.bound = 'true';
+  input.value = window.location.origin;
+  message.textContent = `Servidor atual: ${window.location.host}`;
+  toggle.addEventListener('click', () => {
+    const isHidden = panel.classList.toggle('hidden');
+    toggle.setAttribute('aria-expanded', String(!isHidden));
+    if (!isHidden) input.focus();
+  });
+  $('#login-server-apply')?.addEventListener('click', () => {
+    message.textContent = '';
+    try {
+      const target = normalizeServerUrl(input.value);
+      if (target === window.location.origin) {
+        message.textContent = 'Este já é o servidor aberto no momento.';
+        return;
+      }
+      message.textContent = 'Abrindo o servidor selecionado...';
+      window.location.assign(target);
+    } catch (error) {
+      message.textContent = error.message;
+    }
+  });
+}
+
 function readAppearancePreferences() {
   try {
     const stored = JSON.parse(window.localStorage.getItem(appearanceStorageKey) || '{}');
@@ -3785,4 +3827,5 @@ $('#stock-ppe-form').addEventListener('submit', async (event) => {
 $('#stock-ppe-cancel').addEventListener('click', () => { resetStockPpeForm(); $('#stock-ppe-message').textContent = ''; });
 
 applyAppearance(readAppearancePreferences());
+initializeLoginServerSwitcher();
 api('/api/me').then(({ user }) => showApp(user)).catch(() => {});
