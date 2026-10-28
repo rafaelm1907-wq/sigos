@@ -188,6 +188,9 @@ th { color: #9aa8c2; font-weight: 600; }
 .compliance-alert-heading span, .compliance-alert-heading small { color: #fed7aa; font-size: .78rem; }
 .compliance-alert-heading small { text-align: right; }
 .compliance-alert-item .form-actions { align-items: flex-end; flex-wrap: wrap; }
+.pending-alerts-section, .pending-tasks-section { display: grid; gap: 10px; }
+.pending-alerts-section + .pending-tasks-section { margin-top: 8px; padding-top: 18px; border-top: 1px solid rgba(148, 163, 184, .16); }
+.pending-alert-list { display: grid; gap: 10px; }
 .compliance-assignment { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px; min-width: min(100%, 360px); }
 .compliance-assignment label { display: grid; gap: 5px; flex: 1 1 220px; color: #fed7aa; font-size: .78rem; font-weight: 700; }
 .compliance-assignment select { min-width: 0; }

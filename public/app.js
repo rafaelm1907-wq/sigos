@@ -1312,15 +1312,26 @@ async function loadComplianceAlerts() {
       syncOverviewAlertsHeight();
       return;
     }
-    container.innerHTML = data.alerts.map((alert) => {
-      const encodedKey = encodeURIComponent(alert.alertKey);
-      const recipients = complianceAssignableUsers.filter((user) => user.active && String(user.id) !== String(currentUser.id));
-      const assignment = alert.activeTask
-        ? `<div class="compliance-assigned-task"><strong>Pendência enviada para ${escapeHtml(alert.activeTask.assignedToName || 'usuário')}.</strong><span class="muted">Aguardando conclusão.</span></div>`
-        : `<div class="compliance-assignment"><label>Enviar para<select data-alert-recipient="${escapeHtml(encodedKey)}" ${recipients.length ? '' : 'disabled'}><option value="">Selecione um usuário</option>${recipients.map((user) => `<option value="${escapeHtml(user.id)}">${escapeHtml(user.name)} · ${escapeHtml(roleLabels[user.role] || user.role)}</option>`).join('')}</select></label><button type="button" class="secondary small-button" data-compliance-action="assign" data-alert-key="${escapeHtml(encodedKey)}" ${recipients.length ? '' : 'disabled'}>Enviar para</button></div>`;
-      return `<article class="compliance-alert-item"><div class="compliance-alert-heading"><div><strong>${escapeHtml(alert.title)}</strong><span>${escapeHtml(complianceAlertTypeLabel(alert.alertType))} · ${escapeHtml(alert.periodKey)}</span></div><small>${escapeHtml(alert.subjectLabel)}</small></div><p>${escapeHtml(alert.message)}</p><textarea data-alert-observation="${escapeHtml(encodedKey)}" maxlength="700" placeholder="Justificar"></textarea><div class="form-actions"><button type="button" class="small-button" data-compliance-action="justify" data-alert-key="${escapeHtml(encodedKey)}">Justificar</button>${assignment}<span class="muted" data-alert-status="${escapeHtml(encodedKey)}" aria-live="polite"></span></div></article>`;
-    }).join('');
-    container.querySelectorAll('[data-compliance-action]').forEach((button) => button.addEventListener('click', async () => {
+    container.innerHTML = data.alerts.map(renderComplianceAlertMarkup).join('');
+    bindComplianceAlertActions(container);
+    syncOverviewAlertsHeight();
+  } catch (error) {
+    container.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
+    syncOverviewAlertsHeight();
+  }
+}
+
+function renderComplianceAlertMarkup(alert) {
+  const encodedKey = encodeURIComponent(alert.alertKey);
+  const recipients = complianceAssignableUsers.filter((user) => user.active && String(user.id) !== String(currentUser.id));
+  const assignment = alert.activeTask
+    ? `<div class="compliance-assigned-task"><strong>Pendência enviada para ${escapeHtml(alert.activeTask.assignedToName || 'usuário')}.</strong><span class="muted">Aguardando conclusão.</span></div>`
+    : `<div class="compliance-assignment"><label>Enviar para<select data-alert-recipient="${escapeHtml(encodedKey)}" ${recipients.length ? '' : 'disabled'}><option value="">Selecione um usuário</option>${recipients.map((user) => `<option value="${escapeHtml(user.id)}">${escapeHtml(user.name)} · ${escapeHtml(roleLabels[user.role] || user.role)}</option>`).join('')}</select></label><button type="button" class="secondary small-button" data-compliance-action="assign" data-alert-key="${escapeHtml(encodedKey)}" ${recipients.length ? '' : 'disabled'}>Enviar para</button></div>`;
+  return `<article class="compliance-alert-item"><div class="compliance-alert-heading"><div><strong>${escapeHtml(alert.title)}</strong><span>${escapeHtml(complianceAlertTypeLabel(alert.alertType))} · ${escapeHtml(alert.periodKey)}</span></div><small>${escapeHtml(alert.subjectLabel)}</small></div><p>${escapeHtml(alert.message)}</p><textarea data-alert-observation="${escapeHtml(encodedKey)}" maxlength="700" placeholder="Justificar"></textarea><div class="form-actions"><button type="button" class="small-button" data-compliance-action="justify" data-alert-key="${escapeHtml(encodedKey)}">Justificar</button>${assignment}<span class="muted" data-alert-status="${escapeHtml(encodedKey)}" aria-live="polite"></span></div></article>`;
+}
+
+function bindComplianceAlertActions(container) {
+  container.querySelectorAll('[data-compliance-action]').forEach((button) => button.addEventListener('click', async () => {
       const key = decodeURIComponent(button.dataset.alertKey);
       const observationField = [...container.querySelectorAll('[data-alert-observation]')].find((field) => field.dataset.alertObservation === button.dataset.alertKey);
       const status = [...container.querySelectorAll('[data-alert-status]')].find((field) => field.dataset.alertStatus === button.dataset.alertKey);
@@ -1348,29 +1359,36 @@ async function loadComplianceAlerts() {
         button.disabled = false;
       }
     }));
-    syncOverviewAlertsHeight();
-  } catch (error) {
-    container.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
-    syncOverviewAlertsHeight();
-  }
 }
 
 async function loadPendingTasks() {
   const container = $('#pending-list');
   if (!container || !currentUser) return;
   try {
-    const data = await api('/api/pending');
+    if (isAdminRole() && !complianceAssignableUsers.length) {
+      const usersData = await api('/api/users');
+      complianceAssignableUsers = usersData.users || [];
+    }
+    const [data, alertsData] = await Promise.all([
+      api('/api/pending'),
+      isAdminRole() ? api('/api/admin/compliance-alerts') : Promise.resolve({ alerts: [] }),
+    ]);
     const tasks = data.tasks || [];
+    const alerts = alertsData.alerts || [];
     const count = $('#pending-count');
     if (count) {
-      count.textContent = tasks.length > 99 ? '99+' : String(tasks.length);
-      count.classList.toggle('hidden', tasks.length === 0);
+      const visibleCount = tasks.length + alerts.length;
+      count.textContent = visibleCount > 99 ? '99+' : String(visibleCount);
+      count.classList.toggle('hidden', visibleCount === 0);
     }
-    if (!tasks.length) {
+    if (!tasks.length && !alerts.length) {
       container.innerHTML = '<p class="muted">Nenhuma pendência.</p>';
       return;
     }
-    container.innerHTML = tasks.map((task) => `<article class="pending-task-item"><div class="pending-task-heading"><div><strong>${escapeHtml(task.title)}</strong><span>${escapeHtml(task.subjectLabel)} · ${escapeHtml(complianceAlertTypeLabel(task.alertType))}</span></div><small>${escapeHtml(formatDate(task.assignedAt))}</small></div><p>${escapeHtml(task.message)}</p><div class="pending-task-meta"><span>Enviada por: ${escapeHtml(task.assignedByName || 'Administrador')}</span><span>Responsável: ${escapeHtml(task.assignedToName || '–')}</span></div><div class="pending-task-instruction"><strong>Orientação</strong><span>${escapeHtml(task.instruction)}</span></div><textarea data-pending-note="${escapeHtml(task.id)}" maxlength="700" placeholder="Observação da conclusão (opcional)"></textarea><div class="pending-task-actions"><button type="button" data-pending-action="complete" data-pending-id="${escapeHtml(task.id)}">Marcar como cumprida</button><span class="muted" data-pending-status="${escapeHtml(task.id)}" aria-live="polite"></span></div></article>`).join('');
+    const alertsMarkup = isAdminRole() ? `<section class="pending-alerts-section"><div class="subheading"><div><h3>Alertas de conformidade abertos</h3><p class="muted">Pendências geradas pelos prazos de checklist.</p></div><span class="badge">${alerts.length}</span></div><div class="pending-alert-list">${alerts.length ? alerts.map(renderComplianceAlertMarkup).join('') : '<p class="muted">Nenhum alerta aberto.</p>'}</div></section>` : '';
+    const tasksMarkup = tasks.length ? `<section class="pending-tasks-section"><div class="subheading"><div><h3>Tarefas atribuídas</h3><p class="muted">Pendências enviadas para você ou para usuários sob sua administração.</p></div><span class="badge">${tasks.length}</span></div>${tasks.map((task) => `<article class="pending-task-item"><div class="pending-task-heading"><div><strong>${escapeHtml(task.title)}</strong><span>${escapeHtml(task.subjectLabel)} · ${escapeHtml(complianceAlertTypeLabel(task.alertType))}</span></div><small>${escapeHtml(formatDate(task.assignedAt))}</small></div><p>${escapeHtml(task.message)}</p><div class="pending-task-meta"><span>Enviada por: ${escapeHtml(task.assignedByName || 'Administrador')}</span><span>Responsável: ${escapeHtml(task.assignedToName || '–')}</span></div><div class="pending-task-instruction"><strong>Orientação</strong><span>${escapeHtml(task.instruction)}</span></div><textarea data-pending-note="${escapeHtml(task.id)}" maxlength="700" placeholder="Observação da conclusão (opcional)"></textarea><div class="pending-task-actions"><button type="button" data-pending-action="complete" data-pending-id="${escapeHtml(task.id)}">Marcar como cumprida</button><span class="muted" data-pending-status="${escapeHtml(task.id)}" aria-live="polite"></span></div></article>`).join('')}</section>` : '';
+    container.innerHTML = `${alertsMarkup}${tasksMarkup}`;
+    if (alerts.length) bindComplianceAlertActions(container);
     container.querySelectorAll('[data-pending-action="complete"]').forEach((button) => button.addEventListener('click', async () => {
       const taskId = button.dataset.pendingId;
       const note = container.querySelector(`[data-pending-note="${CSS.escape(taskId)}"]`)?.value.trim() || '';
