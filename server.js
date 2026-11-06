@@ -49,6 +49,7 @@ if (webPushPublicKey && webPushPrivateKey) {
 const app = express();
 const port = Number(process.env.PORT || 7000);
 const host = process.env.HOST || '127.0.0.1';
+const SERVER_TIME_ZONE = process.env.SIGOS_TIME_ZONE || 'America/Fortaleza';
 const jwtSecret = process.env.JWT_SECRET;
 const cookieSecure = String(process.env.COOKIE_SECURE || 'false') === 'true';
 const enforceHttps = String(process.env.ENFORCE_HTTPS || 'false') === 'true';
@@ -61,6 +62,13 @@ const systemUpdateStaleAfterMs = 15 * 60 * 1000;
 const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 const SESSION_DURATION_SECONDS = Math.floor(SESSION_DURATION_MS / 1000);
 const SESSION_JWT_DURATION = '30d';
+
+function formatServerDateTime(value, fallback = '–') {
+  if (!value) return fallback;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: SERVER_TIME_ZONE }).format(date);
+}
 
 const TERM_LEGAL_TEXT = {
   clt: 'De acordo com o Artigo 158, Parágrafo Único, “b”, da CLT e da Norma Regulamentadora NR 1, a recusa na utilização dos equipamentos descritos neste termo, no todo ou em parte, constitui ATO FALTOSO sujeitando o funcionário às penalidades previstas na lei.',
@@ -4280,7 +4288,7 @@ function pdfMetadataDate(source, camelKey = 'createdAt', snakeKey = 'created_at'
   const value = pdfMetadataValue(source, camelKey, snakeKey);
   if (!value) return 'Não informado';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('pt-BR');
+  return Number.isNaN(date.getTime()) ? value : formatServerDateTime(date);
 }
 
 function pdfMetadataCoordinates(source, latitudeKey = 'latitude', longitudeKey = 'longitude') {
@@ -4522,7 +4530,7 @@ function renderEpiTermPdf(doc, term) {
   doc.moveTo(signatureLineX, doc.y).lineTo(signatureLineX + signatureLineWidth, doc.y).stroke('#4b5563');
   doc.font('Helvetica').fontSize(9).text(`Ass. do Funcionário · ${term.recipient_name || '–'}`, signatureLineX, doc.y + 5, { width: signatureLineWidth, align: 'center' });
   doc.y += 30;
-  doc.fontSize(8).fillColor('#4b5563').text(`Assinado em: ${term.signed_at ? new Date(term.signed_at).toLocaleString('pt-BR') : 'Não assinado'} · IP: ${term.signer_ip || 'não informado'} · Dispositivo: ${term.signer_device || term.signer_user_agent || 'não informado'}`);
+  doc.fontSize(8).fillColor('#4b5563').text(`Assinado em: ${term.signed_at ? formatServerDateTime(term.signed_at, 'Não assinado') : 'Não assinado'} · IP: ${term.signer_ip || 'não informado'} · Dispositivo: ${term.signer_device || term.signer_user_agent || 'não informado'}`);
   doc.text(`Hash da assinatura: ${term.signature_hash || '–'}`);
 }
 
@@ -4552,7 +4560,7 @@ function renderEpiProcessPdf(doc, process) {
   (legalText.paragraphs || []).forEach((paragraph) => pdfParagraph(doc, paragraph));
 
   pdfEnsureSpace(doc, 55);
-  doc.font('Helvetica').fontSize(9).fillColor('#172033').text(`Processo: #${process.id}    Responsável: ${process.creator_name || '–'}    Emissão: ${process.created_at ? new Date(process.created_at).toLocaleString('pt-BR') : '–'}`);
+  doc.font('Helvetica').fontSize(9).fillColor('#172033').text(`Processo: #${process.id}    Responsável: ${process.creator_name || '–'}    Emissão: ${formatServerDateTime(process.created_at)}`);
   if (process.validator_name) doc.text(`Validador designado: ${process.validator_name}`);
   if (process.target_name) doc.text(`Destinatário: ${process.target_name}`);
   doc.moveDown(.8);
@@ -4628,12 +4636,12 @@ function renderEpiProcessPdf(doc, process) {
   }];
   if (attentionOpen) {
     doc.text(`Tratamento da atenção: ${attentionStatus}`);
-    if (process.attention_returned_at) doc.text(`Confirmação do técnico: ${new Date(process.attention_returned_at).toLocaleString('pt-BR')} · revisão ${process.attention_revision || 0}`);
+    if (process.attention_returned_at) doc.text(`Confirmação do técnico: ${formatServerDateTime(process.attention_returned_at)} · revisão ${process.attention_revision || 0}`);
     if (process.attention_signature_hash) doc.text(`Hash da confirmação do técnico: ${process.attention_signature_hash}`);
     if (process.attention_document_hash) doc.text(`Hash do documento corrigido: ${process.attention_document_hash}`);
   }
   if (process.validated_by_name || process.validated_at) {
-    doc.text(`Processo validado por: ${process.validated_by_name || '–'} · ${process.validated_at ? new Date(process.validated_at).toLocaleString('pt-BR') : '–'}`);
+    doc.text(`Processo validado por: ${process.validated_by_name || '–'} · ${formatServerDateTime(process.validated_at)}`);
     const validationLabel = isAdminRole(process.validated_by_role) ? 'Assinatura do Admin validador' : process.validated_by_role === 'vistoriador' ? 'Assinatura do Supervisor validador' : 'Assinatura do responsável pela validação';
     signatures.push({
       label: validationLabel,
@@ -4686,7 +4694,7 @@ function renderVehicleChecklistPdf(doc, checklist, company) {
   doc.text(`Placa: ${checklist.plate || '–'}    Modelo: ${checklist.model || '–'}    Ano: ${checklist.vehicleYear || '–'}    KM: ${checklist.mileage ?? '–'}`);
   if (checklist.targetName) doc.text(`${['entrega', 'recebimento'].includes(checklist.checklistType) ? 'Técnico destinatário' : 'Destinatário da transferência'}: ${checklist.targetName}`);
   if (isDaily && checklist.dailyPeriod) doc.text(`Período: ${checklist.dailyPeriod === 'inicio' ? 'Começo do dia' : 'Fim do dia'}`);
-  doc.text(`Status: ${checklist.status || '–'}    Emissão: ${checklist.createdAt ? new Date(checklist.createdAt).toLocaleString('pt-BR') : '–'}`);
+  doc.text(`Status: ${checklist.status || '–'}    Emissão: ${formatServerDateTime(checklist.createdAt)}`);
   doc.moveDown(.8);
   if (isDaily) {
     pdfTable(doc, [
@@ -4734,15 +4742,29 @@ function renderVehicleChecklistPdf(doc, checklist, company) {
   }
   if (checklist.validationNotes) pdfParagraph(doc, `Observação da validação: ${checklist.validationNotes}`);
   const checklistMedia = checklist.pdfMedia || checklist.media || [];
+  const usedIdentityMediaIds = new Set();
   const findSignatureIdentityMedia = (signature) => {
     const signatureUserId = String(signature.signerUserId || '');
     const stage = signature.signatureContext?.stage;
-    const expectedContext = stage === 'validation' ? 'validation' : 'original';
-    return checklistMedia.find((media) => media.kind === 'selfie'
-      && String(media.uploadedBy || media.uploaded_by || '') === signatureUserId
-      && (media.captureContext || media.capture_context || 'original') === expectedContext)
-      || checklistMedia.find((media) => media.kind === 'selfie'
-        && (media.captureContext || media.capture_context || 'original') === expectedContext);
+    const expectedContext = stage === 'validation'
+      ? 'validation'
+      : stage === 'transfer_recipient'
+        ? 'transfer_recipient'
+        : stage === 'delivery_recipient'
+          ? 'delivery_recipient'
+          : 'original';
+    const selfies = checklistMedia.filter((media) => media.kind === 'selfie' && !usedIdentityMediaIds.has(String(media.id)));
+    const markUsed = (media) => {
+      if (media) usedIdentityMediaIds.add(String(media.id));
+      return media;
+    };
+    const byUserAndContext = selfies.find((media) => String(media.uploadedBy || media.uploaded_by || '') === signatureUserId
+      && (media.captureContext || media.capture_context || 'original') === expectedContext);
+    if (byUserAndContext) return markUsed(byUserAndContext);
+    const byUser = selfies.find((media) => String(media.uploadedBy || media.uploaded_by || '') === signatureUserId);
+    if (byUser) return markUsed(byUser);
+    const byContext = selfies.find((media) => (media.captureContext || media.capture_context || 'original') === expectedContext);
+    return markUsed(byContext);
   };
   const signatures = (checklist.signatures || []).map((signature) => ({
     ...signature,
@@ -5830,7 +5852,7 @@ app.post('/api/vehicles/checklists/:id/accept-transfer', auth, requireRole('admi
       [req.params.id, req.user.id, signature.signerRole, signature.typedName, signature.signedAt, signature.signerIp, signature.signerUserAgent, signature.signerDevice, signature.signerLatitude, signature.signerLongitude, signature.signatureMethod, signatureHash, documentHash, signature.signatureData, JSON.stringify(signature.signatureContext)],
     );
     await client.query('COMMIT');
-    const media = await storeVehicleChecklistMedia({ req, checklistId: req.params.id, imageData: submittedSelfie.imageData, kind: 'selfie', deviceInfo: req.body.deviceInfo, latitude: submittedSelfie.latitude ?? req.body.latitude, longitude: submittedSelfie.longitude ?? req.body.longitude });
+    const media = await storeVehicleChecklistMedia({ req, checklistId: req.params.id, imageData: submittedSelfie.imageData, kind: 'selfie', captureContext: isDelivery ? 'delivery_recipient' : 'transfer_recipient', deviceInfo: req.body.deviceInfo, latitude: submittedSelfie.latitude ?? req.body.latitude, longitude: submittedSelfie.longitude ?? req.body.longitude });
     await audit({ req, actorUserId: req.user.id, eventType: isDelivery ? 'vehicle_delivery_accepted' : 'vehicle_transfer_accepted', entityType: 'vehicle_checklist', entityId: req.params.id, metadata: { plate: updated.rows[0].plate, signatureHash, documentHash, mediaId: media.id, sourceUserId: checklist.driver_user_id, finalized: isDelivery, checklistType: checklist.checklist_type } });
     await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_signature_signed', entityType: 'vehicle_checklist', entityId: req.params.id, metadata: { signerRole: signature.signerRole, signatureContext: signature.signatureContext, signatureHash, documentHash, typedName: signature.typedName, latitude: signature.signerLatitude, longitude: signature.signerLongitude, device: signature.signerDevice } });
     await audit({ req, actorUserId: req.user.id, eventType: 'vehicle_checklist_photos_uploaded', entityType: 'vehicle_checklist', entityId: req.params.id, metadata: { mediaIds: [media.id], selfieCount: 1, photoCount: 0, captureMode: 'camera' } });
@@ -5888,7 +5910,7 @@ app.post('/api/vehicles/checklists/:id/validate', auth, requireRole('admin', 'vi
     signerLongitude: signatureRequest.longitude,
     signatureMethod: 'assinatura_eletronica_registrada',
     signatureData: signatureRequest.signatureData,
-    signatureContext: { decision, notes: validationNotes || null },
+    signatureContext: { stage: 'validation', decision, notes: validationNotes || null },
   };
   const { documentHash, signatureHash } = vehicleSignatureHashes(checklist, checklist.items, signature);
   const validationMedia = await storeVehicleChecklistMedia({

@@ -11,7 +11,7 @@
     <link rel="apple-touch-icon" href="/assets/sigos-symbol.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>SIGOS · Gestão operacional</title>
-      <link rel="stylesheet" href="/styles.css?v=appearance-light-20261028-1" />
+      <link rel="stylesheet" href="/styles.css?v=report-timezone-20261106-1" />
   </head>
   <body>
     <main class="shell">
@@ -142,18 +142,15 @@
 
             <section id="report-view" class="app-section hidden">
               <section class="card report-module">
-                <div class="section-heading"><div><div class="eyebrow">GESTÃO · RELATÓRIOS</div><h2>Relatórios operacionais</h2><p class="muted">Navegue por cada área e filtre o período analisado.</p></div><button id="refresh-report" type="button" class="secondary">Atualizar</button></div>
-                <div class="report-filters">
+                <div class="section-heading"><div><div class="eyebrow">GESTÃO · RELATÓRIOS</div><h2>Relatórios</h2><p class="muted">Escolha o relatório, o período e clique em gerar.</p></div></div>
+                <div class="report-filters report-simple-filters">
+                  <label>Relatório<select id="report-type"><option value="summary">Resumo</option><option value="vehicles">Veículos</option><option value="checklists">Checklists</option><option value="users">Usuários</option><option value="pending">Pendências</option></select></label>
+                  <label id="report-checklist-type-wrap" class="hidden">Tipo de checklist<select id="report-checklist-type"><option value="all">Todos</option><option value="epi">EPI</option><option value="vehicle">Veículos</option></select></label>
                   <label>Período<select id="report-period"><option value="diario">Diário</option><option value="semanal">Semanal</option><option value="mensal">Mensal</option></select></label>
                   <label>Data de referência<input id="report-date" type="date" /></label>
                   <button id="generate-report" type="button">Gerar relatório</button>
                 </div>
                 <p id="report-period-label" class="report-period-label muted"></p>
-                <div id="report-checklist-tabs" class="subtabs report-checklist-tabs hidden" role="tablist" aria-label="Tipos de checklist no relatório">
-                  <button type="button" class="subtab-button active" role="tab" aria-selected="true" data-report-checklist-tab="all">Todos</button>
-                  <button type="button" class="subtab-button" role="tab" aria-selected="false" data-report-checklist-tab="epi">EPI</button>
-                  <button type="button" class="subtab-button" role="tab" aria-selected="false" data-report-checklist-tab="vehicle">Veículos</button>
-                </div>
                 <div id="report-content"><p class="muted">Selecione um período para gerar o relatório.</p></div>
               </section>
             </section>

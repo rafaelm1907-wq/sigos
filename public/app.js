@@ -406,7 +406,7 @@ function initializeSubtabs() {
 
 function formatDate(value) {
   if (!value) return '–';
-  return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
+  return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Fortaleza' }).format(new Date(value));
 }
 
 function reactivationDeadline(value) {
@@ -1117,24 +1117,22 @@ function setStockPanel(panel) {
 function setReportTab(tab, { render = true } = {}) {
   const allowedTabs = ['summary', 'vehicles', 'checklists', 'users', 'pending'];
   selectedReportTab = allowedTabs.includes(tab) ? tab : 'summary';
+  const reportType = $('#report-type');
+  if (reportType) reportType.value = selectedReportTab;
   document.querySelectorAll('#reports-subnav [data-report-tab]').forEach((button) => {
     const active = button.dataset.reportTab === selectedReportTab;
     button.classList.toggle('active', active);
     button.setAttribute('aria-selected', String(active));
   });
-  const checklistTabs = $('#report-checklist-tabs');
-  checklistTabs?.classList.toggle('hidden', selectedReportTab !== 'checklists');
+  $('#report-checklist-type-wrap')?.classList.toggle('hidden', selectedReportTab !== 'checklists');
   if (render && lastReportData) renderReport(lastReportData);
 }
 
 function setReportChecklistTab(tab, { render = true } = {}) {
   const allowedTabs = ['all', 'epi', 'vehicle'];
   selectedReportChecklistTab = allowedTabs.includes(tab) ? tab : 'all';
-  document.querySelectorAll('#report-checklist-tabs [data-report-checklist-tab]').forEach((button) => {
-    const active = button.dataset.reportChecklistTab === selectedReportChecklistTab;
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-selected', String(active));
-  });
+  const checklistType = $('#report-checklist-type');
+  if (checklistType) checklistType.value = selectedReportChecklistTab;
   if (render && lastReportData) renderReport(lastReportData);
 }
 
@@ -1523,6 +1521,12 @@ function renderReport(data) {
 async function loadReport() {
   if (!isAdminRole()) return;
   const content = $('#report-content');
+  const reportType = $('#report-type')?.value;
+  if (['summary', 'vehicles', 'checklists', 'users', 'pending'].includes(reportType)) selectedReportTab = reportType;
+  const checklistType = $('#report-checklist-type')?.value;
+  if (['all', 'epi', 'vehicle'].includes(checklistType)) selectedReportChecklistTab = checklistType;
+  setReportTab(selectedReportTab, { render: false });
+  setReportChecklistTab(selectedReportChecklistTab, { render: false });
   const period = $('#report-period')?.value || 'diario';
   const dateField = $('#report-date');
   if (dateField && !dateField.value) dateField.value = currentFortalezaDate();
@@ -3516,7 +3520,8 @@ $('#login-form').addEventListener('submit', async (event) => { event.preventDefa
 $('#logout').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); window.location.reload(); });
 document.querySelectorAll('.nav-item').forEach((button) => button.addEventListener('click', () => setView(button.dataset.view, { settingsTab: button.dataset.settingsTab, stockPanel: button.dataset.stockPanel })));
 document.querySelectorAll('#reports-subnav [data-report-tab]').forEach((button) => button.addEventListener('click', () => setView('report-view', { reportTab: button.dataset.reportTab })));
-document.querySelectorAll('#report-checklist-tabs [data-report-checklist-tab]').forEach((button) => button.addEventListener('click', () => setReportChecklistTab(button.dataset.reportChecklistTab)));
+$('#report-type')?.addEventListener('change', (event) => setReportTab(event.target.value, { render: false }));
+$('#report-checklist-type')?.addEventListener('change', (event) => setReportChecklistTab(event.target.value, { render: false }));
 document.querySelectorAll('[data-dashboard-view]').forEach((element) => {
   element.addEventListener('click', () => navigateFromDashboard(element));
   if (element.getAttribute('role') === 'button') element.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigateFromDashboard(element); } });
@@ -3539,7 +3544,7 @@ $('#refresh-overview').addEventListener('click', () => loadOverview());
 $('#overview-period-filter')?.addEventListener('change', () => loadOverview());
 $('#overview-date-filter')?.addEventListener('change', () => loadOverview());
 window.addEventListener('resize', () => syncOverviewAlertsHeight());
-$('#refresh-report').addEventListener('click', () => loadReport());
+$('#refresh-report')?.addEventListener('click', () => loadReport());
 $('#generate-report').addEventListener('click', () => loadReport());
 $('#refresh-compliance-alerts').addEventListener('click', () => loadComplianceAlerts());
 $('#refresh-pending').addEventListener('click', () => loadPendingTasks());
